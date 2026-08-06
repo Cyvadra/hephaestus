@@ -1,0 +1,5 @@
+name: basic
+tools:
+  - echo
+  - current_time
+  - chat_history_search

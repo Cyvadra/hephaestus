@@ -31,4 +31,9 @@ go.work.sum
 # .idea/
 # .vscode/
 
-.DS_Store
+.DS_Storet
+.env
+
+# Swagger
+swagger.json
+swagger.yaml
