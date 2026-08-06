@@ -27,11 +27,12 @@ type Identity struct {
 	Name        string `toml:"name"`
 	Description string `toml:"description"`
 
-	PreferredModel  string   `toml:"preferred_model"`
-	ReasoningEffort string   `toml:"reasoning_effort"`
-	MaxTokens       int      `toml:"max_tokens"`
-	Temperature     *float64 `toml:"temperature"`
-	TopP            *float64 `toml:"top_p"`
+	PreferredModel      string   `toml:"preferred_model"`
+	ReasoningEffort     string   `toml:"reasoning_effort"`
+	ContextWindowTokens int      `toml:"context_window_tokens"`
+	MaxTokens           int      `toml:"max_tokens"`
+	Temperature         *float64 `toml:"temperature"`
+	TopP                *float64 `toml:"top_p"`
 
 	SystemPrompt     string    `toml:"system_prompt"`
 	InjectedMessages []Message `toml:"injected_messages"`

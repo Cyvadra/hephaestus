@@ -46,6 +46,20 @@ type TurnContext struct {
 	Metadata map[string]any
 }
 
+// clone deep-copies the Messages slice and Metadata map so a Plugin
+// invocation can freely mutate its own copy without the pipeline's shared
+// state changing underneath it if that invocation is later discarded (on
+// error or timeout). A plain struct copy is not enough here since slices
+// and maps are reference types.
+func (t TurnContext) clone() TurnContext {
+	messages := append([]store.ChatMessage(nil), t.Messages...)
+	metadata := make(map[string]any, len(t.Metadata))
+	for k, v := range t.Metadata {
+		metadata[k] = v
+	}
+	return TurnContext{SessionID: t.SessionID, Messages: messages, Metadata: metadata}
+}
+
 // Plugin is a single side-channel extension. Implementations register
 // themselves in Go code; Plugin has no static config file.
 type Plugin interface {

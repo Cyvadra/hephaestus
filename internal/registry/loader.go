@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,6 +80,9 @@ func Load(dir string) (*Registry, error) {
 			}
 			if err := validateReasoningEffort(v.Name, v.ReasoningEffort); err != nil {
 				return nil, err
+			}
+			if v.ContextWindowTokens <= 0 {
+				return nil, fmt.Errorf("registry: identity %q: context_window_tokens must be positive", v.Name)
 			}
 			if _, dup := reg.Identities[v.Name]; dup {
 				return nil, fmt.Errorf("registry: duplicate identity name %q (file %s)", v.Name, filename)
@@ -188,8 +192,12 @@ func validateReasoningEffort(identityName, effort string) error {
 }
 
 func decodeTOML(path string, v any) error {
-	if _, err := toml.DecodeFile(path, v); err != nil {
+	meta, err := toml.DecodeFile(path, v)
+	if err != nil {
 		return fmt.Errorf("registry: decode %s: %w", path, err)
+	}
+	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+		return fmt.Errorf("registry: decode %s: unknown field %q", path, undecoded[0])
 	}
 	return nil
 }
@@ -199,7 +207,9 @@ func decodeYAML(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("registry: read %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(data, v); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(v); err != nil {
 		return fmt.Errorf("registry: decode %s: %w", path, err)
 	}
 	return nil

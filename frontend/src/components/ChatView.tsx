@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createSession, getHistory, regenerate as apiRegenerate } from '../api/client'
 import { streamMessage } from '../api/stream'
-import type { ChatMessage } from '../api/types'
+import type { ChatMessage, ConciergeItem } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer from './Composer'
 
 interface Props {
   sessionId: number | null
-  draftConcierge?: string | null
+  draftConcierge?: ConciergeItem | null
   onSessionCreated?: (id: number) => void
 }
 
@@ -73,7 +73,7 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
         if (!draftConcierge) {
           throw new Error('请先选择顾问再开始新会话')
         }
-        const created = await createSession(draftConcierge)
+        const created = await createSession(draftConcierge.name)
         targetSessionId = created.ID
         setResolvedSessionId(created.ID)
         onSessionCreated?.(created.ID)
@@ -132,7 +132,7 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
         <div>
           <p className="chat-header-eyebrow">会话详情</p>
           <h2 className="chat-header-title">
-            {resolvedSessionId == null ? `新会话 · ${draftConcierge ?? '未选择顾问'}` : '对话内容'}
+            {resolvedSessionId == null ? `新会话 · ${draftConcierge?.name ?? '未选择顾问'}` : '对话内容'}
           </h2>
         </div>
         <div className="chat-badge">
@@ -144,6 +144,21 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
         {isNewSession ? (
           <div className="empty-state-card">
             <h2>开始新的对话</h2>
+            {draftConcierge && (
+              <div className="concierge-details">
+                <div className="concierge-detail">
+                  <span>顾问</span>
+                  <strong>{draftConcierge.name}</strong>
+                </div>
+                <div className="concierge-detail">
+                  <span>身份</span>
+                  <p>{draftConcierge.identity}</p>
+                </div>
+                <DetailList label="印象" values={draftConcierge.impressions} />
+                <DetailList label="工具组" values={draftConcierge.tool_groups} />
+                <DetailList label="插件" values={draftConcierge.plugins} />
+              </div>
+            )}
           </div>
         ) : (
           path.map((msg, idx) => (
@@ -178,6 +193,23 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
         disabled={streaming}
         onStop={() => handleSend('/stop')}
       />
+    </div>
+  )
+}
+
+function DetailList({ label, values }: { label: string; values?: string[] }) {
+  const configuredValues = Array.isArray(values) ? values : []
+
+  return (
+    <div className="concierge-detail">
+      <span>{label}</span>
+      {configuredValues.length > 0 ? (
+        <div className="concierge-tag-list">
+          {configuredValues.map(value => <span className="concierge-tag" key={value}>{value}</span>)}
+        </div>
+      ) : (
+        <p>未配置</p>
+      )}
     </div>
   )
 }

@@ -5,6 +5,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,13 @@ type Service struct {
 	db *gorm.DB
 }
 
+var (
+	// ErrStaleActiveLeaf means another request changed the active branch
+	// after this caller assembled its turn.
+	ErrStaleActiveLeaf = errors.New("session: active leaf changed")
+	ErrInvalidParent   = errors.New("session: parent message does not belong to session")
+)
+
 // New creates a Service backed by db.
 func New(db *gorm.DB) *Service {
 	return &Service{db: db}
@@ -27,21 +35,28 @@ func New(db *gorm.DB) *Service {
 // CreateFromConcierge creates a new Session whose initial Settings are a
 // snapshot of concierge's identity/impressions/tool groups/plugins.
 func (s *Service) CreateFromConcierge(concierge registry.Concierge) (*store.Session, error) {
-	settings := store.SessionSettings{
+	return s.Create(concierge.Name, settingsFromConcierge(concierge))
+}
+
+// Create makes a new session from an explicit settings snapshot.
+func (s *Service) Create(sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
+	sess := &store.Session{
+		SourceConcierge: sourceConcierge,
+		Settings:        datatypes.NewJSONType(settings),
+	}
+	if err := s.db.Create(sess).Error; err != nil {
+		return nil, fmt.Errorf("session: create: %w", err)
+	}
+	return sess, nil
+}
+
+func settingsFromConcierge(concierge registry.Concierge) store.SessionSettings {
+	return store.SessionSettings{
 		Identity:    concierge.Identity,
 		Impressions: append([]string(nil), concierge.Impressions...),
 		ToolGroups:  append([]string(nil), concierge.ToolGroups...),
 		Plugins:     append([]string(nil), concierge.Plugins...),
 	}
-
-	sess := &store.Session{
-		SourceConcierge: concierge.Name,
-		Settings:        datatypes.NewJSONType(settings),
-	}
-	if err := s.db.Create(sess).Error; err != nil {
-		return nil, fmt.Errorf("session: create from concierge %q: %w", concierge.Name, err)
-	}
-	return sess, nil
 }
 
 // AppendMessage inserts msg as a child of parentID (nil for the first
@@ -73,6 +88,17 @@ func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMe
 // whole turn is recorded or none of it is, matching the design doc's rule
 // that incomplete turns (from /stop or errors) must not be persisted.
 func (s *Service) AppendMessages(sessionID uint, parentID *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
+	return s.appendMessages(sessionID, parentID, nil, false, msgs)
+}
+
+// AppendMessagesAtLeaf atomically verifies that expectedLeaf is still the
+// active branch, appends msgs below parentID, and advances the active leaf.
+// It prevents concurrent continuations from silently overwriting each other.
+func (s *Service) AppendMessagesAtLeaf(sessionID uint, parentID, expectedLeaf *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
+	return s.appendMessages(sessionID, parentID, expectedLeaf, true, msgs)
+}
+
+func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
 	if len(msgs) == 0 {
 		return nil, nil
 	}
@@ -81,6 +107,22 @@ func (s *Service) AppendMessages(sessionID uint, parentID *uint, msgs []store.Ch
 	copy(out, msgs)
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var sess store.Session
+		if err := tx.First(&sess, sessionID).Error; err != nil {
+			return fmt.Errorf("session: load for append: %w", err)
+		}
+		if checkActiveLeaf && !sameID(sess.ActiveLeafMessageID, expectedLeaf) {
+			return ErrStaleActiveLeaf
+		}
+		if parentID != nil {
+			var count int64
+			if err := tx.Model(&store.ChatMessage{}).Where("id = ? AND session_id = ?", *parentID, sessionID).Count(&count).Error; err != nil {
+				return fmt.Errorf("session: validate parent: %w", err)
+			}
+			if count == 0 {
+				return ErrInvalidParent
+			}
+		}
 		parent := parentID
 		for i := range out {
 			out[i].SessionID = sessionID
@@ -93,13 +135,63 @@ func (s *Service) AppendMessages(sessionID uint, parentID *uint, msgs []store.Ch
 			}
 			parent = &out[i].ID
 		}
-		return tx.Model(&store.Session{}).Where("id = ?", sessionID).
-			Update("active_leaf_message_id", out[len(out)-1].ID).Error
+		result := tx.Model(&store.Session{}).Where("id = ?", sessionID)
+		if checkActiveLeaf {
+			if expectedLeaf == nil {
+				result = result.Where("active_leaf_message_id IS NULL")
+			} else {
+				result = result.Where("active_leaf_message_id = ?", *expectedLeaf)
+			}
+		}
+		updated := result.Update("active_leaf_message_id", out[len(out)-1].ID)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrStaleActiveLeaf
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// SelectActiveLeaf validates that leafID belongs to sessionID before making
+// it the active branch.
+func (s *Service) SelectActiveLeaf(sessionID, leafID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&store.ChatMessage{}).Where("id = ? AND session_id = ?", leafID, sessionID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrInvalidParent
+		}
+		return tx.Model(&store.Session{}).Where("id = ?", sessionID).Update("active_leaf_message_id", leafID).Error
+	})
+}
+
+// Replace archives sessionID and creates its replacement in one transaction.
+func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
+	next := &store.Session{SourceConcierge: sourceConcierge, Settings: datatypes.NewJSONType(settings)}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&store.Session{}).Where("id = ?", sessionID).Update("flag_archived", true).Error; err != nil {
+			return err
+		}
+		return tx.Create(next).Error
+	}); err != nil {
+		return nil, fmt.Errorf("session: replace %d: %w", sessionID, err)
+	}
+	return next, nil
+}
+
+func sameID(left, right *uint) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 // ActivePath loads every ChatMessage belonging to sessionID and walks

@@ -21,6 +21,7 @@ name = "default"
 description = "test identity"
 preferred_model = "deepseek-v4-flash"
 reasoning_effort = "none"
+context_window_tokens = 128000
 max_tokens = 1024
 system_prompt = "You're a helpful assistant."
 `)

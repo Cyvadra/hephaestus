@@ -141,6 +141,65 @@ const helpText = `Available commands:
 /clear - archive this session and start a fresh one with the same settings
 /new - archive this session and start a fresh one from its source concierge`
 
+// kindDescriptor bundles the per-Kind lookups /list and /detail need, so
+// adding a new Kind means adding one table entry instead of extending two
+// parallel switch statements. Either func may be nil where that operation
+// isn't supported for the Kind (e.g. /detail on a plugin).
+type kindDescriptor struct {
+	names  func(s *Service) ([]string, error)
+	detail func(s *Service, name string) (any, error)
+}
+
+var kindDescriptors = map[Kind]kindDescriptor{
+	KindIdentity: {
+		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Identities), nil },
+		detail: func(s *Service, name string) (any, error) { return s.reg.Identities[name], nil },
+	},
+	KindImpression: {
+		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Impressions), nil },
+		detail: func(s *Service, name string) (any, error) { return s.reg.Impressions[name], nil },
+	},
+	KindToolGroup: {
+		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.ToolGroups), nil },
+		detail: func(s *Service, name string) (any, error) { return s.reg.ToolGroups[name], nil },
+	},
+	KindPlugin: {
+		names: func(s *Service) ([]string, error) { return keysOfBool(s.pluginReg.KnownNames()), nil },
+	},
+	KindConcierge: {
+		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Concierges), nil },
+		detail: func(s *Service, name string) (any, error) { return s.reg.Concierges[name], nil },
+	},
+	KindWorkflow: {
+		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Workflows), nil },
+		detail: func(s *Service, name string) (any, error) { return s.reg.Workflows[name], nil },
+	},
+	KindJob: {
+		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Jobs), nil },
+		detail: func(s *Service, name string) (any, error) { return s.reg.Jobs[name], nil },
+	},
+	KindSession: {
+		names: func(s *Service) ([]string, error) {
+			var sessions []store.Session
+			if err := s.db.Where("flag_archived = ?", false).Find(&sessions).Error; err != nil {
+				return nil, err
+			}
+			names := make([]string, 0, len(sessions))
+			for _, sess := range sessions {
+				names = append(names, strconv.Itoa(int(sess.ID)))
+			}
+			return names, nil
+		},
+		detail: func(s *Service, name string) (any, error) {
+			id, err := strconv.Atoi(name)
+			if err != nil {
+				return nil, fmt.Errorf("command: invalid session id %q", name)
+			}
+			return s.loadSession(uint(id))
+		},
+	},
+}
+
 func (s *Service) stop(sessionID uint) string {
 	s.mu.Lock()
 	cancel, ok := s.cancels[sessionID]
@@ -192,35 +251,16 @@ func (s *Service) list(sessionID uint, args []string) (string, error) {
 		return "", fmt.Errorf("command: usage: /list <kind>")
 	}
 	kind := Kind(args[0])
-
-	var names []string
-	switch kind {
-	case KindIdentity:
-		names = keysOf(s.reg.Identities)
-	case KindImpression:
-		names = keysOf(s.reg.Impressions)
-	case KindToolGroup:
-		names = keysOf(s.reg.ToolGroups)
-	case KindPlugin:
-		names = keysOfBool(s.pluginReg.KnownNames())
-	case KindConcierge:
-		names = keysOf(s.reg.Concierges)
-	case KindWorkflow:
-		names = keysOf(s.reg.Workflows)
-	case KindJob:
-		names = keysOf(s.reg.Jobs)
-	case KindSession:
-		var sessions []store.Session
-		if err := s.db.Where("flag_archived = ?", false).Find(&sessions).Error; err != nil {
-			return "", err
-		}
-		for _, sess := range sessions {
-			names = append(names, strconv.Itoa(int(sess.ID)))
-		}
-	case KindProject:
+	if kind == KindProject {
 		return "Projects are not implemented yet.", nil
-	default:
+	}
+	desc, ok := kindDescriptors[kind]
+	if !ok || desc.names == nil {
 		return "", fmt.Errorf("command: unknown kind %q", kind)
+	}
+	names, err := desc.names(s)
+	if err != nil {
+		return "", err
 	}
 
 	s.mu.Lock()
@@ -250,32 +290,13 @@ func (s *Service) detail(sessionID uint, args []string) (string, error) {
 		return "", err
 	}
 
-	var v any
-	switch kind {
-	case KindIdentity:
-		v = s.reg.Identities[name]
-	case KindImpression:
-		v = s.reg.Impressions[name]
-	case KindToolGroup:
-		v = s.reg.ToolGroups[name]
-	case KindConcierge:
-		v = s.reg.Concierges[name]
-	case KindWorkflow:
-		v = s.reg.Workflows[name]
-	case KindJob:
-		v = s.reg.Jobs[name]
-	case KindSession:
-		id, err := strconv.Atoi(name)
-		if err != nil {
-			return "", fmt.Errorf("command: invalid session id %q", name)
-		}
-		sess, err := s.loadSession(uint(id))
-		if err != nil {
-			return "", err
-		}
-		v = sess
-	default:
+	desc, ok := kindDescriptors[kind]
+	if !ok || desc.detail == nil {
 		return "", fmt.Errorf("command: /detail does not support kind %q", kind)
+	}
+	v, err := desc.detail(s, name)
+	if err != nil {
+		return "", err
 	}
 
 	data, err := json.MarshalIndent(v, "", "  ")
@@ -404,15 +425,8 @@ func (s *Service) clear(sessionID uint) (string, error) {
 		return "", err
 	}
 	settings := sess.Settings.Data()
-	if err := s.db.Model(sess).Update("flag_archived", true).Error; err != nil {
-		return "", err
-	}
-
-	newSess := &store.Session{
-		SourceConcierge: sess.SourceConcierge,
-		Settings:        datatypes.NewJSONType(settings),
-	}
-	if err := s.db.Create(newSess).Error; err != nil {
+	newSess, err := s.sessions.Replace(sess.ID, sess.SourceConcierge, settings)
+	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Archived session %d. New session: %d.", sess.ID, newSess.ID), nil
@@ -427,11 +441,12 @@ func (s *Service) new(sessionID uint) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("command: source concierge %q no longer exists", sess.SourceConcierge)
 	}
-	if err := s.db.Model(sess).Update("flag_archived", true).Error; err != nil {
-		return "", err
-	}
-
-	newSess, err := s.sessions.CreateFromConcierge(c)
+	newSess, err := s.sessions.Replace(sess.ID, c.Name, store.SessionSettings{
+		Identity:    c.Identity,
+		Impressions: append([]string(nil), c.Impressions...),
+		ToolGroups:  append([]string(nil), c.ToolGroups...),
+		Plugins:     append([]string(nil), c.Plugins...),
+	})
 	if err != nil {
 		return "", err
 	}

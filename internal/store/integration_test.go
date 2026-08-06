@@ -177,6 +177,49 @@ func TestIntegration_ResolveCompression(t *testing.T) {
 	_ = branch
 }
 
+func TestIntegration_StoreCompression(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-store-compression")
+
+	saved, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "second"},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+
+	row, err := svc.StoreCompression(sess.ID, saved[0].ID, saved[1].ID,
+		[]byte(`[{"role":"user","content":"first"},{"role":"assistant","content":"second"}]`))
+	if err != nil {
+		t.Fatalf("StoreCompression: %v", err)
+	}
+
+	var reloaded store.Session
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if reloaded.CompressionID == nil || *reloaded.CompressionID != row.ID {
+		t.Fatalf("expected CompressionID %d, got %v", row.ID, reloaded.CompressionID)
+	}
+	if reloaded.CompressionLastMessageID == nil || *reloaded.CompressionLastMessageID != saved[1].ID {
+		t.Fatalf("expected CompressionLastMessageID %d, got %v", saved[1].ID, reloaded.CompressionLastMessageID)
+	}
+
+	path, err := svc.ActivePath(reloaded)
+	if err != nil {
+		t.Fatalf("ActivePath: %v", err)
+	}
+	resolved, err := svc.ResolveCompression(&reloaded, path)
+	if err != nil {
+		t.Fatalf("ResolveCompression: %v", err)
+	}
+	if resolved == nil || resolved.ID != row.ID {
+		t.Fatalf("expected stored compression %d, got %+v", row.ID, resolved)
+	}
+}
+
 func TestIntegration_PluginState(t *testing.T) {
 	db := openTestDB(t)
 	sess := newTestSession(t, db, "hephaestus-it-plugin-state")

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
+	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -120,32 +121,8 @@ type sendMessageResponse struct {
 //	@Failure		500		{object}	errorResponse
 //	@Router			/sessions/{id}/messages [post]
 func (s *Server) sendMessage(c *gin.Context) {
-	sessionID, err := parseSessionID(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	var req sendMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	if req.ActiveLeafMessageID != nil {
-		if err := s.switchActiveLeaf(sessionID, *req.ActiveLeafMessageID); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return
-		}
-	}
-
-	if command.IsCommand(req.Text) {
-		resp, err := s.commands.Execute(sessionID, req.Text)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: resp})
+	sessionID, req, ok := s.prepareMessage(c)
+	if !ok {
 		return
 	}
 
@@ -153,8 +130,12 @@ func (s *Server) sendMessage(c *gin.Context) {
 	s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID)
 
-	result, err := s.pipeline.RunTurn(ctx, sessionID, req.Text)
+	result, err := s.pipeline.RunTurnAtLeaf(ctx, sessionID, req.ActiveLeafMessageID, req.Text)
 	if err != nil {
+		if errors.Is(err, session.ErrStaleActiveLeaf) {
+			c.JSON(http.StatusConflict, errorResponse{Error: "session changed; refresh and retry"})
+			return
+		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
 			return
@@ -179,32 +160,8 @@ func (s *Server) sendMessage(c *gin.Context) {
 //	@Failure		400	{object}	errorResponse
 //	@Router			/sessions/{id}/messages/stream [post]
 func (s *Server) streamMessage(c *gin.Context) {
-	sessionID, err := parseSessionID(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	var req sendMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	if req.ActiveLeafMessageID != nil {
-		if err := s.switchActiveLeaf(sessionID, *req.ActiveLeafMessageID); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return
-		}
-	}
-
-	if command.IsCommand(req.Text) {
-		resp, err := s.commands.Execute(sessionID, req.Text)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: resp})
+	sessionID, req, ok := s.prepareMessage(c)
+	if !ok {
 		return
 	}
 
@@ -218,8 +175,11 @@ func (s *Server) streamMessage(c *gin.Context) {
 
 	go func() {
 		defer close(deltas)
-		result, err := s.pipeline.RunTurnStream(ctx, sessionID, req.Text, func(delta string) {
-			deltas <- delta
+		result, err := s.pipeline.RunTurnStreamAtLeaf(ctx, sessionID, req.ActiveLeafMessageID, req.Text, func(delta string) {
+			select {
+			case deltas <- delta:
+			case <-ctx.Done():
+			}
 		})
 		if err != nil {
 			errCh <- err
@@ -239,10 +199,45 @@ func (s *Server) streamMessage(c *gin.Context) {
 
 	select {
 	case err := <-errCh:
-		c.SSEvent("error", err.Error())
+		if errors.Is(err, session.ErrStaleActiveLeaf) {
+			c.SSEvent("error", "session changed; refresh and retry")
+		} else {
+			c.SSEvent("error", err.Error())
+		}
 	case result := <-resultCh:
 		c.SSEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
 	}
+}
+
+// prepareMessage performs the shared request parsing, active-branch switch,
+// and slash-command dispatch for streaming and non-streaming endpoints.
+func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, bool) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return 0, sendMessageRequest{}, false
+	}
+	var req sendMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return 0, sendMessageRequest{}, false
+	}
+	if req.ActiveLeafMessageID != nil {
+		if err := s.sessions.SelectActiveLeaf(sessionID, *req.ActiveLeafMessageID); err != nil {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			return 0, sendMessageRequest{}, false
+		}
+	}
+	if command.IsCommand(req.Text) {
+		resp, err := s.commands.Execute(sessionID, req.Text)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		} else {
+			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: resp})
+		}
+		return 0, sendMessageRequest{}, false
+	}
+	return sessionID, req, true
 }
 
 // regenerate godoc
@@ -278,22 +273,6 @@ func (s *Server) regenerate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
-}
-
-// switchActiveLeaf validates that leafID belongs to sessionID before
-// pointing the session's active branch at it.
-func (s *Server) switchActiveLeaf(sessionID, leafID uint) error {
-	var count int64
-	if err := s.db.Model(&store.ChatMessage{}).
-		Where("id = ? AND session_id = ?", leafID, sessionID).
-		Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return errValidation("active_leaf_message_id does not belong to this session")
-	}
-	return s.db.Model(&store.Session{}).Where("id = ?", sessionID).
-		Update("active_leaf_message_id", leafID).Error
 }
 
 type errorResponse struct {

@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react'
 import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
+import type { ConciergeItem } from './api/types'
 
 export default function App() {
   const [sessionId, setSessionId] = useState<number | null>(null)
-  const [draftConcierge, setDraftConcierge] = useState<string | null>(null)
+  const [draftConcierge, setDraftConcierge] = useState<ConciergeItem | null>(null)
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0)
 
   const handleSessionSelect = useCallback((id: number) => {
@@ -12,7 +13,7 @@ export default function App() {
     setSessionId(id)
   }, [])
 
-  const handleStartDraft = useCallback((concierge: string) => {
+  const handleStartDraft = useCallback((concierge: ConciergeItem) => {
     setSessionId(null)
     setDraftConcierge(concierge)
   }, [])

@@ -5,9 +5,9 @@ import type { Session, ConciergeItem } from '../api/types'
 interface Props {
   activeSessionId: number | null
   refreshKey: number
-  draftConcierge: string | null
+  draftConcierge: ConciergeItem | null
   onSelect: (id: number) => void
-  onStartDraft: (concierge: string) => void
+  onStartDraft: (concierge: ConciergeItem) => void
 }
 
 export default function SessionSidebar({ activeSessionId, refreshKey, draftConcierge, onSelect, onStartDraft }: Props) {
@@ -53,7 +53,7 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
   const active = sessions.filter(s => !s.FlagArchived)
   const archived = sessions.filter(s => s.FlagArchived)
   const activeSession = sessions.find(s => s.ID === activeSessionId) ?? null
-  const currentConcierge = activeSession?.SourceConcierge || draftConcierge || '未选择'
+  const currentConcierge = activeSession?.SourceConcierge || draftConcierge?.name || '未选择'
 
   return (
     <aside className="sidebar">
@@ -102,7 +102,7 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
                   className="sidebar-new-menu-item"
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    onStartDraft(c.name)
+                    onStartDraft(c)
                     setShowConciergeMenu(false)
                   }}
                 >

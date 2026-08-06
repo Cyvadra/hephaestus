@@ -5187,6 +5187,48 @@ body {
     line-height: 34px
 }
 
+.concierge-details {
+    border-top: 1px solid var(--dsw-alias-border-l1);
+    margin-top: 22px;
+    padding-top: 18px
+}
+
+.concierge-detail {
+    grid-template-columns: 72px minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+    margin-top: 12px;
+    display: grid
+}
+
+.concierge-detail > span {
+    color: var(--dsw-alias-label-secondary);
+    font-size: 13px
+}
+
+.concierge-detail strong,.concierge-detail p {
+    color: var(--dsw-alias-label-primary);
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.7
+}
+
+.concierge-tag-list {
+    flex-wrap: wrap;
+    gap: 6px;
+    display: flex
+}
+
+.concierge-tag {
+    color: var(--dsw-alias-brand-text);
+    background: var(--dsw-alias-state-business-tertiary);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 12px;
+    line-height: 18px
+}
+
 .welcome-badge,.quick-pill {
     color: var(--dsw-alias-brand-text);
     background: var(--dsw-alias-state-business-tertiary);

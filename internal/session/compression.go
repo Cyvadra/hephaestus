@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 // ResolveCompression implements the session compression-cache validator
@@ -67,4 +69,31 @@ func (s *Service) ResolveCompression(sess *store.Session, activePath []store.Cha
 		return nil, fmt.Errorf("session: adopt compression %d for session %d: %w", found.ID, sess.ID, err)
 	}
 	return &found, nil
+}
+
+// StoreCompression creates a cache row and immediately makes it the
+// session's active compression cache. Compression survives a later failed
+// turn because it covers only already-persisted chat history.
+func (s *Service) StoreCompression(sessionID, firstMessageID, lastMessageID uint, messages datatypes.JSON) (*store.Compression, error) {
+	row := &store.Compression{
+		SessionID:      sessionID,
+		FirstMessageID: firstMessageID,
+		LastMessageID:  lastMessageID,
+		Messages:       messages,
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(row).Error; err != nil {
+			return fmt.Errorf("session: create compression: %w", err)
+		}
+		if err := tx.Model(&store.Session{}).Where("id = ?", sessionID).Updates(map[string]any{
+			"compression_id":              row.ID,
+			"compression_last_message_id": lastMessageID,
+		}).Error; err != nil {
+			return fmt.Errorf("session: set compression pointers: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return row, nil
 }

@@ -36,10 +36,23 @@ func (r *Registry) KnownNames() map[string]bool {
 	return out
 }
 
+// Has reports whether name is registered by the platform.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.byName[name]
+	return ok
+}
+
 // Run executes the named plugins, in order, for a single hook/phase. Each
 // plugin's own Timeout bounds its execution; a plugin that errors or times
 // out is skipped and reported, and the next plugin receives the turn state
 // as left by the last plugin that succeeded.
+//
+// Handle runs in its own goroutine per invocation, raced against the
+// plugin's Timeout via pluginCtx.Done(): a plugin that ignores ctx
+// cancellation (which this platform must not assume is possible to force,
+// per design) is abandoned rather than allowed to stall the pipeline, and
+// each invocation gets its own cloned Messages/Metadata so a leaked,
+// still-running goroutine can only mutate its own copy.
 func (r *Registry) Run(ctx context.Context, names []string, hook Hook, phase Phase, turn TurnContext) TurnContext {
 	for _, name := range names {
 		p, ok := r.byName[name]
@@ -49,14 +62,27 @@ func (r *Registry) Run(ctx context.Context, names []string, hook Hook, phase Pha
 		}
 
 		pluginCtx, cancel := context.WithTimeout(ctx, p.Timeout())
-		next, err := p.Handle(pluginCtx, hook, phase, turn)
-		cancel()
+		input := turn.clone()
+		resultCh := make(chan TurnContext, 1)
+		errCh := make(chan error, 1)
+		go func() {
+			next, err := p.Handle(pluginCtx, hook, phase, input)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			resultCh <- next
+		}()
 
-		if err != nil {
+		select {
+		case next := <-resultCh:
+			turn = next
+		case err := <-errCh:
 			r.notify.Warn("plugin %q failed at %s/%s: %v", name, hook, phase, err)
-			continue
+		case <-pluginCtx.Done():
+			r.notify.Warn("plugin %q exceeded its %s timeout at %s/%s", name, p.Timeout(), hook, phase)
 		}
-		turn = next
+		cancel()
 	}
 	return turn
 }
