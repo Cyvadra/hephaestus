@@ -31,9 +31,15 @@ go.work.sum
 # .idea/
 # .vscode/
 
-.DS_Storet
-.env
+.DS_Store
+.env*
+!.env.example
 
 # Swagger
 swagger.json
 swagger.yaml
+
+# Config files shall be private
+config/
+*.yaml
+*.toml

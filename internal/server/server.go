@@ -36,11 +36,13 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	}
 
 	api := s.engine.Group("/api/v1")
+	api.GET("/sessions", s.listSessions)
 	api.POST("/sessions", s.createSession)
 	api.GET("/sessions/:id/history", s.getHistory)
 	api.POST("/sessions/:id/messages", s.sendMessage)
 	api.POST("/sessions/:id/messages/stream", s.streamMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)
+	api.GET("/concierges", s.listConcierges)
 
 	s.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

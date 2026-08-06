@@ -2,5 +2,5 @@ name = "default"
 description = "General-purpose default identity."
 preferred_model = "deepseek-v4-flash"
 reasoning_effort = "high"
-max_tokens = 4096
+max_tokens = 512000
 system_prompt = "You're a helpful assistant."

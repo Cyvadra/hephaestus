@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
@@ -309,4 +310,61 @@ func parseSessionID(c *gin.Context) (uint, error) {
 		return 0, errValidation("invalid session id")
 	}
 	return uint(id), nil
+}
+
+// listSessions godoc
+//
+//	@Summary		List all sessions
+//	@Description	Returns every session ordered by updated_at descending.
+//	@Tags			sessions
+//	@Produce		json
+//	@Success		200	{array}		store.Session
+//	@Failure		500	{object}	errorResponse
+//	@Router			/sessions [get]
+func (s *Server) listSessions(c *gin.Context) {
+	var sessions []store.Session
+	if err := s.db.Order("updated_at desc").Find(&sessions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sessions)
+}
+
+// conciergeItem is the JSON shape returned by listConcierges.
+type conciergeItem struct {
+	Name        string   `json:"name"`
+	Identity    string   `json:"identity"`
+	Impressions []string `json:"impressions"`
+	ToolGroups  []string `json:"tool_groups"`
+	Plugins     []string `json:"plugins"`
+}
+
+// listConcierges godoc
+//
+//	@Summary		List registered concierges
+//	@Description	Returns the names and static settings of every loaded Concierge, sorted alphabetically.
+//	@Tags			concierges
+//	@Produce		json
+//	@Success		200	{array}	conciergeItem
+//	@Router			/concierges [get]
+func (s *Server) listConcierges(c *gin.Context) {
+	items := make([]conciergeItem, 0, len(s.reg.Concierges))
+	for _, cg := range s.reg.Concierges {
+		items = append(items, conciergeItem{
+			Name:        cg.Name,
+			Identity:    cg.Identity,
+			Impressions: nullSafe(cg.Impressions),
+			ToolGroups:  nullSafe(cg.ToolGroups),
+			Plugins:     nullSafe(cg.Plugins),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	c.JSON(http.StatusOK, items)
+}
+
+func nullSafe(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
