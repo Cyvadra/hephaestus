@@ -30,8 +30,27 @@ export interface ChatMessage {
   Role: 'user' | 'assistant' | 'tool' | 'system'
   Content: string
   ReasoningContent: string
-  ToolCalls: unknown
+  ToolCalls: ToolCall[] | null
   ToolCallID: string
+}
+
+export interface ToolCall {
+  id?: string
+  type?: string
+  function?: {
+    name?: string
+    arguments?: string
+  }
+}
+
+export interface StreamToolCall {
+  call_index: number
+  index: number
+  id?: string
+  name?: string
+  arguments?: string
+  result?: string
+  status: 'calling' | 'complete'
 }
 
 export interface HistoryResponse {

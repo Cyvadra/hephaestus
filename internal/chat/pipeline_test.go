@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/Cyvadra/ds4"
@@ -46,5 +47,32 @@ func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected disabled tool to be rejected")
+	}
+}
+
+func TestStreamToolCall_JSONIncludesStableIdentityAndStatus(t *testing.T) {
+	toolCall := StreamToolCall{
+		CallIndex: 2,
+		Index:     1,
+		ID:        "call-123",
+		Name:      "current_time",
+		Arguments: `{}`,
+		Status:    "calling",
+	}
+
+	data, err := json.Marshal(toolCall)
+	if err != nil {
+		t.Fatalf("marshal stream tool call: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal stream tool call: %v", err)
+	}
+	if got["call_index"] != float64(2) || got["index"] != float64(1) {
+		t.Fatalf("expected stable call identity, got %s", data)
+	}
+	if got["name"] != "current_time" || got["status"] != "calling" {
+		t.Fatalf("expected tool name and status, got %s", data)
 	}
 }

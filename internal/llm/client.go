@@ -45,6 +45,16 @@ func (c *Client) Call(ctx context.Context, identity registry.Identity, messages 
 type StreamDelta struct {
 	Content          string
 	ReasoningContent string
+	ToolCalls        []ToolCallDelta
+}
+
+// ToolCallDelta is the provider-independent incremental portion of a tool
+// call. Arguments may arrive over multiple deltas for the same Index.
+type ToolCallDelta struct {
+	Index     int
+	ID        string
+	Name      string
+	Arguments string
 }
 
 // CallStream behaves like Call but streams content/reasoning deltas to
@@ -62,13 +72,9 @@ func (c *Client) CallStream(ctx context.Context, identity registry.Identity, mes
 
 	err := builder.StreamWithContext(ctx, func(chunk ds4.ChatStreamChunk) error {
 		for _, choice := range chunk.Choices {
-			if choice.Delta.Content != "" || choice.Delta.ReasoningContent != "" {
-				content.WriteString(choice.Delta.Content)
-				reasoning.WriteString(choice.Delta.ReasoningContent)
-				if onDelta != nil {
-					onDelta(StreamDelta{Content: choice.Delta.Content, ReasoningContent: choice.Delta.ReasoningContent})
-				}
-			}
+			content.WriteString(choice.Delta.Content)
+			reasoning.WriteString(choice.Delta.ReasoningContent)
+			delta := StreamDelta{Content: choice.Delta.Content, ReasoningContent: choice.Delta.ReasoningContent}
 			for _, tc := range choice.Delta.ToolCalls {
 				existing, ok := toolCalls[tc.Index]
 				if !ok {
@@ -86,6 +92,15 @@ func (c *Client) CallStream(ctx context.Context, identity registry.Identity, mes
 					existing.Function.Name = tc.Function.Name
 				}
 				existing.Function.Arguments += tc.Function.Arguments
+				delta.ToolCalls = append(delta.ToolCalls, ToolCallDelta{
+					Index:     tc.Index,
+					ID:        tc.ID,
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				})
+			}
+			if onDelta != nil && (delta.Content != "" || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0) {
+				onDelta(delta)
 			}
 			if choice.FinishReason != nil {
 				finishReason = *choice.FinishReason

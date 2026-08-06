@@ -150,7 +150,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 // streamMessage godoc
 //
 //	@Summary		Send a message with streaming
-//	@Description	Like sendMessage, but streams assistant content deltas as Server-Sent Events ("delta" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
+//	@Description	Like sendMessage, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", and "tool_result" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		text/event-stream
@@ -169,13 +169,13 @@ func (s *Server) streamMessage(c *gin.Context) {
 	s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID)
 
-	deltas := make(chan string, 16)
+	deltas := make(chan chat.StreamEvent, 16)
 	resultCh := make(chan *chat.TurnResult, 1)
 	errCh := make(chan error, 1)
 
 	go func() {
 		defer close(deltas)
-		result, err := s.pipeline.RunTurnStreamAtLeaf(ctx, sessionID, req.ActiveLeafMessageID, req.Text, func(delta string) {
+		result, err := s.pipeline.RunTurnStreamAtLeaf(ctx, sessionID, req.ActiveLeafMessageID, req.Text, func(delta chat.StreamEvent) {
 			select {
 			case deltas <- delta:
 			case <-ctx.Done():
@@ -193,7 +193,11 @@ func (s *Server) streamMessage(c *gin.Context) {
 		if !ok {
 			return false
 		}
-		c.SSEvent("delta", delta)
+		if delta.ToolCall != nil {
+			c.SSEvent(delta.Type, delta.ToolCall)
+		} else {
+			c.SSEvent(delta.Type, delta.Text)
+		}
 		return true
 	})
 
@@ -273,6 +277,67 @@ func (s *Server) regenerate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
+}
+
+// streamRegenerate godoc
+//
+//	@Summary		Regenerate the last reply with streaming
+//	@Description	Like regenerate, but streams typed assistant progress as Server-Sent Events, finishing with a "done" event.
+//	@Tags			sessions
+//	@Produce		text/event-stream
+//	@Param			id	path	int	true	"Session ID"
+//	@Success		200
+//	@Failure		400	{object}	errorResponse
+//	@Router			/sessions/{id}/regenerate/stream [post]
+func (s *Server) streamRegenerate(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	s.commands.RegisterCancel(sessionID, cancel)
+	defer s.commands.UnregisterCancel(sessionID)
+
+	deltas := make(chan chat.StreamEvent, 16)
+	resultCh := make(chan *chat.TurnResult, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer close(deltas)
+		result, err := s.pipeline.RegenerateStream(ctx, sessionID, func(delta chat.StreamEvent) {
+			select {
+			case deltas <- delta:
+			case <-ctx.Done():
+			}
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}()
+
+	c.Stream(func(w io.Writer) bool {
+		delta, ok := <-deltas
+		if !ok {
+			return false
+		}
+		if delta.ToolCall != nil {
+			c.SSEvent(delta.Type, delta.ToolCall)
+		} else {
+			c.SSEvent(delta.Type, delta.Text)
+		}
+		return true
+	})
+
+	select {
+	case err := <-errCh:
+		c.SSEvent("error", err.Error())
+	case result := <-resultCh:
+		c.SSEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
+	}
 }
 
 type errorResponse struct {

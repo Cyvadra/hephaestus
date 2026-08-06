@@ -71,6 +71,24 @@ type TurnResult struct {
 	Metadata map[string]any
 }
 
+// StreamEvent is one user-visible progress update emitted during a turn.
+type StreamEvent struct {
+	Type     string
+	Text     string
+	ToolCall *StreamToolCall
+}
+
+// StreamToolCall identifies one tool invocation across incremental updates.
+type StreamToolCall struct {
+	CallIndex int    `json:"call_index"`
+	Index     int    `json:"index"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	Result    string `json:"result,omitempty"`
+	Status    string `json:"status"`
+}
+
 // turnPrep bundles the per-session state every turn needs before it can
 // assemble context or call the LLM.
 type turnPrep struct {
@@ -150,16 +168,16 @@ func (p *Pipeline) RunTurnAtLeaf(ctx context.Context, sessionID uint, expectedLe
 // RunTurnStream behaves like RunTurn but streams assistant content deltas to
 // onDelta as they arrive from the model. Persistence only happens once the
 // full turn completes, exactly as in RunTurn.
-func (p *Pipeline) RunTurnStream(ctx context.Context, sessionID uint, userText string, onDelta func(string)) (*TurnResult, error) {
+func (p *Pipeline) RunTurnStream(ctx context.Context, sessionID uint, userText string, onDelta func(StreamEvent)) (*TurnResult, error) {
 	return p.runTurn(ctx, sessionID, userText, nil, onDelta)
 }
 
 // RunTurnStreamAtLeaf is RunTurnAtLeaf with incremental assistant deltas.
-func (p *Pipeline) RunTurnStreamAtLeaf(ctx context.Context, sessionID uint, expectedLeaf *uint, userText string, onDelta func(string)) (*TurnResult, error) {
+func (p *Pipeline) RunTurnStreamAtLeaf(ctx context.Context, sessionID uint, expectedLeaf *uint, userText string, onDelta func(StreamEvent)) (*TurnResult, error) {
 	return p.runTurn(ctx, sessionID, userText, expectedLeaf, onDelta)
 }
 
-func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, expectedLeaf *uint, onDelta func(string)) (*TurnResult, error) {
+func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, expectedLeaf *uint, onDelta func(StreamEvent)) (*TurnResult, error) {
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -202,6 +220,16 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 // persisting a new user message. If the active leaf is itself an
 // unanswered user message, this is equivalent to answering it fresh.
 func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint) (*TurnResult, error) {
+	return p.regenerate(ctx, sessionID, nil)
+}
+
+// RegenerateStream behaves like Regenerate but forwards assistant content
+// deltas while the reply is being generated.
+func (p *Pipeline) RegenerateStream(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
+	return p.regenerate(ctx, sessionID, onDelta)
+}
+
+func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -235,7 +263,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint) (*TurnResult,
 		return nil, err
 	}
 
-	return p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, nil)
+	return p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, onDelta)
 }
 
 // runFrom runs converse and persists its output as a single chain parented
@@ -243,7 +271,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint) (*TurnResult,
 // persisted as a new user message (RunTurn's case); when nil, the chain is
 // parented directly onto an already-persisted user message (Regenerate's
 // case) and no new user message is created.
-func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []tools.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(string)) (*TurnResult, error) {
+func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []tools.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
 	toPersist, turn, err := p.converse(ctx, settings, identity, toolset, turn, onDelta)
 	if err != nil {
 		return nil, err
@@ -385,7 +413,7 @@ func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identi
 // persistence order, plus the turn context as left by the last plugin that
 // ran (carrying any Metadata plugins attached, and any content mutation the
 // completion hook made to the final assistant message).
-func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []tools.Tool, turn plugin.TurnContext, onDelta func(string)) ([]store.ChatMessage, plugin.TurnContext, error) {
+func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []tools.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, plugin.TurnContext, error) {
 	messages := append([]store.ChatMessage(nil), turn.Messages...)
 	var toPersist []store.ChatMessage
 	allowedTools := make(map[string]tools.Tool, len(toolset))
@@ -393,13 +421,28 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		allowedTools[tool.Name()] = tool
 	}
 
+	callIndex := -1
 	callLLM := func() (*ds4.ChatResponse, error) {
+		callIndex++
 		if onDelta == nil {
 			return p.llm.Call(ctx, identity, messages, toolset)
 		}
 		return p.llm.CallStream(ctx, identity, messages, toolset, func(d llm.StreamDelta) {
 			if d.Content != "" {
-				onDelta(d.Content)
+				onDelta(StreamEvent{Type: "delta", Text: d.Content})
+			}
+			if d.ReasoningContent != "" {
+				onDelta(StreamEvent{Type: "reasoning", Text: d.ReasoningContent})
+			}
+			for _, toolCall := range d.ToolCalls {
+				onDelta(StreamEvent{Type: "tool_call", ToolCall: &StreamToolCall{
+					CallIndex: callIndex,
+					Index:     toolCall.Index,
+					ID:        toolCall.ID,
+					Name:      toolCall.Name,
+					Arguments: toolCall.Arguments,
+					Status:    "calling",
+				}})
 			}
 		})
 	}
@@ -425,7 +468,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		messages = append(messages, assistantMsg)
 		toPersist = append(toPersist, assistantMsg)
 
-		for _, tc := range resp.ToolCalls() {
+		for toolIndex, tc := range resp.ToolCalls() {
 			turn.Metadata["tool_call"] = tc
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseBefore, turn)
 
@@ -434,6 +477,16 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseAfter, turn)
 			if err != nil {
 				result = fmt.Sprintf("error: %v", err)
+			}
+			if onDelta != nil {
+				onDelta(StreamEvent{Type: "tool_result", ToolCall: &StreamToolCall{
+					CallIndex: callIndex,
+					Index:     toolIndex,
+					ID:        tc.ID,
+					Name:      tc.Function.Name,
+					Result:    result,
+					Status:    "complete",
+				}})
 			}
 
 			toolMsg := store.ChatMessage{Role: ds4.RoleTool, Content: result, ToolCallID: tc.ID, Timestamp: time.Now()}

@@ -1,7 +1,10 @@
-import type { SendMessageResponse } from './types'
+import type { SendMessageResponse, StreamToolCall } from './types'
 
 export type StreamEvent =
   | { type: 'delta'; data: string }
+  | { type: 'reasoning'; data: string }
+  | { type: 'tool_call'; data: StreamToolCall }
+  | { type: 'tool_result'; data: StreamToolCall }
   | { type: 'done'; data: SendMessageResponse }
   | { type: 'error'; data: string }
 
@@ -21,11 +24,21 @@ export async function* streamMessage(
   text: string,
   activeLeafMessageId?: number,
 ): AsyncGenerator<StreamEvent> {
-  const res = await fetch(`/api/v1/sessions/${sessionId}/messages/stream`, {
+  yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId }),
   })
+}
+
+export async function* streamRegenerate(sessionId: number): AsyncGenerator<StreamEvent> {
+  yield* streamResponse(`/api/v1/sessions/${sessionId}/regenerate/stream`, {
+    method: 'POST',
+  })
+}
+
+async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {
+  const res = await fetch(url, init)
 
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
@@ -56,6 +69,10 @@ export async function* streamMessage(
 
     if (eventName === 'delta') {
       yield { type: 'delta', data: parseJSONOrRawString(raw) }
+    } else if (eventName === 'reasoning') {
+      yield { type: 'reasoning', data: parseJSONOrRawString(raw) }
+    } else if (eventName === 'tool_call' || eventName === 'tool_result') {
+      yield { type: eventName, data: JSON.parse(raw) as StreamToolCall }
     } else if (eventName === 'done') {
       const payload: SendMessageResponse = JSON.parse(raw)
       yield { type: 'done', data: payload }

@@ -42,6 +42,7 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	api.POST("/sessions/:id/messages", s.sendMessage)
 	api.POST("/sessions/:id/messages/stream", s.streamMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)
+	api.POST("/sessions/:id/regenerate/stream", s.streamRegenerate)
 	api.GET("/concierges", s.listConcierges)
 
 	s.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
