@@ -8,6 +8,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"time"
 
 	_ "github.com/Cyvadra/hephaestus/docs/swagger"
@@ -23,9 +24,14 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/tools"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		log.Fatalf("dotenv: %v", err)
+	}
+
 	cfg, err := bootstrap.Load()
 	if err != nil {
 		log.Fatalf("bootstrap: %v", err)
