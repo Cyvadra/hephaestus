@@ -1,6 +1,6 @@
 # PicoClaw 代码地图
 
-以下索引按“后续迁移时该去哪里找”组织，路径均相对于参考仓库 `/Users/cyvadra/github/picoclaw`。
+以下索引按“后续迁移时该去哪里找”组织，路径均相对于参考仓库 `../picoclaw`。
 
 ## 顶层
 

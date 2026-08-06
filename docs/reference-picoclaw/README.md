@@ -1,6 +1,6 @@
 # PicoClaw 参考架构索引
 
-这组文档记录对参考项目 [`/Users/cyvadra/github/picoclaw`](/Users/cyvadra/github/picoclaw) 的首次代码考察，用于 Hephaestus 后续的功能借鉴与迁移设计，而不是 PicoClaw 的替代官方文档。
+这组文档记录对参考项目 [`../picoclaw`](../picoclaw) 的首次代码考察，用于 Hephaestus 后续的功能借鉴与迁移设计，而不是 PicoClaw 的替代官方文档。
 
 考察基线：commit `49183d7e`（2026-07-23）。项目是以 Go 实现的轻量个人 AI Agent：Cobra CLI 启动 Gateway，Gateway 装配消息总线、Agent Loop、渠道和后台服务；Agent Loop 在每个会话内串行地推进「上下文 → LLM → 工具 → 最终回复」回合。
 
