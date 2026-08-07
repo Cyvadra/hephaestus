@@ -19,7 +19,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
-	"github.com/Cyvadra/hephaestus/internal/tools"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -44,7 +44,7 @@ const (
 // and runtime store.
 type Service struct {
 	reg       *registry.Registry
-	toolReg   *tools.Registry
+	toolReg   *toolkit.Registry
 	pluginReg *plugin.Registry
 	sessions  *session.Service
 	notifier  *notify.Notifier
@@ -57,7 +57,7 @@ type Service struct {
 }
 
 // NewService wires the command dispatcher to its dependencies.
-func NewService(reg *registry.Registry, toolReg *tools.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service) *Service {
+func NewService(reg *registry.Registry, toolReg *toolkit.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service) *Service {
 	return &Service{
 		reg:       reg,
 		toolReg:   toolReg,
@@ -366,6 +366,7 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 			Impressions: append([]string(nil), c.Impressions...),
 			ToolGroups:  append([]string(nil), c.ToolGroups...),
 			Plugins:     append([]string(nil), c.Plugins...),
+			Project:     settings.Project,
 		}
 		sess.SourceConcierge = c.Name
 		if err := s.saveSettings(sess, settings); err != nil {
@@ -431,6 +432,13 @@ func (s *Service) setActive(sessionID uint, args []string, active bool) (string,
 	case KindToolGroup:
 		target = &settings.ToolGroups
 	case KindPlugin:
+		if !active {
+			for _, name := range names {
+				if s.pluginReg.IsFixed(name) {
+					return "", fmt.Errorf("command: plugin %q is fixed and cannot be deactivated", name)
+				}
+			}
+		}
 		target = &settings.Plugins
 	default:
 		return "", fmt.Errorf("command: /activate and /deactivate do not support kind %q", kind)

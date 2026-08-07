@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"time"
+
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
 // EchoTool trivially echoes its input; used to exercise the registry and
@@ -19,9 +21,9 @@ func (EchoTool) Parameters() map[string]any {
 	}
 }
 
-func (EchoTool) Execute(_ context.Context, args map[string]any) *ToolResult {
+func (EchoTool) Execute(_ context.Context, args map[string]any) *toolkit.ToolResult {
 	text, _ := args["text"].(string)
-	return NewToolResult(text)
+	return toolkit.NewToolResult(text)
 }
 
 // CurrentTimeTool returns the current time on the host, in RFC3339.
@@ -35,12 +37,14 @@ func (CurrentTimeTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 
-func (CurrentTimeTool) Execute(_ context.Context, _ map[string]any) *ToolResult {
-	return NewToolResult(time.Now().Format(time.RFC3339))
+func (CurrentTimeTool) Execute(_ context.Context, _ map[string]any) *toolkit.ToolResult {
+	return toolkit.NewToolResult(time.Now().Format(time.RFC3339))
 }
 
-// RegisterBuiltins adds every built-in placeholder tool to r.
-func RegisterBuiltins(r *Registry) {
+// RegisterPlaceholderTools adds the placeholder tools (echo, current_time)
+// that exercise the registry and tool-loop plumbing. Real tools are wired
+// in at application startup by cmd/hephaestus.
+func RegisterPlaceholderTools(r *toolkit.Registry) {
 	r.Register(EchoTool{})
 	r.Register(CurrentTimeTool{})
 }

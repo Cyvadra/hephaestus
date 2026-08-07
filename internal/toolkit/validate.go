@@ -1,10 +1,11 @@
-package tools
+package toolkit
 
 import "fmt"
 
 // validateArgs validates args against a JSON-Schema-like map with optional
-// "properties", "required", and "additionalProperties" keys. It only
-// checks presence/type at the top level; it is not a full JSON Schema
+// "properties", "required", "additionalProperties" keys, plus "minimum" and
+// "maximum" numeric bounds on integer/number properties. It only checks
+// presence/type/bounds at the top level; it is not a full JSON Schema
 // validator.
 func validateArgs(schema map[string]any, args map[string]any) error {
 	if len(schema) == 0 {
@@ -113,6 +114,7 @@ func checkType(key string, val any, propSchema map[string]any) error {
 		if !isNumber(val) {
 			return fmt.Errorf("property %q must be a number", key)
 		}
+		return checkBounds(key, toFloat(val), propSchema)
 	case "array":
 		if _, ok := val.([]any); !ok {
 			return fmt.Errorf("property %q must be an array", key)
@@ -125,11 +127,64 @@ func checkType(key string, val any, propSchema map[string]any) error {
 	return nil
 }
 
+// checkBounds enforces optional "minimum"/"maximum" on numeric properties.
+func checkBounds(key string, value float64, propSchema map[string]any) error {
+	if min, ok := numProp(propSchema, "minimum"); ok && value < min {
+		return fmt.Errorf("property %q must be >= %v", key, min)
+	}
+	if max, ok := numProp(propSchema, "maximum"); ok && value > max {
+		return fmt.Errorf("property %q must be <= %v", key, max)
+	}
+	return nil
+}
+
+func numProp(schema map[string]any, name string) (float64, bool) {
+	raw, ok := schema[name]
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
+}
+
 func isNumber(val any) bool {
 	switch val.(type) {
 	case float64, float32, int, int32, int64, uint, uint32, uint64:
 		return true
 	default:
 		return false
+	}
+}
+
+func toFloat(val any) float64 {
+	switch v := val.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case uint:
+		return float64(v)
+	case uint32:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	default:
+		return 0
 	}
 }

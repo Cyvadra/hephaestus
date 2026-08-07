@@ -9,6 +9,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"gorm.io/gorm"
 )
 
@@ -76,34 +77,34 @@ type chatHistoryMatch struct {
 
 const maxChatHistorySearchResults = 20
 
-func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]any) *ToolResult {
+func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]any) *toolkit.ToolResult {
 	args, err := parseChatHistorySearchArgs(rawArgs)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
+		return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
 	}
 
 	var re *regexp.Regexp
 	if args.Regex != "" {
 		compiled, err := regexp.Compile(args.Regex)
 		if err != nil {
-			return ErrorResult(fmt.Sprintf("chat_history_search: invalid regex: %s", err))
+			return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: invalid regex: %s", err))
 		}
 		re = compiled
 	}
 	if len(args.Keywords) == 0 && re == nil {
-		return ErrorResult("chat_history_search: at least one of keywords or regex is required")
+		return toolkit.ErrorResult("chat_history_search: at least one of keywords or regex is required")
 	}
 
 	sessions, err := t.targetSessions(ctx, args.Scope)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
+		return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
 	}
 
 	var matches []chatHistoryMatch
 	for _, sess := range sessions {
 		path, err := t.sessions.ActivePath(sess)
 		if err != nil {
-			return ErrorResult(fmt.Sprintf("chat_history_search: load active path for session %d: %s", sess.ID, err))
+			return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: load active path for session %d: %s", sess.ID, err))
 		}
 		for i, m := range path {
 			if !matchesMessage(m, args.Keywords, re) {
@@ -127,9 +128,9 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 
 	out, err := json.Marshal(matches)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("chat_history_search: marshal results: %s", err))
+		return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: marshal results: %s", err))
 	}
-	return SilentResult(string(out))
+	return toolkit.SilentResult(string(out))
 }
 
 func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, error) {
@@ -156,7 +157,7 @@ func (t ChatHistorySearchTool) targetSessions(ctx context.Context, scope string)
 		return sessions, nil
 	}
 
-	sessionID, ok := SessionIDFromContext(ctx)
+	sessionID, ok := toolkit.SessionIDFromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("chat_history_search: no session in context for scope=session")
 	}

@@ -225,7 +225,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 // streamMessage godoc
 //
 //	@Summary		Send a message with streaming
-//	@Description	Like sendMessage, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", and "tool_result" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
+//	@Description	Like sendMessage, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		text/event-stream
@@ -273,7 +273,9 @@ func (s *Server) streamMessage(c *gin.Context) {
 		if !ok {
 			return false
 		}
-		if delta.ToolCall != nil {
+		if delta.Session != nil {
+			streamEvent(delta.Type, delta.Session)
+		} else if delta.ToolCall != nil {
 			streamEvent(delta.Type, delta.ToolCall)
 		} else {
 			streamEvent(delta.Type, delta.Text)
@@ -409,7 +411,9 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 		if !ok {
 			return false
 		}
-		if delta.ToolCall != nil {
+		if delta.Session != nil {
+			streamEvent(delta.Type, delta.Session)
+		} else if delta.ToolCall != nil {
 			streamEvent(delta.Type, delta.ToolCall)
 		} else {
 			streamEvent(delta.Type, delta.Text)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/hephaestus/internal/project"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
 // CreateProjectTool lets the LLM create a new Project: an on-disk folder
@@ -46,18 +47,18 @@ func (CreateProjectTool) Parameters() map[string]any {
 	}
 }
 
-func (t CreateProjectTool) Execute(_ context.Context, args map[string]any) *ToolResult {
+func (t CreateProjectTool) Execute(_ context.Context, args map[string]any) *toolkit.ToolResult {
 	name, _ := args["name"].(string)
 	if strings.TrimSpace(name) == "" {
-		return ErrorResult("create_project: name is required")
+		return toolkit.ErrorResult("create_project: name is required")
 	}
 	description, _ := args["description"].(string)
 
 	p, err := t.projects.Create(name, description)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("create_project: %s", err))
+		return toolkit.ErrorResult(fmt.Sprintf("create_project: %s", err))
 	}
-	return UserResult(fmt.Sprintf(
+	return toolkit.UserResult(fmt.Sprintf(
 		"Created project %q (id %d). The user can bind a session to it with /switch project %s.",
 		p.Name, p.ID, p.Name,
 	))
@@ -82,14 +83,14 @@ func (ListProjectsTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 
-func (t ListProjectsTool) Execute(_ context.Context, _ map[string]any) *ToolResult {
+func (t ListProjectsTool) Execute(_ context.Context, _ map[string]any) *toolkit.ToolResult {
 	projects, err := t.projects.List()
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("list_projects: %s", err))
+		return toolkit.ErrorResult(fmt.Sprintf("list_projects: %s", err))
 	}
 	out, err := json.Marshal(projects)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("list_projects: marshal: %s", err))
+		return toolkit.ErrorResult(fmt.Sprintf("list_projects: marshal: %s", err))
 	}
-	return SilentResult(string(out))
+	return toolkit.SilentResult(string(out))
 }

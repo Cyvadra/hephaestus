@@ -1,6 +1,10 @@
-package tools
+package toolkit
 
 import "fmt"
+
+type availability interface {
+	Available() bool
+}
 
 // Registry holds every Tool the platform knows how to execute.
 type Registry struct {
@@ -16,7 +20,7 @@ func NewRegistry() *Registry {
 // programming error in this platform's own tool definitions.
 func (r *Registry) Register(t Tool) {
 	if _, dup := r.byName[t.Name()]; dup {
-		panic(fmt.Sprintf("tools: duplicate tool name %q", t.Name()))
+		panic(fmt.Sprintf("toolkit: duplicate tool name %q", t.Name()))
 	}
 	r.byName[t.Name()] = t
 }
@@ -45,7 +49,7 @@ func (r *Registry) Expand(groupNames []string, groups map[string]ToolGroupTools)
 	for _, groupName := range groupNames {
 		group, ok := groups[groupName]
 		if !ok {
-			return nil, fmt.Errorf("tools: unknown tool group %q", groupName)
+			return nil, fmt.Errorf("toolkit: unknown tool group %q", groupName)
 		}
 		for _, toolName := range group.Tools {
 			if seen[toolName] {
@@ -53,7 +57,10 @@ func (r *Registry) Expand(groupNames []string, groups map[string]ToolGroupTools)
 			}
 			t, ok := r.Get(toolName)
 			if !ok {
-				return nil, fmt.Errorf("tools: tool group %q references unregistered tool %q", groupName, toolName)
+				return nil, fmt.Errorf("toolkit: tool group %q references unregistered tool %q", groupName, toolName)
+			}
+			if available, ok := t.(availability); ok && !available.Available() {
+				continue
 			}
 			seen[toolName] = true
 			out = append(out, t)

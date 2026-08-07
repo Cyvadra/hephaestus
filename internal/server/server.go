@@ -4,6 +4,11 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -51,7 +56,24 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	return s
 }
 
-// Run starts the HTTP server on addr, blocking until it exits.
-func (s *Server) Run(addr string) error {
-	return s.engine.Run(addr)
+// Run serves until ctx is canceled, then drains in-flight requests.
+func (s *Server) Run(ctx context.Context, addr string) error {
+	httpServer := &http.Server{Addr: addr, Handler: s.engine}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- httpServer.ListenAndServe() }()
+
+	select {
+	case err := <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return nil
+	}
 }

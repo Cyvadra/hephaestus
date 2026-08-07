@@ -1,7 +1,9 @@
-// Package tools implements the platform's built-in tool registry. Actual
-// tools are predefined in Go; ToolGroup config files only select among them
-// by name, they never define new tools.
-package tools
+// Package toolkit defines the platform's tool runtime: the Tool capability
+// contract, the ToolResult value, the Registry that holds tools, and the
+// validation/execution helpers that run a single tool call. It has no
+// knowledge of any concrete tool; concrete tools live in internal/tools and
+// depend on this package.
+package toolkit
 
 import "context"
 

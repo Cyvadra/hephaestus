@@ -7,8 +7,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/Cyvadra/hephaestus/docs/swagger"
@@ -24,6 +27,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/server"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/joho/godotenv"
 )
@@ -40,28 +44,51 @@ func main() {
 
 	notifier := notify.New(cfg.WeComWebhookURL)
 
-	toolReg := tools.NewRegistry()
-	tools.RegisterBuiltins(toolReg)
+	toolReg := toolkit.NewRegistry()
+	tools.RegisterPlaceholderTools(toolReg)
 
 	db, err := store.Open(cfg.PostgresDSN)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
-	llmClient := llm.New(cfg.DeepSeekAPIKey)
-	sessions := session.New(db)
-	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
-
 	projects, err := project.New(db, cfg.ProjectsRoot)
 	if err != nil {
 		log.Fatalf("project: %v", err)
 	}
+	if _, err := projects.EnsureDefault(); err != nil {
+		log.Fatalf("project: ensure default: %v", err)
+	}
+	llmClient := llm.New(cfg.DeepSeekAPIKey)
+	sessions := session.New(db, project.DefaultName)
+	if err := sessions.BindUnscopedSessions(); err != nil {
+		log.Fatalf("session: bind default project: %v", err)
+	}
+	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
+	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
+	toolReg.Register(tools.NewReadFileTool(fileAccess))
+	toolReg.Register(tools.NewReadFileLinesTool(fileAccess))
+	toolReg.Register(tools.NewWriteFileTool(fileAccess))
+	toolReg.Register(tools.NewEditFileTool(fileAccess))
+	toolReg.Register(tools.NewAppendFileTool(fileAccess))
+	toolReg.Register(tools.NewListDirTool(fileAccess))
+	toolReg.Register(tools.NewWebFetchTool(0, 0))
+	webSearch, err := tools.NewWebSearchTool(tools.WebSearchConfig{Provider: cfg.WebSearchProvider, BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, SogouEnabled: cfg.WebSearchSogouEnabled})
+	if err != nil {
+		log.Fatalf("bootstrap: web search: %v", err)
+	}
+	toolReg.Register(webSearch)
+	execTool := tools.NewExecToolWithAccess(cfg.ExecEnabled, 0, fileAccess)
+	toolReg.Register(execTool)
 
 	pluginReg := plugin.NewRegistry(notifier)
 	pluginReg.Register(builtin.NewSessionSummaryPlugin(db, llmClient, 5*time.Minute))
 	pluginReg.Register(builtin.NewStorylineStatusPlugin(db, llmClient))
 	pluginReg.Register(builtin.NewOptionsPlugin(llmClient))
+	if err := pluginReg.SetFixedPlugins(cfg.FixedPlugins); err != nil {
+		log.Fatalf("plugin: configure fixed plugins: %v", err)
+	}
 
 	reg, err := registry.Load(cfg.ConfigDir)
 	if err != nil {
@@ -75,7 +102,12 @@ func main() {
 	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects)
 
 	srv := server.New(db, reg, sessions, pipeline, commands)
-	if err := srv.Run(cfg.ListenAddr); err != nil {
-		log.Fatalf("server: %v", err)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {
+		execTool.Shutdown()
+		log.Printf("server: %v", err)
+		return
 	}
+	execTool.Shutdown()
 }

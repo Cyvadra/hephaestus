@@ -13,7 +13,7 @@ import (
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
-	"github.com/Cyvadra/hephaestus/internal/tools"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
 // Client wraps a ds4.Client with Identity-aware request building.
@@ -32,7 +32,7 @@ func New(apiKey string) *Client {
 // messages must already include every system/injected/impression/history
 // entry the caller wants in context; Call does not add anything beyond
 // identity's own system prompt and injected messages.
-func (c *Client) Call(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []tools.Tool) (*ds4.ChatResponse, error) {
+func (c *Client) Call(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool) (*ds4.ChatResponse, error) {
 	builder := c.buildChat(identity, messages, toolset)
 	resp, err := builder.DoWithContext(ctx)
 	if err != nil {
@@ -62,7 +62,7 @@ type ToolCallDelta struct {
 // *ds4.ChatResponse shape Call returns (by accumulating every streamed
 // chunk, including tool_calls keyed by their index), so callers such as the
 // tool loop don't need to special-case streaming vs non-streaming responses.
-func (c *Client) CallStream(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []tools.Tool, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
+func (c *Client) CallStream(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
 	builder := c.buildChat(identity, messages, toolset)
 
 	var content, reasoning strings.Builder
@@ -133,7 +133,7 @@ func (c *Client) CallStream(ctx context.Context, identity registry.Identity, mes
 
 // buildChat constructs the shared ChatBuilder state for both Call and
 // CallStream from an Identity, its history, and its available tools.
-func (c *Client) buildChat(identity registry.Identity, messages []store.ChatMessage, toolset []tools.Tool) *ds4.ChatBuilder {
+func (c *Client) buildChat(identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool) *ds4.ChatBuilder {
 	builder := c.ds4.Chat().Model(modelOrDefault(identity.PreferredModel))
 
 	builder.System(identity.SystemPrompt)
