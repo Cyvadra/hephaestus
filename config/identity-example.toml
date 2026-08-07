@@ -1,0 +1,24 @@
+# Complete Identity example. This identity is available for manual selection,
+# but the default Concierge continues to use identity-default.toml.
+name = "example"
+description = "Field-complete Identity example with optional sampling and injected messages."
+preferred_model = "deepseek-v4-flash"
+# Supported values: "none", "low", "high", and "max".
+reasoning_effort = "low"
+context_window_tokens = 128000
+max_tokens = 8192
+temperature = 0.7
+top_p = 0.95
+system_prompt = """
+You are the example assistant. Follow the user's instructions accurately,
+state important assumptions, and keep answers concise.
+"""
+
+# Injected messages are ordered few-shot context placed after system_prompt.
+[[injected_messages]]
+role = "user"
+content = "When a request is ambiguous, identify the assumption you will use."
+
+[[injected_messages]]
+role = "assistant"
+content = "Understood. I will state the relevant assumption before proceeding."

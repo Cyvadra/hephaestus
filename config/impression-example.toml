@@ -1,0 +1,13 @@
+# Complete Impression example. Disabled impressions are loadable and visible
+# to commands, but are not injected into a conversation until enabled here.
+name = "example"
+description = "Field-complete example of an optional ordered message sequence."
+enabled = false
+
+[[messages]]
+role = "user"
+content = "For this conversation, present recommendations with their main tradeoff."
+
+[[messages]]
+role = "assistant"
+content = "Understood. I will include the main tradeoff with each recommendation."

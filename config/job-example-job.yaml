@@ -1,0 +1,12 @@
+# Complete Job example. The trigger is an expr-lang/expr expression evaluated
+# in the host's local timezone. This false trigger keeps the example inert.
+name: example-job
+title: Example scheduled job
+description: Demonstrates every Job field and a Workflow retry policy.
+goal: Run the example workflow when the configured trigger becomes true.
+workflows:
+  - workflow: example-workflow
+    retry_delay_seconds: 60
+    retry_count: 2
+trigger: "false"
+max_executions_per_day: 1

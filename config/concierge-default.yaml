@@ -3,4 +3,7 @@ identity: default
 impressions: []
 tool_groups:
   - basic
+  - project
+  - web
+  - exec
 plugins: []

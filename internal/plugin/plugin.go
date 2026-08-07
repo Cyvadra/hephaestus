@@ -16,7 +16,10 @@ import (
 type Hook string
 
 const (
-	HookUserMessageIncoming        Hook = "user_message_incoming" // after only
+	HookUserMessageIncoming Hook = "user_message_incoming" // after only
+	// HookSessionSummaryRequested runs the system session-summary task after
+	// inbound plugins have finalized the pending user message.
+	HookSessionSummaryRequested    Hook = "session_summary_requested"
 	HookToolCall                   Hook = "tool_call"
 	HookContextCompression         Hook = "context_compression"
 	HookAssistantFirstCallLLM      Hook = "assistant_first_call_llm"
@@ -38,8 +41,10 @@ const (
 // (possibly modified) copy; they never see a pointer into the pipeline's
 // own state.
 type TurnContext struct {
-	SessionID uint
-	Messages  []store.ChatMessage
+	SessionID        uint
+	Messages         []store.ChatMessage
+	IsFirstTurn      bool
+	FirstUserMessage string
 	// Metadata carries hook-specific or plugin-specific data (e.g. the
 	// pending tool call, the outbound text about to be sent) without
 	// forcing every hook to share one rigid schema.
@@ -57,7 +62,13 @@ func (t TurnContext) clone() TurnContext {
 	for k, v := range t.Metadata {
 		metadata[k] = v
 	}
-	return TurnContext{SessionID: t.SessionID, Messages: messages, Metadata: metadata}
+	return TurnContext{
+		SessionID:        t.SessionID,
+		Messages:         messages,
+		IsFirstTurn:      t.IsFirstTurn,
+		FirstUserMessage: t.FirstUserMessage,
+		Metadata:         metadata,
+	}
 }
 
 // Plugin is a single side-channel extension. Implementations register

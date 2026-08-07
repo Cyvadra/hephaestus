@@ -1,0 +1,4 @@
+name: web
+tools:
+  - web_fetch
+  - web_search

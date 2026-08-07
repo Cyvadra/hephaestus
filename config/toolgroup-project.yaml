@@ -2,3 +2,9 @@ name: project
 tools:
   - create_project
   - list_projects
+  - read_file
+  - read_file_lines
+  - write_file
+  - edit_file
+  - append_file
+  - list_dir

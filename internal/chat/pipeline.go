@@ -19,14 +19,14 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
-	"github.com/Cyvadra/hephaestus/internal/tools"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"gorm.io/gorm"
 )
 
 const (
-	// maxToolLoopIterations bounds the LLM<->tool round trips within a
-	// single turn so a misbehaving tool/model can't loop forever.
-	maxToolLoopIterations = 8
+	// maxConsecutiveToolCalls bounds repeated calls to one tool without an
+	// intervening call to another tool.
+	maxConsecutiveToolCalls = 12
 
 	// compressionTriggerRatio matches the design doc's "current context
 	// length > 80% max context length" compression trigger.
@@ -37,7 +37,7 @@ const (
 type Pipeline struct {
 	db       *gorm.DB
 	reg      *registry.Registry
-	toolReg  *tools.Registry
+	toolReg  *toolkit.Registry
 	plugins  *plugin.Registry
 	llm      *llm.Client
 	sessions *session.Service
@@ -49,7 +49,7 @@ type Pipeline struct {
 func NewPipeline(
 	db *gorm.DB,
 	reg *registry.Registry,
-	toolReg *tools.Registry,
+	toolReg *toolkit.Registry,
 	plugins *plugin.Registry,
 	llmClient *llm.Client,
 	sessions *session.Service,
@@ -81,6 +81,7 @@ type StreamEvent struct {
 	Type     string
 	Text     string
 	ToolCall *StreamToolCall
+	Session  *store.Session
 }
 
 // StreamToolCall identifies one tool invocation across incremental updates.
@@ -100,7 +101,7 @@ type turnPrep struct {
 	sess       store.Session
 	settings   store.SessionSettings
 	identity   registry.Identity
-	toolset    []tools.Tool
+	toolset    []toolkit.Tool
 	activePath []store.ChatMessage
 	compRow    *store.Compression
 	// workspace is the bound Project's directory, or "" if none is bound.
@@ -131,9 +132,9 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		}
 	}
 
-	toolGroups := make(map[string]tools.ToolGroupTools, len(p.reg.ToolGroups))
+	toolGroups := make(map[string]toolkit.ToolGroupTools, len(p.reg.ToolGroups))
 	for name, tg := range p.reg.ToolGroups {
-		toolGroups[name] = tools.ToolGroupTools{Tools: tg.Tools}
+		toolGroups[name] = toolkit.ToolGroupTools{Tools: tg.Tools}
 	}
 	toolset, err := p.toolReg.Expand(prep.settings.ToolGroups, toolGroups)
 	if err != nil {
@@ -199,7 +200,7 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 		return nil, err
 	}
 	if prep.workspace != "" {
-		ctx = tools.WithWorkspace(ctx, prep.workspace)
+		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
 	}
 	if !sameMessageID(prep.sess.ActiveLeafMessageID, expectedLeaf) {
 		return nil, session.ErrStaleActiveLeaf
@@ -212,11 +213,18 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	staticMessageCount := len(p.staticContext(prep.settings))
 
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
-	turn := plugin.TurnContext{SessionID: sessionID, Messages: append(llmContext, pendingUser), Metadata: map[string]any{}}
+	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
+	if turn.IsFirstTurn {
+		if firstUser, err := lastUserMessage(turn.Messages); err == nil {
+			turn.FirstUserMessage = firstUser.Content
+		}
+	}
+	summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, onDelta)
 
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, staticMessageCount, turn)
 	if err != nil {
+		p.awaitSessionSummary(ctx, summaryDone, onDelta)
 		return nil, err
 	}
 
@@ -230,8 +238,51 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	if err != nil {
 		return nil, err
 	}
+	if turn.IsFirstTurn {
+		turn.FirstUserMessage = editedUser.Content
+	}
 
-	return p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, &editedUser, onDelta)
+	result, err := p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, &editedUser, onDelta)
+	p.awaitSessionSummary(ctx, summaryDone, onDelta)
+	return result, err
+}
+
+// scheduleSessionSummary starts the fixed session-summary plugin after
+// inbound plugins have finalized the pending user message. It deliberately
+// outlives the turn context so an LLM or tool failure cannot prevent the
+// title and summary from being refreshed.
+func (p *Pipeline) scheduleSessionSummary(ctx context.Context, names []string, turn plugin.TurnContext, onDelta func(StreamEvent)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result := p.plugins.Run(context.WithoutCancel(ctx), names, plugin.HookSessionSummaryRequested, plugin.PhaseAfter, turn)
+		updated, _ := result.Metadata["session_summary_updated"].(bool)
+		if !updated {
+			return
+		}
+
+		var sess store.Session
+		if err := p.db.First(&sess, turn.SessionID).Error; err != nil {
+			p.notify.Warn("chat: load session %d after summary: %v", turn.SessionID, err)
+			return
+		}
+		if onDelta != nil {
+			onDelta(StreamEvent{Type: "session_updated", Session: &sess})
+		}
+	}()
+	return done
+}
+
+// awaitSessionSummary keeps a streaming response open long enough to report
+// a completed title/summary update. Non-streaming callers do not wait.
+func (p *Pipeline) awaitSessionSummary(ctx context.Context, done <-chan struct{}, onDelta func(StreamEvent)) {
+	if onDelta == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // Regenerate re-answers the nearest ancestor user message on sessionID's
@@ -254,7 +305,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 		return nil, err
 	}
 	if prep.workspace != "" {
-		ctx = tools.WithWorkspace(ctx, prep.workspace)
+		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
 	}
 	if len(prep.activePath) == 0 {
 		return nil, fmt.Errorf("chat: session %d has no messages to regenerate", sessionID)
@@ -279,7 +330,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 	}
 	staticMessageCount := len(p.staticContext(prep.settings))
 
-	turn := plugin.TurnContext{SessionID: sessionID, Messages: llmContext, Metadata: map[string]any{}}
+	turn := newTurnContext(sessionID, llmContext, userIdx == 0, userMsg.Content)
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, pathUpToUser, prep.compRow, staticMessageCount, turn)
 	if err != nil {
 		return nil, err
@@ -293,7 +344,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 // persisted as a new user message (RunTurn's case); when nil, the chain is
 // parented directly onto an already-persisted user message (Regenerate's
 // case) and no new user message is created.
-func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []tools.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
+func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
 	toPersist, turn, err := p.converse(ctx, settings, identity, toolset, turn, onDelta)
 	if err != nil {
 		return nil, err
@@ -310,10 +361,20 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.S
 	}
 	final := saved[len(saved)-1]
 
-	turn.Messages = append(turn.Messages, final)
-	turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+	turn.Messages[len(turn.Messages)-1] = final
+	go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
 
 	return &TurnResult{Message: &final, Metadata: turn.Metadata}, nil
+}
+
+func newTurnContext(sessionID uint, messages []store.ChatMessage, isFirstTurn bool, firstUserMessage string) plugin.TurnContext {
+	return plugin.TurnContext{
+		SessionID:        sessionID,
+		Messages:         messages,
+		IsFirstTurn:      isFirstTurn,
+		FirstUserMessage: firstUserMessage,
+		Metadata:         map[string]any{},
+	}
 }
 
 // buildContext assembles the messages sent to the LLM ahead of the pending
@@ -435,10 +496,10 @@ func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identi
 // persistence order, plus the turn context as left by the last plugin that
 // ran (carrying any Metadata plugins attached, and any content mutation the
 // completion hook made to the final assistant message).
-func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []tools.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, plugin.TurnContext, error) {
+func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, plugin.TurnContext, error) {
 	messages := append([]store.ChatMessage(nil), turn.Messages...)
 	var toPersist []store.ChatMessage
-	allowedTools := make(map[string]tools.Tool, len(toolset))
+	allowedTools := make(map[string]toolkit.Tool, len(toolset))
 	for _, tool := range toolset {
 		allowedTools[tool.Name()] = tool
 	}
@@ -478,10 +539,9 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookAssistantFirstCallLLM, plugin.PhaseAfter, turn)
 	messages = turn.Messages
 
-	for iteration := 0; resp.FinishReason() == ds4.FinishReasonToolCalls; iteration++ {
-		if iteration >= maxToolLoopIterations {
-			return nil, turn, fmt.Errorf("chat: exceeded %d tool-loop iterations", maxToolLoopIterations)
-		}
+	lastToolName := ""
+	consecutiveToolCalls := 0
+	for resp.FinishReason() == ds4.FinishReasonToolCalls {
 
 		assistantMsg, err := ds4MessageToStore(*resp.FirstMessage())
 		if err != nil {
@@ -493,6 +553,9 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 
 		toolCalls := resp.ToolCalls()
 		for _, tc := range toolCalls {
+			if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
+				return nil, turn, err
+			}
 			turn.Metadata["tool_call"] = tc
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseBefore, turn)
 		}
@@ -500,7 +563,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		// Tool calls from a single model response are independent of one
 		// another, so they run concurrently; results are collected back in
 		// the model's original order for deterministic persistence.
-		results := make([]*tools.ToolResult, len(toolCalls))
+		results := make([]*toolkit.ToolResult, len(toolCalls))
 		var wg sync.WaitGroup
 		for i, tc := range toolCalls {
 			wg.Add(1)
@@ -567,20 +630,33 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	return toPersist, turn, nil
 }
 
-func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]tools.Tool, tc ds4.ToolCall) *tools.ToolResult {
+func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall) *toolkit.ToolResult {
 	t, ok := allowedTools[tc.Function.Name]
 	if !ok {
-		return tools.ErrorResult(fmt.Sprintf("chat: tool %q is not enabled for this session", tc.Function.Name))
+		return toolkit.ErrorResult(fmt.Sprintf("chat: tool %q is not enabled for this session", tc.Function.Name))
 	}
 
 	var args map[string]any
 	if tc.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-			return tools.ErrorResult(fmt.Sprintf("chat: invalid arguments for tool %q: %v", tc.Function.Name, err))
+			return toolkit.ErrorResult(fmt.Sprintf("chat: invalid arguments for tool %q: %v", tc.Function.Name, err))
 		}
 	}
 
-	return tools.RunTool(tools.WithSessionID(ctx, sessionID), t, args)
+	return toolkit.RunTool(toolkit.WithSessionID(ctx, sessionID), t, args)
+}
+
+func trackConsecutiveToolCall(lastToolName *string, consecutiveToolCalls *int, toolName string) error {
+	if toolName == *lastToolName {
+		*consecutiveToolCalls++
+	} else {
+		*lastToolName = toolName
+		*consecutiveToolCalls = 1
+	}
+	if *consecutiveToolCalls > maxConsecutiveToolCalls {
+		return fmt.Errorf("chat: tool %q called consecutively more than %d times", toolName, maxConsecutiveToolCalls)
+	}
+	return nil
 }
 
 func ds4MessageToStore(m ds4.Message) (store.ChatMessage, error) {

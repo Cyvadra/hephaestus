@@ -18,11 +18,9 @@ type SessionSettings struct {
 	ToolGroups  []string `json:"tool_groups"`
 	Plugins     []string `json:"plugins"`
 
-	// Project is the bound Project's Name, or "" if this session isn't
-	// scoped to one. File/exec tools resolve their workspace root from it.
-	// Unlike the fields above, Project has no Concierge counterpart: it is
-	// created at runtime and bound via /switch, never part of a static
-	// Concierge definition.
+	// Project is the bound Project's Name. File/exec tools resolve their
+	// workspace root from it. New sessions default to default-workspace and
+	// can switch to another runtime-created Project via /switch.
 	Project string `json:"project"`
 }
 

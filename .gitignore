@@ -40,6 +40,6 @@ swagger.json
 swagger.yaml
 
 # Config files shall be private
-config/
-*.yaml
-*.toml
+# config/
+# *.yaml
+# *.toml

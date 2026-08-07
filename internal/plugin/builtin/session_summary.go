@@ -15,9 +15,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// SessionSummaryPlugin periodically regenerates a session's Title (<=20
-// chars) and Summary (<=300 chars) via a minor-model side call, so /list
-// session and /status have something human-readable to show.
+// SessionSummaryPlugin generates the initial Title from the session's first
+// user message, then periodically refreshes its Title (<=20 chars) and Summary
+// (<=300 chars) via a minor-model side call.
 type SessionSummaryPlugin struct {
 	db       *gorm.DB
 	llm      *llm.Client
@@ -39,7 +39,7 @@ type sessionSummaryState struct {
 }
 
 func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plugin.Phase, turn plugin.TurnContext) (plugin.TurnContext, error) {
-	if hook != plugin.HookAssistantMessageCompletion || phase != plugin.PhaseAfter {
+	if hook != plugin.HookSessionSummaryRequested || phase != plugin.PhaseAfter {
 		return turn, nil
 	}
 
@@ -52,12 +52,7 @@ func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, pha
 		return turn, nil
 	}
 
-	transcript := renderTranscript(turn.Messages, p.maxInput)
-	prompt := fmt.Sprintf(
-		"Conversation so far:\n%s\n\nRespond with exactly two lines: a title "+
-			"(max 20 characters) then a summary (max 300 characters). No other text.",
-		transcript,
-	)
+	prompt := p.prompt(turn)
 	result, err := p.llm.RawCall(ctx, "You produce concise session titles and summaries.", prompt, 256)
 	if err != nil {
 		return turn, fmt.Errorf("session_summary: %w", err)
@@ -72,6 +67,25 @@ func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, pha
 	if err := store.SavePluginState(p.db, turn.SessionID, p.Name(), sessionSummaryState{LastSummarizedAt: time.Now()}); err != nil {
 		return turn, fmt.Errorf("session_summary: save state: %w", err)
 	}
+	turn.Metadata["session_summary_updated"] = true
 
 	return turn, nil
+}
+
+func (p *SessionSummaryPlugin) prompt(turn plugin.TurnContext) string {
+	transcript := renderTranscript(turn.Messages, p.maxInput)
+	if turn.IsFirstTurn {
+		return fmt.Sprintf(
+			"First user message:\n%s\n\nConversation so far:\n%s\n\nRespond with exactly two lines: "+
+				"a title based only on the first user message (max 20 characters), then a summary "+
+				"of the conversation (max 300 characters). No other text.",
+			turn.FirstUserMessage,
+			transcript,
+		)
+	}
+	return fmt.Sprintf(
+		"Conversation so far:\n%s\n\nRespond with exactly two lines: a title "+
+			"(max 20 characters) then a summary (max 300 characters). No other text.",
+		transcript,
+	)
 }

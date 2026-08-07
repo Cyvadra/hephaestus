@@ -1,0 +1,27 @@
+# Complete Workflow example. Workflow names must be at least 10 characters
+# and contain no spaces.
+name: example-workflow
+description: Demonstrates structured input, output, and ordered LLM steps.
+concierge: default
+input_schema:
+  type: object
+  properties:
+    topic:
+      type: string
+      description: Topic to summarize.
+  required:
+    - topic
+output_schema:
+  type: object
+  properties:
+    summary:
+      type: string
+    follow_up:
+      type: array
+      items:
+        type: string
+  required:
+    - summary
+steps:
+  - Review the supplied topic and identify the most important facts.
+  - Produce a concise summary and a list of useful follow-up questions.

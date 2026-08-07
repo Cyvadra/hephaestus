@@ -4,6 +4,9 @@ package bootstrap
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // Config holds environment-derived settings needed to start the process.
@@ -25,18 +28,47 @@ type Config struct {
 	// ProjectsRoot is the directory under which each Project gets its own
 	// named subdirectory; created on startup if missing.
 	ProjectsRoot string
+	// ProjectAccessOverride allows filesystem tools to access paths outside
+	// the bound Project and the system temporary directory.
+	ProjectAccessOverride bool
+	// ExecEnabled defaults to false.
+	ExecEnabled             bool
+	WebSearchProvider       string
+	WebSearchBraveAPIKeys   []string
+	WebSearchTavilyAPIKeys  []string
+	WebSearchSerpAPIKeys    []string
+	WebSearchSerpAPIEngine  string
+	WebSearchSearXNGBaseURL string
+	WebSearchSogouEnabled   bool
+	// FixedPlugins run for every session and cannot be disabled through
+	// mutable session settings.
+	FixedPlugins []string
 }
 
 // Load reads configuration from environment variables, applying defaults
 // where safe to do so, and validates required fields.
 func Load() (*Config, error) {
+	projectsRoot, err := expandHomePath(getenvDefault("HEPHAESTUS_PROJECTS_ROOT", "./data/projects"))
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: projects root: %w", err)
+	}
 	cfg := &Config{
-		ConfigDir:       getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
-		PostgresDSN:     os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
-		DeepSeekAPIKey:  os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
-		WeComWebhookURL: os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
-		ListenAddr:      getenvDefault("HEPHAESTUS_LISTEN_ADDR", ":9016"),
-		ProjectsRoot:    getenvDefault("HEPHAESTUS_PROJECTS_ROOT", "./data/projects"),
+		ConfigDir:               getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
+		PostgresDSN:             os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
+		DeepSeekAPIKey:          os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
+		WeComWebhookURL:         os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
+		ListenAddr:              getenvDefault("HEPHAESTUS_LISTEN_ADDR", ":9016"),
+		ProjectsRoot:            projectsRoot,
+		ProjectAccessOverride:   getenvBool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
+		ExecEnabled:             getenvBool("HEPHAESTUS_EXEC_ENABLED"),
+		WebSearchProvider:       getenvDefault("HEPHAESTUS_WEB_SEARCH_PROVIDER", "auto"),
+		WebSearchBraveAPIKeys:   splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS")),
+		WebSearchTavilyAPIKeys:  splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS")),
+		WebSearchSerpAPIKeys:    splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS")),
+		WebSearchSerpAPIEngine:  getenvDefault("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE", "google_light"),
+		WebSearchSearXNGBaseURL: os.Getenv("HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL"),
+		WebSearchSogouEnabled:   getenvBool("HEPHAESTUS_WEB_SEARCH_SOGOU_ENABLED"),
+		FixedPlugins:            splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "session_summary")),
 	}
 
 	if cfg.PostgresDSN == "" {
@@ -49,9 +81,38 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+func expandHomePath(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~"+string(filepath.Separator))), nil
+}
+
+func getenvBool(key string) bool {
+	value, err := strconv.ParseBool(os.Getenv(key))
+	return err == nil && value
+}
+
 func getenvDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+func splitCommaSeparated(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }

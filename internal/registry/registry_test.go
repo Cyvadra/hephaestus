@@ -95,6 +95,41 @@ max_executions_per_day: 1
 	}
 }
 
+func TestLoad_RepositoryConfigExamples(t *testing.T) {
+	reg, err := Load(filepath.Join("..", "..", "config"))
+	if err != nil {
+		t.Fatalf("Load repository config: %v", err)
+	}
+
+	knownTools := map[string]bool{
+		"echo": true, "current_time": true, "chat_history_search": true,
+		"create_project": true, "list_projects": true,
+		"read_file": true, "read_file_lines": true, "write_file": true,
+		"edit_file": true, "append_file": true, "list_dir": true,
+		"web_fetch": true, "web_search": true, "exec": true,
+	}
+	if err := reg.Validate(knownTools, map[string]bool{}); err != nil {
+		t.Fatalf("Validate repository config: %v", err)
+	}
+
+	identity := reg.Identities["example"]
+	if identity.Temperature == nil || identity.TopP == nil || len(identity.InjectedMessages) != 2 {
+		t.Fatalf("expected field-complete example identity, got %+v", identity)
+	}
+	impression := reg.Impressions["example"]
+	if impression.Enabled || len(impression.Messages) != 2 {
+		t.Fatalf("expected disabled example impression with two messages, got %+v", impression)
+	}
+	workflow := reg.Workflows["example-workflow"]
+	if workflow.InputSchema == nil || workflow.OutputSchema == nil || len(workflow.Steps) != 2 {
+		t.Fatalf("expected field-complete example workflow, got %+v", workflow)
+	}
+	job := reg.Jobs["example-job"]
+	if len(job.Workflows) != 1 || job.Workflows[0].RetryDelaySeconds != 60 || job.Workflows[0].RetryCount != 2 {
+		t.Fatalf("expected field-complete example job, got %+v", job)
+	}
+}
+
 func TestLoad_NameMismatch(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "identity-default.toml", `

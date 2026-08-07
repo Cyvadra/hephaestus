@@ -111,3 +111,35 @@ func TestRegistry_Run_SuccessfulPluginIsAdopted(t *testing.T) {
 		t.Fatalf("expected metadata tagged, got %v", out.Metadata)
 	}
 }
+
+func TestRegistry_Run_MergesFixedAndSessionPluginsWithoutDuplicates(t *testing.T) {
+	reg := NewRegistry(notify.New(""))
+	for _, name := range []string{"fixed", "session"} {
+		pluginName := name
+		reg.Register(stubPlugin{
+			name:    pluginName,
+			timeout: time.Second,
+			handle: func(_ context.Context, _ Hook, _ Phase, turn TurnContext) (TurnContext, error) {
+				order, _ := turn.Metadata["order"].([]string)
+				turn.Metadata["order"] = append(order, pluginName)
+				return turn, nil
+			},
+		})
+	}
+	if err := reg.SetFixedPlugins([]string{"fixed", "fixed"}); err != nil {
+		t.Fatalf("SetFixedPlugins: %v", err)
+	}
+
+	out := reg.Run(context.Background(), []string{"session", "fixed"}, HookUserMessageIncoming, PhaseAfter, TurnContext{Metadata: map[string]any{}})
+	order, _ := out.Metadata["order"].([]string)
+	if fmt.Sprint(order) != "[fixed session]" {
+		t.Fatalf("expected fixed plugin first with duplicates removed, got %v", order)
+	}
+}
+
+func TestRegistry_SetFixedPlugins_RejectsUnknownPlugin(t *testing.T) {
+	reg := NewRegistry(notify.New(""))
+	if err := reg.SetFixedPlugins([]string{"missing"}); err == nil {
+		t.Fatal("expected unknown fixed plugin to be rejected")
+	}
+}

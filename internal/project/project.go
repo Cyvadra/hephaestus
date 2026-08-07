@@ -17,6 +17,14 @@ import (
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
+const (
+	// DefaultName is the system-created Project bound to sessions unless
+	// the user explicitly switches to another Project.
+	DefaultName = "default-workspace"
+
+	defaultDescription = "System default workspace for agent file operations."
+)
+
 // Service creates and looks up Projects, each backed by a directory named
 // after it under root.
 type Service struct {
@@ -69,6 +77,22 @@ func (s *Service) Create(name, description string) (*store.Project, error) {
 	return p, nil
 }
 
+// EnsureDefault creates the system default Project when needed and returns
+// it. The operation is idempotent across restarts.
+func (s *Service) EnsureDefault() (*store.Project, error) {
+	p, err := s.GetByName(DefaultName)
+	if err == nil {
+		if err := s.ensureDirectory(*p); err != nil {
+			return nil, err
+		}
+		return p, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	return s.Create(DefaultName, defaultDescription)
+}
+
 // Get loads a Project by id.
 func (s *Service) Get(id uint) (*store.Project, error) {
 	var p store.Project
@@ -94,6 +118,23 @@ func (s *Service) List() ([]store.Project, error) {
 		return nil, fmt.Errorf("project: list: %w", err)
 	}
 	return projects, nil
+}
+
+func (s *Service) ensureDirectory(p store.Project) error {
+	dir := s.Path(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("project: create directory %q: %w", dir, err)
+	}
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if _, err := os.Stat(agentsPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("project: check AGENTS.md: %w", err)
+	}
+	if err := os.WriteFile(agentsPath, []byte(agentsSkeleton(p.Name, p.Description)), 0o644); err != nil {
+		return fmt.Errorf("project: write AGENTS.md: %w", err)
+	}
+	return nil
 }
 
 func agentsSkeleton(name, description string) string {

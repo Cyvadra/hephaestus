@@ -91,3 +91,28 @@ func TestCreate_RejectsInvalidName(t *testing.T) {
 		t.Fatal("expected invalid name to be rejected")
 	}
 }
+
+func TestEnsureDefault_CreatesAndReusesSystemWorkspace(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatalf("project.New: %v", err)
+	}
+	t.Cleanup(func() { db.Where("name = ?", project.DefaultName).Delete(&store.Project{}) })
+
+	first, err := svc.EnsureDefault()
+	if err != nil {
+		t.Fatalf("EnsureDefault: %v", err)
+	}
+	second, err := svc.EnsureDefault()
+	if err != nil {
+		t.Fatalf("EnsureDefault second call: %v", err)
+	}
+	if first.ID == 0 || first.ID != second.ID || first.Name != project.DefaultName {
+		t.Fatalf("unexpected default projects: first=%+v second=%+v", first, second)
+	}
+	if _, err := os.Stat(filepath.Join(root, project.DefaultName, "AGENTS.md")); err != nil {
+		t.Fatalf("expected default AGENTS.md: %v", err)
+	}
+}

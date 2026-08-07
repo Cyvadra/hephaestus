@@ -7,7 +7,7 @@ import (
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/store"
-	"github.com/Cyvadra/hephaestus/internal/tools"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
 func TestLastUserMessage_ReturnsTrailingUserMessage(t *testing.T) {
@@ -42,11 +42,44 @@ func TestLastUserMessage_RejectsEmpty(t *testing.T) {
 
 func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	pipeline := &Pipeline{}
-	result := pipeline.executeTool(context.Background(), 1, map[string]tools.Tool{}, ds4.ToolCall{
+	result := pipeline.executeTool(context.Background(), 1, map[string]toolkit.Tool{}, ds4.ToolCall{
 		Function: ds4.FunctionCall{Name: "echo"},
 	})
 	if !result.IsError {
 		t.Fatal("expected disabled tool to be rejected")
+	}
+}
+
+func TestNewTurnContextPreservesFirstTurnMetadata(t *testing.T) {
+	turn := newTurnContext(7, []store.ChatMessage{{Role: ds4.RoleUser, Content: "first"}}, true, "first")
+	if !turn.IsFirstTurn || turn.FirstUserMessage != "first" || turn.Metadata == nil {
+		t.Fatalf("unexpected turn context: %+v", turn)
+	}
+}
+
+func TestTrackConsecutiveToolCall_RejectsNinthRepeatedCall(t *testing.T) {
+	lastToolName := ""
+	consecutiveToolCalls := 0
+	for range maxConsecutiveToolCalls {
+		if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "search"); err != nil {
+			t.Fatalf("expected call within limit to succeed: %v", err)
+		}
+	}
+	if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "search"); err == nil {
+		t.Fatal("expected ninth consecutive call to be rejected")
+	}
+}
+
+func TestTrackConsecutiveToolCall_AllowsUnlimitedAlternatingTools(t *testing.T) {
+	lastToolName := ""
+	consecutiveToolCalls := 0
+	for range maxConsecutiveToolCalls * 2 {
+		if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "search"); err != nil {
+			t.Fatalf("expected alternating call to succeed: %v", err)
+		}
+		if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "read"); err != nil {
+			t.Fatalf("expected alternating call to succeed: %v", err)
+		}
 	}
 }
 

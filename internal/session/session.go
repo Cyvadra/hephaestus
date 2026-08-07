@@ -19,7 +19,8 @@ import (
 
 // Service provides session lifecycle operations backed by db.
 type Service struct {
-	db *gorm.DB
+	db             *gorm.DB
+	defaultProject string
 }
 
 var (
@@ -34,9 +35,14 @@ var (
 	ErrEmptyContent     = errors.New("session: message content cannot be empty")
 )
 
-// New creates a Service backed by db.
-func New(db *gorm.DB) *Service {
-	return &Service{db: db}
+// New creates a Service backed by db. When defaultProject is provided, new
+// and replacement sessions with no explicit Project bind to it.
+func New(db *gorm.DB, defaultProject ...string) *Service {
+	svc := &Service{db: db}
+	if len(defaultProject) > 0 {
+		svc.defaultProject = defaultProject[0]
+	}
+	return svc
 }
 
 // CreateFromConcierge creates a new Session whose initial Settings are a
@@ -47,6 +53,7 @@ func (s *Service) CreateFromConcierge(concierge registry.Concierge) (*store.Sess
 
 // Create makes a new session from an explicit settings snapshot.
 func (s *Service) Create(sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
+	settings = s.withDefaultProject(settings)
 	sess := &store.Session{
 		SourceConcierge: sourceConcierge,
 		Settings:        datatypes.NewJSONType(settings),
@@ -274,6 +281,7 @@ func hasToolCalls(raw datatypes.JSON) bool {
 
 // Replace archives sessionID and creates its replacement in one transaction.
 func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
+	settings = s.withDefaultProject(settings)
 	next := &store.Session{SourceConcierge: sourceConcierge, Settings: datatypes.NewJSONType(settings)}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&store.Session{}).Where("id = ?", sessionID).Update("flag_archived", true).Error; err != nil {
@@ -284,6 +292,36 @@ func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store
 		return nil, fmt.Errorf("session: replace %d: %w", sessionID, err)
 	}
 	return next, nil
+}
+
+// BindUnscopedSessions attaches the default Project to sessions created
+// before one was configured. It is intended to run during startup.
+func (s *Service) BindUnscopedSessions() error {
+	if s.defaultProject == "" {
+		return nil
+	}
+	var sessions []store.Session
+	if err := s.db.Find(&sessions).Error; err != nil {
+		return fmt.Errorf("session: list sessions for default project: %w", err)
+	}
+	for index := range sessions {
+		settings := sessions[index].Settings.Data()
+		if settings.Project != "" {
+			continue
+		}
+		settings.Project = s.defaultProject
+		if err := s.db.Model(&sessions[index]).Update("settings", datatypes.NewJSONType(settings)).Error; err != nil {
+			return fmt.Errorf("session: bind default project to %d: %w", sessions[index].ID, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) withDefaultProject(settings store.SessionSettings) store.SessionSettings {
+	if settings.Project == "" {
+		settings.Project = s.defaultProject
+	}
+	return settings
 }
 
 func sameID(left, right *uint) bool {
