@@ -19,7 +19,9 @@ import (
 //
 // Matching is done entirely in Go (substring/regexp over messages loaded via
 // parameterized GORM queries) rather than pushed into SQL, per the
-// platform's "no SQL statements" constraint.
+// platform's "no SQL statements" constraint. Results are rendered as a
+// compact, de-duplicated transcript with per-message truncation so a search
+// can never flood the model's context window.
 type ChatHistorySearchTool struct {
 	db       *gorm.DB
 	sessions *session.Service
@@ -33,7 +35,7 @@ func NewChatHistorySearchTool(db *gorm.DB, sessions *session.Service) *ChatHisto
 func (ChatHistorySearchTool) Name() string { return "chat_history_search" }
 func (ChatHistorySearchTool) Description() string {
 	return "Searches this session's (or, if scope=all, every session's) active chat history " +
-		"by keyword and/or regex, returning matches with surrounding context messages."
+		"by keyword and/or regex, returning matched messages with surrounding context."
 }
 
 func (ChatHistorySearchTool) Parameters() map[string]any {
@@ -43,7 +45,7 @@ func (ChatHistorySearchTool) Parameters() map[string]any {
 			"keywords": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "Case-insensitive substrings to match against message content.",
+				"description": "Case-insensitive substrings; a message matches if it contains any of them.",
 			},
 			"regex": map[string]any{
 				"type":        "string",
@@ -51,12 +53,12 @@ func (ChatHistorySearchTool) Parameters() map[string]any {
 			},
 			"num_neighbour_messages": map[string]any{
 				"type":        "integer",
-				"description": "How many messages before/after each match to include for context. Default 2.",
+				"description": "How many messages before/after each match to include for context. Default 2, max 5.",
 			},
 			"scope": map[string]any{
 				"type":        "string",
 				"enum":        []string{"session", "all"},
-				"description": "'session' (default) searches only the calling session; 'all' searches every non-archived session.",
+				"description": "'session' (default) searches only the calling session; 'all' searches every non-archived session, most recently active first.",
 			},
 		},
 	}
@@ -69,13 +71,18 @@ type chatHistorySearchArgs struct {
 	Scope                string   `json:"scope"`
 }
 
-type chatHistoryMatch struct {
-	SessionID uint                `json:"session_id"`
-	MatchedID uint                `json:"matched_message_id"`
-	Context   []store.ChatMessage `json:"context"`
-}
-
-const maxChatHistorySearchResults = 20
+const (
+	// maxChatHistorySearchResults bounds total matches across all sessions.
+	maxChatHistorySearchResults = 20
+	// maxMatchesPerSession keeps one chatty session from exhausting the
+	// global budget when scope=all.
+	maxMatchesPerSession = 5
+	// maxNeighbourMessages bounds the caller-supplied context window.
+	maxNeighbourMessages = 5
+	// matchedSnippetLen / neighbourSnippetLen bound per-message output.
+	matchedSnippetLen   = 600
+	neighbourSnippetLen = 200
+)
 
 func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]any) *toolkit.ToolResult {
 	args, err := parseChatHistorySearchArgs(rawArgs)
@@ -85,7 +92,7 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 
 	var re *regexp.Regexp
 	if args.Regex != "" {
-		compiled, err := regexp.Compile(args.Regex)
+		compiled, err := regexp.Compile("(?i)" + args.Regex)
 		if err != nil {
 			return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: invalid regex: %s", err))
 		}
@@ -99,38 +106,49 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 	if err != nil {
 		return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
 	}
+	perSessionCap := maxChatHistorySearchResults
+	if len(sessions) > 1 {
+		perSessionCap = maxMatchesPerSession
+	}
 
-	var matches []chatHistoryMatch
+	var (
+		out          strings.Builder
+		totalShown   int
+		totalMatched int
+	)
 	for _, sess := range sessions {
+		if totalShown >= maxChatHistorySearchResults {
+			break
+		}
 		path, err := t.sessions.ActivePath(sess)
 		if err != nil {
 			return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: load active path for session %d: %s", sess.ID, err))
 		}
-		for i, m := range path {
-			if !matchesMessage(m, args.Keywords, re) {
-				continue
-			}
-			lo := max(0, i-args.NumNeighbourMessages)
-			hi := min(len(path), i+args.NumNeighbourMessages+1)
-			matches = append(matches, chatHistoryMatch{
-				SessionID: sess.ID,
-				MatchedID: m.ID,
-				Context:   path[lo:hi],
-			})
-			if len(matches) >= maxChatHistorySearchResults {
-				break
-			}
+
+		matched := matchedIndices(path, args.Keywords, re)
+		totalMatched += len(matched)
+		if len(matched) == 0 {
+			continue
 		}
-		if len(matches) >= maxChatHistorySearchResults {
-			break
+
+		budget := min(perSessionCap, maxChatHistorySearchResults-totalShown)
+		shown := matched
+		if len(shown) > budget {
+			shown = shown[:budget]
 		}
+		totalShown += len(shown)
+
+		writeSessionMatches(&out, sess, path, shown, len(matched), args.NumNeighbourMessages)
 	}
 
-	out, err := json.Marshal(matches)
-	if err != nil {
-		return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: marshal results: %s", err))
+	if totalMatched == 0 {
+		return toolkit.SilentResult("chat_history_search: no matching messages found.")
 	}
-	return toolkit.SilentResult(string(out))
+	header := fmt.Sprintf("%d matching message(s) found", totalMatched)
+	if totalShown < totalMatched {
+		header += fmt.Sprintf(", showing %d (refine keywords/regex to narrow down)", totalShown)
+	}
+	return toolkit.SilentResult(header + ".\n\n" + strings.TrimRight(out.String(), "\n"))
 }
 
 func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, error) {
@@ -145,30 +163,51 @@ func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, erro
 	if args.NumNeighbourMessages <= 0 {
 		args.NumNeighbourMessages = 2
 	}
+	if args.NumNeighbourMessages > maxNeighbourMessages {
+		args.NumNeighbourMessages = maxNeighbourMessages
+	}
 	return args, nil
 }
 
 func (t ChatHistorySearchTool) targetSessions(ctx context.Context, scope string) ([]store.Session, error) {
 	if scope == "all" {
 		var sessions []store.Session
-		if err := t.db.Where("flag_archived = ?", false).Find(&sessions).Error; err != nil {
-			return nil, fmt.Errorf("chat_history_search: list sessions: %w", err)
+		if err := t.db.Where("flag_archived = ?", false).
+			Order("updated_at DESC").
+			Find(&sessions).Error; err != nil {
+			return nil, fmt.Errorf("list sessions: %w", err)
 		}
 		return sessions, nil
 	}
 
 	sessionID, ok := toolkit.SessionIDFromContext(ctx)
 	if !ok {
-		return nil, fmt.Errorf("chat_history_search: no session in context for scope=session")
+		return nil, fmt.Errorf("no session in context for scope=session")
 	}
 	var sess store.Session
 	if err := t.db.First(&sess, sessionID).Error; err != nil {
-		return nil, fmt.Errorf("chat_history_search: load session %d: %w", sessionID, err)
+		return nil, fmt.Errorf("load session %d: %w", sessionID, err)
 	}
 	return []store.Session{sess}, nil
 }
 
+// matchedIndices returns the indices of messages in path that match the
+// query. Tool-role messages are searched too, since past tool output is a
+// legitimate recall target.
+func matchedIndices(path []store.ChatMessage, keywords []string, re *regexp.Regexp) []int {
+	var out []int
+	for i, m := range path {
+		if matchesMessage(m, keywords, re) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 func matchesMessage(m store.ChatMessage, keywords []string, re *regexp.Regexp) bool {
+	if m.Content == "" {
+		return false
+	}
 	if re != nil && re.MatchString(m.Content) {
 		return true
 	}
@@ -179,4 +218,83 @@ func matchesMessage(m store.ChatMessage, keywords []string, re *regexp.Regexp) b
 		}
 	}
 	return false
+}
+
+// writeSessionMatches renders one session's matches as a compact transcript.
+// Overlapping context windows of adjacent matches are merged into contiguous
+// ranges so no message is printed twice.
+func writeSessionMatches(out *strings.Builder, sess store.Session, path []store.ChatMessage, shown []int, total, neighbours int) {
+	title := sess.Title
+	if title == "" {
+		title = "(untitled)"
+	}
+	fmt.Fprintf(out, "## Session %d — %s\n", sess.ID, title)
+	if total > len(shown) {
+		fmt.Fprintf(out, "(%d matches in this session, showing first %d)\n", total, len(shown))
+	}
+
+	isMatch := make(map[int]bool, len(shown))
+	for _, i := range shown {
+		isMatch[i] = true
+	}
+
+	for _, r := range mergeWindows(shown, neighbours, len(path)) {
+		if r.lo > 0 {
+			out.WriteString("...\n")
+		}
+		for i := r.lo; i < r.hi; i++ {
+			writeMessageLine(out, path[i], isMatch[i])
+		}
+		if r.hi < len(path) {
+			out.WriteString("...\n")
+		}
+	}
+	out.WriteString("\n")
+}
+
+type indexRange struct{ lo, hi int }
+
+// mergeWindows expands each matched index by `neighbours` on both sides and
+// merges overlapping/adjacent windows. Input indices must be ascending.
+func mergeWindows(indices []int, neighbours, length int) []indexRange {
+	var out []indexRange
+	for _, i := range indices {
+		lo := max(0, i-neighbours)
+		hi := min(length, i+neighbours+1)
+		if n := len(out); n > 0 && lo <= out[n-1].hi {
+			if hi > out[n-1].hi {
+				out[n-1].hi = hi
+			}
+			continue
+		}
+		out = append(out, indexRange{lo, hi})
+	}
+	return out
+}
+
+func writeMessageLine(out *strings.Builder, m store.ChatMessage, matched bool) {
+	marker := " "
+	limit := neighbourSnippetLen
+	if matched {
+		marker = ">"
+		limit = matchedSnippetLen
+	}
+	content := m.Content
+	if content == "" {
+		content = "(no text content)"
+	}
+	fmt.Fprintf(out, "%s [#%d %s %s] %s\n",
+		marker, m.ID, m.Role, m.Timestamp.Format("2006-01-02 15:04"),
+		snippet(content, limit))
+}
+
+// snippet flattens whitespace and truncates content to at most limit runes,
+// marking elided text.
+func snippet(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + fmt.Sprintf(" …(+%d chars)", len(runes)-limit)
 }
