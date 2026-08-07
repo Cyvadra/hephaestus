@@ -19,6 +19,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/plugin/builtin"
+	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/server"
 	"github.com/Cyvadra/hephaestus/internal/session"
@@ -50,6 +51,13 @@ func main() {
 	sessions := session.New(db)
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 
+	projects, err := project.New(db, cfg.ProjectsRoot)
+	if err != nil {
+		log.Fatalf("project: %v", err)
+	}
+	toolReg.Register(tools.NewCreateProjectTool(projects))
+	toolReg.Register(tools.NewListProjectsTool(projects))
+
 	pluginReg := plugin.NewRegistry(notifier)
 	pluginReg.Register(builtin.NewSessionSummaryPlugin(db, llmClient, 5*time.Minute))
 	pluginReg.Register(builtin.NewStorylineStatusPlugin(db, llmClient))
@@ -63,8 +71,8 @@ func main() {
 		log.Fatalf("registry: validation failed: %v", err)
 	}
 
-	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier)
-	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db)
+	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects)
+	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects)
 
 	srv := server.New(db, reg, sessions, pipeline, commands)
 	if err := srv.Run(cfg.ListenAddr); err != nil {

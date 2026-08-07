@@ -17,6 +17,13 @@ type SessionSettings struct {
 	Impressions []string `json:"impressions"`
 	ToolGroups  []string `json:"tool_groups"`
 	Plugins     []string `json:"plugins"`
+
+	// Project is the bound Project's Name, or "" if this session isn't
+	// scoped to one. File/exec tools resolve their workspace root from it.
+	// Unlike the fields above, Project has no Concierge counterpart: it is
+	// created at runtime and bound via /switch, never part of a static
+	// Concierge definition.
+	Project string `json:"project"`
 }
 
 // Session is a real, addressable conversation.
@@ -94,6 +101,20 @@ type Compression struct {
 	// Messages is the compacted {role, content} sequence, stored as JSON
 	// text. Only "user" and "assistant" roles are allowed.
 	Messages datatypes.JSON `gorm:"type:jsonb"`
+
+	CreatedAt time.Time
+}
+
+// Project is a named, on-disk folder the Agent may create (gated behind an
+// opt-in ToolGroup so creation only happens with the user's explicit
+// authorization) to scope file/exec tools and take memory-retrieval
+// priority over raw chat history. Its directory lives under the process's
+// projects root and is named after it, with a skeleton AGENTS.md inside.
+type Project struct {
+	ID uint `gorm:"primaryKey;autoIncrement"`
+
+	Name        string `gorm:"size:255;uniqueIndex"`
+	Description string `gorm:"size:1024"`
 
 	CreatedAt time.Time
 }

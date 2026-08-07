@@ -13,8 +13,23 @@ type Tool interface {
 	// Description is shown to the LLM to explain when to use this tool.
 	Description() string
 	// Parameters is a JSON Schema object describing the tool's arguments.
-	Parameters() any
-	// Execute runs the tool with JSON-encoded arguments and returns a
-	// JSON-encodable (or plain text) result.
-	Execute(ctx context.Context, argumentsJSON string) (string, error)
+	Parameters() map[string]any
+	// Execute runs the tool with already JSON-decoded arguments and
+	// returns a structured result. Execute must not return nil; use
+	// ErrorResult for failures rather than a Go error, since callers
+	// need a ToolResult even on failure.
+	Execute(ctx context.Context, args map[string]any) *ToolResult
+}
+
+// AsyncCallback is invoked (possibly from another goroutine) once an
+// AsyncExecutor's background work completes.
+type AsyncCallback func(ctx context.Context, result *ToolResult)
+
+// AsyncExecutor is an optional capability for tools whose work continues
+// past the current turn (e.g. a spawned subagent). ExecuteAsync must
+// return immediately with an Async ToolResult and later invoke cb exactly
+// once with the final result.
+type AsyncExecutor interface {
+	Tool
+	ExecuteAsync(ctx context.Context, args map[string]any, cb AsyncCallback) *ToolResult
 }

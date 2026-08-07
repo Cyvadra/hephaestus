@@ -12,21 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type sessionIDContextKey struct{}
-
-// WithSessionID attaches sessionID to ctx so tools invoked mid-turn (like
-// ChatHistorySearchTool) can scope themselves to the calling session
-// without the platform-wide Tool interface needing a session parameter.
-func WithSessionID(ctx context.Context, sessionID uint) context.Context {
-	return context.WithValue(ctx, sessionIDContextKey{}, sessionID)
-}
-
-// SessionIDFromContext retrieves the session id attached by WithSessionID.
-func SessionIDFromContext(ctx context.Context) (uint, bool) {
-	id, ok := ctx.Value(sessionIDContextKey{}).(uint)
-	return id, ok
-}
-
 // ChatHistorySearchTool lets the LLM look up specific prior chat history by
 // keyword/regex, deliberately scoped to "find this particular exchange"
 // rather than general-purpose memory recall.
@@ -50,7 +35,7 @@ func (ChatHistorySearchTool) Description() string {
 		"by keyword and/or regex, returning matches with surrounding context messages."
 }
 
-func (ChatHistorySearchTool) Parameters() any {
+func (ChatHistorySearchTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -91,39 +76,34 @@ type chatHistoryMatch struct {
 
 const maxChatHistorySearchResults = 20
 
-func (t ChatHistorySearchTool) Execute(ctx context.Context, argumentsJSON string) (string, error) {
-	var args chatHistorySearchArgs
-	if argumentsJSON != "" {
-		if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
-			return "", fmt.Errorf("chat_history_search: parse arguments: %w", err)
-		}
-	}
-	if args.NumNeighbourMessages <= 0 {
-		args.NumNeighbourMessages = 2
+func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]any) *ToolResult {
+	args, err := parseChatHistorySearchArgs(rawArgs)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
 	}
 
 	var re *regexp.Regexp
 	if args.Regex != "" {
 		compiled, err := regexp.Compile(args.Regex)
 		if err != nil {
-			return "", fmt.Errorf("chat_history_search: invalid regex: %w", err)
+			return ErrorResult(fmt.Sprintf("chat_history_search: invalid regex: %s", err))
 		}
 		re = compiled
 	}
 	if len(args.Keywords) == 0 && re == nil {
-		return "", fmt.Errorf("chat_history_search: at least one of keywords or regex is required")
+		return ErrorResult("chat_history_search: at least one of keywords or regex is required")
 	}
 
 	sessions, err := t.targetSessions(ctx, args.Scope)
 	if err != nil {
-		return "", err
+		return ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
 	}
 
 	var matches []chatHistoryMatch
 	for _, sess := range sessions {
 		path, err := t.sessions.ActivePath(sess)
 		if err != nil {
-			return "", fmt.Errorf("chat_history_search: load active path for session %d: %w", sess.ID, err)
+			return ErrorResult(fmt.Sprintf("chat_history_search: load active path for session %d: %s", sess.ID, err))
 		}
 		for i, m := range path {
 			if !matchesMessage(m, args.Keywords, re) {
@@ -147,9 +127,24 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, argumentsJSON string
 
 	out, err := json.Marshal(matches)
 	if err != nil {
-		return "", fmt.Errorf("chat_history_search: marshal results: %w", err)
+		return ErrorResult(fmt.Sprintf("chat_history_search: marshal results: %s", err))
 	}
-	return string(out), nil
+	return SilentResult(string(out))
+}
+
+func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, error) {
+	var args chatHistorySearchArgs
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return args, fmt.Errorf("encode arguments: %w", err)
+	}
+	if err := json.Unmarshal(encoded, &args); err != nil {
+		return args, fmt.Errorf("parse arguments: %w", err)
+	}
+	if args.NumNeighbourMessages <= 0 {
+		args.NumNeighbourMessages = 2
+	}
+	return args, nil
 }
 
 func (t ChatHistorySearchTool) targetSessions(ctx context.Context, scope string) ([]store.Session, error) {

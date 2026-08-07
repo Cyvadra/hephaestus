@@ -17,7 +17,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("store: connect postgres: %w", err)
 	}
 
-	if err := db.AutoMigrate(&Session{}, &ChatMessage{}, &Compression{}, &PluginState{}); err != nil {
+	if err := db.AutoMigrate(&Session{}, &ChatMessage{}, &Compression{}, &PluginState{}, &Project{}); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
 	}
 

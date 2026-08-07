@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Cyvadra/ds4"
@@ -14,6 +15,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
+	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
@@ -40,6 +42,7 @@ type Pipeline struct {
 	llm      *llm.Client
 	sessions *session.Service
 	notify   *notify.Notifier
+	projects *project.Service
 }
 
 // NewPipeline wires together every dependency a turn needs.
@@ -51,6 +54,7 @@ func NewPipeline(
 	llmClient *llm.Client,
 	sessions *session.Service,
 	notifier *notify.Notifier,
+	projects *project.Service,
 ) *Pipeline {
 	return &Pipeline{
 		db:       db,
@@ -60,6 +64,7 @@ func NewPipeline(
 		llm:      llmClient,
 		sessions: sessions,
 		notify:   notifier,
+		projects: projects,
 	}
 }
 
@@ -98,6 +103,8 @@ type turnPrep struct {
 	toolset    []tools.Tool
 	activePath []store.ChatMessage
 	compRow    *store.Compression
+	// workspace is the bound Project's directory, or "" if none is bound.
+	workspace string
 }
 
 func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
@@ -134,6 +141,15 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		return prep, err
 	}
 	prep.toolset = toolset
+
+	if prep.settings.Project != "" {
+		proj, err := p.projects.GetByName(prep.settings.Project)
+		if err != nil {
+			p.notify.Error("chat: session %d has missing project %q; message not persisted", sessionID, prep.settings.Project)
+			return prep, fmt.Errorf("chat: project %q not found", prep.settings.Project)
+		}
+		prep.workspace = p.projects.Path(*proj)
+	}
 
 	activePath, err := p.sessions.ActivePath(prep.sess)
 	if err != nil {
@@ -181,6 +197,9 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if prep.workspace != "" {
+		ctx = tools.WithWorkspace(ctx, prep.workspace)
 	}
 	if !sameMessageID(prep.sess.ActiveLeafMessageID, expectedLeaf) {
 		return nil, session.ErrStaleActiveLeaf
@@ -233,6 +252,9 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if prep.workspace != "" {
+		ctx = tools.WithWorkspace(ctx, prep.workspace)
 	}
 	if len(prep.activePath) == 0 {
 		return nil, fmt.Errorf("chat: session %d has no messages to regenerate", sessionID)
@@ -469,28 +491,48 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		toPersist = append(toPersist, assistantMsg)
 		turn.Messages = messages
 
-		for toolIndex, tc := range resp.ToolCalls() {
+		toolCalls := resp.ToolCalls()
+		for _, tc := range toolCalls {
 			turn.Metadata["tool_call"] = tc
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseBefore, turn)
+		}
 
-			result, err := p.executeTool(ctx, turn.SessionID, allowedTools, tc)
+		// Tool calls from a single model response are independent of one
+		// another, so they run concurrently; results are collected back in
+		// the model's original order for deterministic persistence.
+		results := make([]*tools.ToolResult, len(toolCalls))
+		var wg sync.WaitGroup
+		for i, tc := range toolCalls {
+			wg.Add(1)
+			go func(idx int, tc ds4.ToolCall) {
+				defer wg.Done()
+				results[idx] = p.executeTool(ctx, turn.SessionID, allowedTools, tc)
+			}(i, tc)
+		}
+		wg.Wait()
+
+		for toolIndex, tc := range toolCalls {
+			result := results[toolIndex]
 			turn.Metadata["tool_result"] = result
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseAfter, turn)
-			if err != nil {
-				result = fmt.Sprintf("error: %v", err)
-			}
+
+			content := result.ContentForLLM()
 			if onDelta != nil {
+				status := "complete"
+				if result.IsError {
+					status = "error"
+				}
 				onDelta(StreamEvent{Type: "tool_result", ToolCall: &StreamToolCall{
 					CallIndex: callIndex,
 					Index:     toolIndex,
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
-					Result:    result,
-					Status:    "complete",
+					Result:    content,
+					Status:    status,
 				}})
 			}
 
-			toolMsg := store.ChatMessage{Role: ds4.RoleTool, Content: result, ToolCallID: tc.ID, Timestamp: time.Now()}
+			toolMsg := store.ChatMessage{Role: ds4.RoleTool, Content: content, ToolCallID: tc.ID, Timestamp: time.Now()}
 			messages = append(messages, toolMsg)
 			toPersist = append(toPersist, toolMsg)
 			turn.Messages = messages
@@ -525,12 +567,20 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	return toPersist, turn, nil
 }
 
-func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]tools.Tool, tc ds4.ToolCall) (string, error) {
+func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]tools.Tool, tc ds4.ToolCall) *tools.ToolResult {
 	t, ok := allowedTools[tc.Function.Name]
 	if !ok {
-		return "", fmt.Errorf("chat: tool %q is not enabled for this session", tc.Function.Name)
+		return tools.ErrorResult(fmt.Sprintf("chat: tool %q is not enabled for this session", tc.Function.Name))
 	}
-	return t.Execute(tools.WithSessionID(ctx, sessionID), tc.Function.Arguments)
+
+	var args map[string]any
+	if tc.Function.Arguments != "" {
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			return tools.ErrorResult(fmt.Sprintf("chat: invalid arguments for tool %q: %v", tc.Function.Name, err))
+		}
+	}
+
+	return tools.RunTool(tools.WithSessionID(ctx, sessionID), t, args)
 }
 
 func ds4MessageToStore(m ds4.Message) (store.ChatMessage, error) {

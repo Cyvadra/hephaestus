@@ -15,6 +15,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/compress"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
+	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
@@ -48,6 +49,7 @@ type Service struct {
 	sessions  *session.Service
 	notifier  *notify.Notifier
 	db        *gorm.DB
+	projects  *project.Service
 
 	mu       sync.Mutex
 	lastList map[uint]map[Kind][]string  // sessionID -> kind -> ordered names, for /detail /switch /activate /deactivate by id
@@ -55,7 +57,7 @@ type Service struct {
 }
 
 // NewService wires the command dispatcher to its dependencies.
-func NewService(reg *registry.Registry, toolReg *tools.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB) *Service {
+func NewService(reg *registry.Registry, toolReg *tools.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service) *Service {
 	return &Service{
 		reg:       reg,
 		toolReg:   toolReg,
@@ -63,6 +65,7 @@ func NewService(reg *registry.Registry, toolReg *tools.Registry, pluginReg *plug
 		sessions:  sessions,
 		notifier:  notifier,
 		db:        db,
+		projects:  projects,
 		lastList:  map[uint]map[Kind][]string{},
 		cancels:   map[uint]context.CancelFunc{},
 	}
@@ -135,7 +138,7 @@ const helpText = `Available commands:
 /status - session info, context usage, recent warnings
 /list <kind> - list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)
 /detail <kind> <id> - show details of one option
-/switch <identity|concierge|session> <id|name> - switch
+/switch <identity|concierge|session|project> <id|name> - switch
 /activate <impression|toolgroup|plugin> <id[,id...]> - enable
 /deactivate <impression|toolgroup|plugin> <id[,id...]> - disable
 /clear - archive this session and start a fresh one with the same settings
@@ -198,6 +201,20 @@ var kindDescriptors = map[Kind]kindDescriptor{
 			return s.loadSession(uint(id))
 		},
 	},
+	KindProject: {
+		names: func(s *Service) ([]string, error) {
+			projects, err := s.projects.List()
+			if err != nil {
+				return nil, err
+			}
+			names := make([]string, 0, len(projects))
+			for _, p := range projects {
+				names = append(names, p.Name)
+			}
+			return names, nil
+		},
+		detail: func(s *Service, name string) (any, error) { return s.projects.GetByName(name) },
+	},
 }
 
 func (s *Service) stop(sessionID uint) string {
@@ -233,6 +250,11 @@ func (s *Service) status(sessionID uint) (string, error) {
 	fmt.Fprintf(&b, "impressions: %s\n", strings.Join(settings.Impressions, ", "))
 	fmt.Fprintf(&b, "tool_groups: %s\n", strings.Join(settings.ToolGroups, ", "))
 	fmt.Fprintf(&b, "plugins: %s\n", strings.Join(settings.Plugins, ", "))
+	if settings.Project != "" {
+		fmt.Fprintf(&b, "project: %s\n", settings.Project)
+	} else {
+		b.WriteString("project: (none)\n")
+	}
 	fmt.Fprintf(&b, "context usage (estimated units): %d\n", total)
 	if sess.CompressionID != nil {
 		fmt.Fprintf(&b, "compression: #%d (up to message %d)\n", *sess.CompressionID, *sess.CompressionLastMessageID)
@@ -251,9 +273,6 @@ func (s *Service) list(sessionID uint, args []string) (string, error) {
 		return "", fmt.Errorf("command: usage: /list <kind>")
 	}
 	kind := Kind(args[0])
-	if kind == KindProject {
-		return "Projects are not implemented yet.", nil
-	}
 	desc, ok := kindDescriptors[kind]
 	if !ok || desc.names == nil {
 		return "", fmt.Errorf("command: unknown kind %q", kind)
@@ -308,7 +327,7 @@ func (s *Service) detail(sessionID uint, args []string) (string, error) {
 
 func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 	if len(args) != 2 {
-		return "", fmt.Errorf("command: usage: /switch <identity|concierge|session> <id|name>")
+		return "", fmt.Errorf("command: usage: /switch <identity|concierge|session|project> <id|name>")
 	}
 	kind, target := Kind(args[0]), args[1]
 
@@ -363,6 +382,20 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("Switched to session %d.", id), nil
+
+	case KindProject:
+		name, err := s.resolveName(sessionID, KindProject, target)
+		if err != nil {
+			return "", err
+		}
+		if _, err := s.projects.GetByName(name); err != nil {
+			return "", fmt.Errorf("command: unknown project %q", name)
+		}
+		settings.Project = name
+		if err := s.saveSettings(sess, settings); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Switched project to %q.", name), nil
 
 	default:
 		return "", fmt.Errorf("command: /switch does not support kind %q", kind)

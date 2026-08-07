@@ -22,6 +22,9 @@ type Config struct {
 	WeComWebhookURL string
 	// ListenAddr is the address the Gin HTTP server binds to.
 	ListenAddr string
+	// ProjectsRoot is the directory under which each Project gets its own
+	// named subdirectory; created on startup if missing.
+	ProjectsRoot string
 }
 
 // Load reads configuration from environment variables, applying defaults
@@ -33,6 +36,7 @@ func Load() (*Config, error) {
 		DeepSeekAPIKey:  os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
 		WeComWebhookURL: os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
 		ListenAddr:      getenvDefault("HEPHAESTUS_LISTEN_ADDR", ":9016"),
+		ProjectsRoot:    getenvDefault("HEPHAESTUS_PROJECTS_ROOT", "./data/projects"),
 	}
 
 	if cfg.PostgresDSN == "" {

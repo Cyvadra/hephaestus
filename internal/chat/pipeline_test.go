@@ -42,10 +42,10 @@ func TestLastUserMessage_RejectsEmpty(t *testing.T) {
 
 func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	pipeline := &Pipeline{}
-	_, err := pipeline.executeTool(context.Background(), 1, map[string]tools.Tool{}, ds4.ToolCall{
+	result := pipeline.executeTool(context.Background(), 1, map[string]tools.Tool{}, ds4.ToolCall{
 		Function: ds4.FunctionCall{Name: "echo"},
 	})
-	if err == nil {
+	if !result.IsError {
 		t.Fatal("expected disabled tool to be rejected")
 	}
 }
