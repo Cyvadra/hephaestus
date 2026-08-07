@@ -6,8 +6,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Cyvadra/ds4"
@@ -175,16 +178,44 @@ func modelOrDefault(model string) string {
 // private system/user prompts. Thinking is left disabled since these calls
 // are structured, single-shot text transforms rather than conversation.
 func (c *Client) RawCall(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
-	resp, err := c.ds4.Chat().
+	resp, err := c.rawCall(ctx, systemPrompt, userPrompt, maxTokens)
+	if maxAllowed, ok := maxTokensUpperBound(err, maxTokens); ok {
+		resp, err = c.rawCall(ctx, systemPrompt, userPrompt, maxAllowed)
+	}
+	if err != nil {
+		return "", fmt.Errorf("llm: raw call: %w", err)
+	}
+	return resp.Content(), nil
+}
+
+func (c *Client) rawCall(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*ds4.ChatResponse, error) {
+	return c.ds4.Chat().
 		Thinking(false).
 		System(systemPrompt).
 		User(userPrompt).
 		MaxTokens(maxTokens).
 		DoWithContext(ctx)
-	if err != nil {
-		return "", fmt.Errorf("llm: raw call: %w", err)
+}
+
+var maxTokensRangePattern = regexp.MustCompile(`(?i)valid range of max_tokens is\s*\[\s*\d+\s*,\s*(\d+)\s*\]`)
+
+// maxTokensUpperBound returns the provider-reported maximum only for a 400
+// max_tokens range error and only when it lowers the original request.
+func maxTokensUpperBound(err error, requested int) (int, bool) {
+	var apiErr *ds4.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 {
+		return 0, false
 	}
-	return resp.Content(), nil
+
+	matches := maxTokensRangePattern.FindStringSubmatch(apiErr.Message)
+	if len(matches) != 2 {
+		return 0, false
+	}
+	maxAllowed, parseErr := strconv.Atoi(matches[1])
+	if parseErr != nil || maxAllowed < 1 || maxAllowed >= requested {
+		return 0, false
+	}
+	return maxAllowed, true
 }
 
 // applyThinking maps the platform's "none"/"low"/"high"/"max" reasoning
