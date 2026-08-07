@@ -6,6 +6,7 @@
 package store_test
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -102,6 +103,157 @@ func TestIntegration_AppendMessagesAndActivePath(t *testing.T) {
 	}
 	if len(branchPath) != 2 || branchPath[1].Content != "a different reply" {
 		t.Fatalf("unexpected branch path: %+v", branchPath)
+	}
+}
+
+func TestIntegration_EditAssistantAtLeaf(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-edit-assistant")
+
+	saved, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "question"},
+		{Role: "assistant", Content: "original", ReasoningContent: "old reasoning"},
+		{Role: "user", Content: "follow-up"},
+		{Role: "assistant", Content: "later reply"},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+
+	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[3].ID, "edited", "new reasoning")
+	if err != nil {
+		t.Fatalf("EditAssistantAtLeaf: %v", err)
+	}
+	if edited.ID == saved[1].ID || edited.ParentMessageID == nil || *edited.ParentMessageID != saved[0].ID {
+		t.Fatalf("expected a sibling of message %d, got %+v", saved[1].ID, edited)
+	}
+	if edited.Content != "edited" || edited.ReasoningContent != "new reasoning" {
+		t.Fatalf("unexpected edited fields: %+v", edited)
+	}
+
+	var original store.ChatMessage
+	if err := db.First(&original, saved[1].ID).Error; err != nil {
+		t.Fatalf("reload original: %v", err)
+	}
+	if original.Content != "original" || original.ReasoningContent != "old reasoning" {
+		t.Fatalf("original message changed: %+v", original)
+	}
+
+	var reloaded store.Session
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if reloaded.ActiveLeafMessageID == nil || *reloaded.ActiveLeafMessageID != edited.ID {
+		t.Fatalf("expected edited message %d to be active leaf, got %v", edited.ID, reloaded.ActiveLeafMessageID)
+	}
+	path, err := svc.ActivePath(reloaded)
+	if err != nil {
+		t.Fatalf("ActivePath: %v", err)
+	}
+	if len(path) != 2 || path[0].ID != saved[0].ID || path[1].ID != edited.ID {
+		t.Fatalf("expected edited path to end at new sibling, got %+v", path)
+	}
+
+	var descendants int64
+	if err := db.Model(&store.ChatMessage{}).Where("id IN ?", []uint{saved[2].ID, saved[3].ID}).Count(&descendants).Error; err != nil {
+		t.Fatalf("count original descendants: %v", err)
+	}
+	if descendants != 2 {
+		t.Fatalf("expected original descendants to remain, got %d", descendants)
+	}
+}
+
+func TestIntegration_EditAssistantAtLeafValidation(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-edit-assistant-validation")
+
+	saved, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "question"},
+		{Role: "assistant", Content: "answer"},
+		{Role: "assistant", Content: "tool caller", ToolCalls: datatypes.JSON(`[{"id":"call-1"}]`)},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[0].ID, saved[2].ID, "edited", ""); !errors.Is(err, session.ErrNotAssistant) {
+		t.Fatalf("expected ErrNotAssistant, got %v", err)
+	}
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[2].ID, saved[2].ID, "edited", ""); !errors.Is(err, session.ErrToolCallMessage) {
+		t.Fatalf("expected ErrToolCallMessage, got %v", err)
+	}
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[2].ID, "  ", ""); !errors.Is(err, session.ErrEmptyContent) {
+		t.Fatalf("expected ErrEmptyContent, got %v", err)
+	}
+	branch, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{{Role: "assistant", Content: "other root"}})
+	if err != nil {
+		t.Fatalf("AppendMessages branch: %v", err)
+	}
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, branch[0].ID, "edited", ""); !errors.Is(err, session.ErrMessageNotOnPath) {
+		t.Fatalf("expected ErrMessageNotOnPath, got %v", err)
+	}
+
+	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[2].ID, "edited inactive branch", "")
+	if err != nil {
+		t.Fatalf("edit locally selected inactive branch: %v", err)
+	}
+	if edited.ParentMessageID == nil || *edited.ParentMessageID != saved[0].ID {
+		t.Fatalf("expected edited sibling on selected branch, got %+v", edited)
+	}
+}
+
+func TestIntegration_EditAssistantInvalidatesCoveredCompression(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-edit-assistant-compression")
+
+	saved, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "question"},
+		{Role: "assistant", Content: "original"},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+	compressionRow, err := svc.StoreCompression(
+		sess.ID,
+		saved[0].ID,
+		saved[1].ID,
+		datatypes.JSON(`[{"role":"user","content":"question"},{"role":"assistant","content":"original"}]`),
+	)
+	if err != nil {
+		t.Fatalf("StoreCompression: %v", err)
+	}
+
+	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[1].ID, "edited", "")
+	if err != nil {
+		t.Fatalf("EditAssistantAtLeaf: %v", err)
+	}
+	var reloaded store.Session
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	path, err := svc.ActivePath(reloaded)
+	if err != nil {
+		t.Fatalf("ActivePath: %v", err)
+	}
+	resolved, err := svc.ResolveCompression(&reloaded, path)
+	if err != nil {
+		t.Fatalf("ResolveCompression: %v", err)
+	}
+	if resolved != nil || reloaded.CompressionID != nil || reloaded.CompressionLastMessageID != nil {
+		t.Fatalf("expected covered compression to be invalidated, got row=%+v session=%+v", resolved, reloaded)
+	}
+	if path[len(path)-1].ID != edited.ID {
+		t.Fatalf("expected edited message %d at active leaf, got %+v", edited.ID, path)
+	}
+	var count int64
+	if err := db.Model(&store.Compression{}).Where("id = ?", compressionRow.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count stored compression: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected historical compression row to remain, got count %d", count)
 	}
 }
 

@@ -467,6 +467,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		}
 		messages = append(messages, assistantMsg)
 		toPersist = append(toPersist, assistantMsg)
+		turn.Messages = messages
 
 		for toolIndex, tc := range resp.ToolCalls() {
 			turn.Metadata["tool_call"] = tc
@@ -492,6 +493,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 			toolMsg := store.ChatMessage{Role: ds4.RoleTool, Content: result, ToolCallID: tc.ID, Timestamp: time.Now()}
 			messages = append(messages, toolMsg)
 			toPersist = append(toPersist, toolMsg)
+			turn.Messages = messages
 		}
 
 		turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseBefore, turn)

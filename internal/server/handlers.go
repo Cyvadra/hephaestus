@@ -13,6 +13,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type createSessionRequest struct {
@@ -105,6 +106,73 @@ type sendMessageResponse struct {
 	// Metadata carries any plugin-attached data for this turn (e.g.
 	// suggested next-user-message alternatives).
 	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type editAssistantMessageRequest struct {
+	ActiveLeafMessageID uint   `json:"active_leaf_message_id" binding:"required"`
+	Content             string `json:"content" binding:"required"`
+	ReasoningContent    string `json:"reasoning_content"`
+}
+
+// editAssistantMessage godoc
+//
+//	@Summary		Edit an assistant message
+//	@Description	Creates an edited sibling of an assistant message without invoking the LLM, then makes the new message the session's active leaf.
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id			path	int						true	"Session ID"
+//	@Param			messageID	path	int						true	"Assistant message ID"
+//	@Param			request		body	editAssistantMessageRequest	true	"Edited assistant content"
+//	@Success		200			{object}	sendMessageResponse
+//	@Failure		400			{object}	errorResponse
+//	@Failure		404			{object}	errorResponse
+//	@Failure		409			{object}	errorResponse
+//	@Failure		500			{object}	errorResponse
+//	@Router			/sessions/{id}/messages/{messageID}/edit [post]
+func (s *Server) editAssistantMessage(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	messageID, err := parseUintParam(c, "messageID", "message id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	var req editAssistantMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	edited, err := s.sessions.EditAssistantAtLeaf(
+		sessionID,
+		messageID,
+		req.ActiveLeafMessageID,
+		req.Content,
+		req.ReasoningContent,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrStaleActiveLeaf):
+			c.JSON(http.StatusConflict, errorResponse{Error: "session changed; refresh and retry"})
+		case errors.Is(err, session.ErrMessageNotFound), errors.Is(err, gorm.ErrRecordNotFound):
+			c.JSON(http.StatusNotFound, errorResponse{Error: "session or message not found"})
+		case errors.Is(err, session.ErrNotAssistant),
+			errors.Is(err, session.ErrToolCallMessage),
+			errors.Is(err, session.ErrMessageNotOnPath),
+			errors.Is(err, session.ErrEmptyContent):
+			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, sendMessageResponse{Message: edited})
 }
 
 // sendMessage godoc
@@ -349,9 +417,13 @@ type errValidation string
 func (e errValidation) Error() string { return string(e) }
 
 func parseSessionID(c *gin.Context) (uint, error) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		return 0, errValidation("invalid session id")
+	return parseUintParam(c, "id", "session id")
+}
+
+func parseUintParam(c *gin.Context, param, label string) (uint, error) {
+	id, err := strconv.ParseUint(c.Param(param), 10, 64)
+	if err != nil || id == 0 {
+		return 0, errValidation("invalid " + label)
 	}
 	return uint(id), nil
 }

@@ -40,6 +40,7 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	api.POST("/sessions", s.createSession)
 	api.GET("/sessions/:id/history", s.getHistory)
 	api.POST("/sessions/:id/messages", s.sendMessage)
+	api.POST("/sessions/:id/messages/:messageID/edit", s.editAssistantMessage)
 	api.POST("/sessions/:id/messages/stream", s.streamMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)
 	api.POST("/sessions/:id/regenerate/stream", s.streamRegenerate)

@@ -15,7 +15,57 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/concierges": {
+            "get": {
+                "description": "Returns the names and static settings of every loaded Concierge, sorted alphabetically.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "concierges"
+                ],
+                "summary": "List registered concierges",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_server.conciergeItem"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/sessions": {
+            "get": {
+                "description": "Returns every session ordered by updated_at descending.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List all sessions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Session"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Creates a new Session from the named Concierge's current settings.",
                 "consumes": [
@@ -151,7 +201,7 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages/stream": {
             "post": {
-                "description": "Like sendMessage, but streams assistant content deltas as Server-Sent Events (\"delta\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
+                "description": "Like sendMessage, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", and \"tool_result\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
                 "consumes": [
                     "application/json"
                 ],
@@ -193,6 +243,78 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/{id}/messages/{messageID}/edit": {
+            "post": {
+                "description": "Creates an edited sibling of an assistant message without invoking the LLM, then makes the new message the session's active leaf.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Edit an assistant message",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Assistant message ID",
+                        "name": "messageID",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edited assistant content",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.editAssistantMessageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.sendMessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sessions/{id}/regenerate": {
             "post": {
                 "description": "Re-answers the nearest ancestor user message on the session's active path, creating a sibling assistant branch rather than a new user message.",
@@ -227,6 +349,38 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sessions/{id}/regenerate/stream": {
+            "post": {
+                "description": "Like regenerate, but streams typed assistant progress as Server-Sent Events, finishing with a \"done\" event.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Regenerate the last reply with streaming",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/internal_server.errorResponse"
                         }
@@ -326,6 +480,35 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_server.conciergeItem": {
+            "type": "object",
+            "properties": {
+                "identity": {
+                    "type": "string"
+                },
+                "impressions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "plugins": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tool_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_server.createSessionRequest": {
             "type": "object",
             "required": [
@@ -333,6 +516,24 @@ const docTemplate = `{
             ],
             "properties": {
                 "concierge": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_server.editAssistantMessageRequest": {
+            "type": "object",
+            "required": [
+                "active_leaf_message_id",
+                "content"
+            ],
+            "properties": {
+                "active_leaf_message_id": {
+                    "type": "integer"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "reasoning_content": {
                     "type": "string"
                 }
             }

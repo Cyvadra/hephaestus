@@ -5,8 +5,10 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -23,8 +25,13 @@ type Service struct {
 var (
 	// ErrStaleActiveLeaf means another request changed the active branch
 	// after this caller assembled its turn.
-	ErrStaleActiveLeaf = errors.New("session: active leaf changed")
-	ErrInvalidParent   = errors.New("session: parent message does not belong to session")
+	ErrStaleActiveLeaf  = errors.New("session: active leaf changed")
+	ErrInvalidParent    = errors.New("session: parent message does not belong to session")
+	ErrMessageNotFound  = errors.New("session: message not found")
+	ErrNotAssistant     = errors.New("session: message is not an assistant message")
+	ErrToolCallMessage  = errors.New("session: assistant messages with tool calls cannot be edited")
+	ErrMessageNotOnPath = errors.New("session: message is not on the selected active path")
+	ErrEmptyContent     = errors.New("session: message content cannot be empty")
 )
 
 // New creates a Service backed by db.
@@ -171,6 +178,98 @@ func (s *Service) SelectActiveLeaf(sessionID, leafID uint) error {
 		}
 		return tx.Model(&store.Session{}).Where("id = ?", sessionID).Update("active_leaf_message_id", leafID).Error
 	})
+}
+
+// EditAssistantAtLeaf creates an edited sibling of messageID and makes it
+// the active leaf. The original message and all of its descendants remain
+// unchanged and reachable through the session's message tree.
+func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, content, reasoningContent string) (*store.ChatMessage, error) {
+	if strings.TrimSpace(content) == "" {
+		return nil, ErrEmptyContent
+	}
+
+	edited := store.ChatMessage{
+		SessionID:        sessionID,
+		Timestamp:        time.Now(),
+		Role:             "assistant",
+		Content:          content,
+		ReasoningContent: reasoningContent,
+	}
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var sess store.Session
+		if err := tx.First(&sess, sessionID).Error; err != nil {
+			return fmt.Errorf("session: load for assistant edit: %w", err)
+		}
+		previousLeaf := sess.ActiveLeafMessageID
+
+		var target store.ChatMessage
+		if err := tx.Where("id = ? AND session_id = ?", messageID, sessionID).First(&target).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrMessageNotFound
+			}
+			return fmt.Errorf("session: load assistant message for edit: %w", err)
+		}
+		if target.Role != "assistant" {
+			return ErrNotAssistant
+		}
+		if hasToolCalls(target.ToolCalls) {
+			return ErrToolCallMessage
+		}
+
+		var all []store.ChatMessage
+		if err := tx.Where("session_id = ?", sessionID).Find(&all).Error; err != nil {
+			return fmt.Errorf("session: load active path for assistant edit: %w", err)
+		}
+		path, err := walkActivePath(all, &expectedLeaf)
+		if err != nil {
+			return ErrMessageNotOnPath
+		}
+		onPath := false
+		for _, message := range path {
+			if message.ID == messageID {
+				onPath = true
+				break
+			}
+		}
+		if !onPath {
+			return ErrMessageNotOnPath
+		}
+
+		edited.ParentMessageID = target.ParentMessageID
+		if err := tx.Create(&edited).Error; err != nil {
+			return fmt.Errorf("session: create edited assistant message: %w", err)
+		}
+		updated := tx.Model(&store.Session{}).Where("id = ?", sessionID)
+		if previousLeaf == nil {
+			updated = updated.Where("active_leaf_message_id IS NULL")
+		} else {
+			updated = updated.Where("active_leaf_message_id = ?", *previousLeaf)
+		}
+		updated = updated.Update("active_leaf_message_id", edited.ID)
+		if updated.Error != nil {
+			return fmt.Errorf("session: activate edited assistant message: %w", updated.Error)
+		}
+		if updated.RowsAffected != 1 {
+			return ErrStaleActiveLeaf
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &edited, nil
+}
+
+func hasToolCalls(raw datatypes.JSON) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var calls []json.RawMessage
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		return true
+	}
+	return len(calls) > 0
 }
 
 // Replace archives sessionID and creates its replacement in one transaction.
