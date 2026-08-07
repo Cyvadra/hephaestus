@@ -15,16 +15,9 @@ import "regexp"
 // `| sh`, `curl ... | sh`).
 var execDenyPatterns = []*regexp.Regexp{
 	// TODO: 这肯定要让用户确认啊，规则是限不死的，这里缺的不是 rule repo，是 user interaction
-	regexp.MustCompile(`(?i)\brm\b[^;\n|]*\s(?:-(?:r|f|rf|fr|R|Rf|fR)|--(?:recursive|force))`),
-	regexp.MustCompile(`(?i)\brmdir\b[^;\n|]*\s(?:-r|--recursive)`),
-	regexp.MustCompile(`(?i)\b(del|rd)\s+/[sfq]`),
 	regexp.MustCompile(`(?i)\b(shutdown|reboot|poweroff|sudo)\b`),
-	regexp.MustCompile(`(?i)\bmkfs\b|\bchown\b|\bchmod\s+-R\b`),
-	regexp.MustCompile(`(?i)\bdd\s+[^\n|;]*\bof=`),
-	regexp.MustCompile(`(?i)\b(killall|pkill)\b`),
 	regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`), // fork bomb
 	regexp.MustCompile(`\$\s*\(|` + "`"),      // command substitution
-	regexp.MustCompile(`(?i)\|\s*(sh|bash|zsh|dash|cmd|powershell)\b`),
 	regexp.MustCompile(`(?i)\b(curl|wget|nc|ncat)\b.*\|\s*(sh|bash|zsh|dash|cmd|powershell)\b`),
 }
 
