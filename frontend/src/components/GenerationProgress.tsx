@@ -1,5 +1,4 @@
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import Markdown from './Markdown'
 import type { StreamToolCall } from '../api/types'
 
 interface Props {
@@ -39,7 +38,7 @@ export default function GenerationProgress({ content, reasoning, toolCalls }: Pr
       {content && (
         <div className="message-card assistant streaming-bubble" aria-live="polite">
           <div className="message-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            <Markdown>{content}</Markdown>
             <span className="streaming-cursor" aria-hidden="true">▍</span>
           </div>
         </div>

@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import { Copy, Pencil, RefreshCw } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Check, Copy, Pencil, RefreshCw } from 'lucide-react'
+import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
 import { siblings, descendToLeaf } from '../lib/tree'
 
@@ -23,6 +22,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const [editText, setEditText] = useState(msg.Content)
   const [editReasoning, setEditReasoning] = useState(msg.ReasoningContent)
   const [copied, setCopied] = useState(false)
+  const [reasoningPinned, setReasoningPinned] = useState(false)
+  const [reasoningHovered, setReasoningHovered] = useState(false)
   const isUser = msg.Role === 'user'
   const isAssistant = msg.Role === 'assistant'
 
@@ -63,7 +64,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const handleCopy = async () => {
     await navigator.clipboard.writeText(msg.Content)
     setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+    window.setTimeout(() => setCopied(false), 1000)
   }
 
   if (isUser) {
@@ -94,7 +95,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
                 )}
                 <IconButton label={copied ? '已复制' : '复制'} onClick={handleCopy}>
-                  <Copy />
+                  {copied ? <Check /> : <Copy />}
                 </IconButton>
                 <button
                   onClick={() => { setEditText(msg.Content); setEditing(true) }}
@@ -153,15 +154,40 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
           ) : (
             <>
               {hasThinkingProcess && (
-                <details className="reasoning-panel">
-                  <summary className="reasoning-summary">思考过程</summary>
-                  <StoredThinkingProcess messages={thinkingMessages} />
-                </details>
+                <div className="reasoning-panel">
+                  <details className="reasoning-details" open={reasoningPinned}>
+                    <summary
+                      className="reasoning-summary"
+                      onMouseEnter={() => setReasoningHovered(true)}
+                      onMouseLeave={event => {
+                        const related = event.relatedTarget
+                        if (related instanceof Element && related.closest('.reasoning-preview')) return
+                        setReasoningHovered(false)
+                      }}
+                      onClick={event => {
+                        event.preventDefault()
+                        setReasoningPinned(pinned => !pinned)
+                      }}
+                    >
+                      思考过程
+                    </summary>
+                    {reasoningPinned && <StoredThinkingProcess messages={thinkingMessages} />}
+                  </details>
+                  {!reasoningPinned && reasoningHovered && (
+                    <div
+                      className="reasoning-preview"
+                      onMouseEnter={() => setReasoningHovered(true)}
+                      onMouseLeave={() => setReasoningHovered(false)}
+                    >
+                      <StoredThinkingProcess messages={thinkingMessages} />
+                    </div>
+                  )}
+                </div>
               )}
               {msg.Content && (
                 <div className="message-card assistant">
                   <div className="message-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.Content}</ReactMarkdown>
+                    <Markdown>{msg.Content}</Markdown>
                   </div>
                 </div>
               )}
@@ -170,7 +196,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
                 )}
                 <IconButton label={copied ? '已复制' : '复制'} onClick={handleCopy}>
-                  <Copy />
+                  {copied ? <Check /> : <Copy />}
                 </IconButton>
                 {canEdit && (
                   <button
