@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { createSession, getHistory } from '../api/client'
+import { createSession, editAssistantMessage, getHistory } from '../api/client'
 import { streamMessage, streamRegenerate } from '../api/stream'
 import type { ChatMessage, ConciergeItem, StreamToolCall } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -21,6 +21,7 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
   const [streamingReasoning, setStreamingReasoning] = useState('')
   const [streamingToolCalls, setStreamingToolCalls] = useState<StreamToolCall[]>([])
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<number | null>(null)
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
@@ -155,6 +156,29 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
     setLocalLeafId(newLeafId)
   }, [])
 
+  const handleEditAssistant = useCallback(async (messageId: number, content: string, reasoningContent: string) => {
+    if (resolvedSessionId == null || localLeafId == null) return
+
+    setError(null)
+    setEditingMessageId(messageId)
+    try {
+      const response = await editAssistantMessage(
+        resolvedSessionId,
+        messageId,
+        localLeafId,
+        content,
+        reasoningContent,
+      )
+      await loadHistory(resolvedSessionId)
+      if (response.message) setLocalLeafId(response.message.ID)
+    } catch (cause) {
+      setError(String(cause))
+      throw cause
+    } finally {
+      setEditingMessageId(null)
+    }
+  }, [resolvedSessionId, localLeafId, loadHistory])
+
   const handleStop = useCallback(async () => {
     if (resolvedSessionId == null) return
     try {
@@ -220,6 +244,9 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
               childrenMap={childrenMap}
               onBranchSwitch={handleBranchSwitch}
               onEditResend={(newText) => handleSend(newText, item.message.ParentMessageID ?? undefined)}
+              onEditAssistant={(content, reasoningContent) => handleEditAssistant(item.message.ID, content, reasoningContent)}
+              editSaving={editingMessageId === item.message.ID}
+              editDisabled={streaming || editingMessageId != null}
               onRegenerate={idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
             />
           ))

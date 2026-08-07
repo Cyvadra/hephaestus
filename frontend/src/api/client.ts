@@ -27,6 +27,23 @@ export const createSession = (concierge: string) =>
 export const getHistory = (sessionId: number, signal?: AbortSignal) =>
   fetchJSON<HistoryResponse>(`${BASE}/sessions/${sessionId}/history`, { signal })
 
+export const editAssistantMessage = (
+  sessionId: number,
+  messageId: number,
+  activeLeafMessageId: number,
+  content: string,
+  reasoningContent: string,
+) =>
+  fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/messages/${messageId}/edit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      active_leaf_message_id: activeLeafMessageId,
+      content,
+      reasoning_content: reasoningContent,
+    }),
+  })
+
 export const regenerate = (sessionId: number) =>
   fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/regenerate`, {
     method: 'POST',

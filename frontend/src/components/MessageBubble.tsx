@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Copy, Pencil, RefreshCw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage, ToolCall } from '../api/types'
@@ -11,16 +12,22 @@ interface Props {
   childrenMap: Map<number | null, ChatMessage[]>
   onBranchSwitch: (leafId: number) => void
   onEditResend: (newText: string) => void
+  onEditAssistant: (content: string, reasoningContent: string) => Promise<void>
+  editSaving?: boolean
+  editDisabled?: boolean
   onRegenerate?: () => void
 }
 
-export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onRegenerate }: Props) {
+export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, onRegenerate }: Props) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(msg.Content)
+  const [editReasoning, setEditReasoning] = useState(msg.ReasoningContent)
+  const [copied, setCopied] = useState(false)
   const isUser = msg.Role === 'user'
   const isAssistant = msg.Role === 'assistant'
 
-  const branchAnchor = branchMessage ?? msg
+  const messageSiblings = siblings(msg, childrenMap)
+  const branchAnchor = messageSiblings.length > 1 ? msg : (branchMessage ?? msg)
   const sibs = siblings(branchAnchor, childrenMap)
   const currentSibIdx = sibs.findIndex(s => s.ID === branchAnchor.ID)
 
@@ -41,6 +48,22 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
       onEditResend(editText.trim())
       setEditing(false)
     }
+  }
+
+  const handleAssistantEditSubmit = async () => {
+    if (!editText.trim() || editDisabled) return
+    try {
+      await onEditAssistant(editText.trim(), editReasoning)
+      setEditing(false)
+    } catch {
+      // ChatView surfaces the request error without discarding the draft.
+    }
+  }
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(msg.Content)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
   }
 
   if (isUser) {
@@ -66,11 +89,21 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
               <div className="message-card user">
                 <div className="message-body">{msg.Content}</div>
               </div>
-              <div className="message-actions">
+              <div className="message-actions user-message-actions">
                 {sibs.length > 1 && (
                   <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
                 )}
-                <button onClick={() => { setEditText(msg.Content); setEditing(true) }} className="message-action-btn">编辑</button>
+                <IconButton label={copied ? '已复制' : '复制'} onClick={handleCopy}>
+                  <Copy />
+                </IconButton>
+                <button
+                  onClick={() => { setEditText(msg.Content); setEditing(true) }}
+                  className="message-action-btn message-icon-btn"
+                  aria-label="编辑"
+                  title="编辑"
+                >
+                  <Pencil />
+                </button>
               </div>
             </>
           )}
@@ -84,31 +117,85 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
     const hasThinkingProcess = thinkingMessages.some(message =>
       Boolean(message.ReasoningContent) || (Array.isArray(message.ToolCalls) && message.ToolCalls.length > 0),
     )
+    const canEdit = !Array.isArray(msg.ToolCalls) || msg.ToolCalls.length === 0
 
     return (
       <div className="message-row assistant">
         <div className="message-stack">
-          {hasThinkingProcess && (
-            <details className="reasoning-panel">
-              <summary className="reasoning-summary">思考过程</summary>
-              <StoredThinkingProcess messages={thinkingMessages} />
-            </details>
-          )}
-          {msg.Content && (
-            <div className="message-card assistant">
-              <div className="message-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.Content}</ReactMarkdown>
+          {editing ? (
+            <div className="message-editor assistant-message-editor">
+              <label className="message-editor-field">
+                <span>正文</span>
+                <textarea
+                  value={editText}
+                  onChange={event => setEditText(event.target.value)}
+                  className="message-editor-textarea"
+                  rows={5}
+                  autoFocus
+                />
+              </label>
+              <label className="message-editor-field">
+                <span>思考过程</span>
+                <textarea
+                  value={editReasoning}
+                  onChange={event => setEditReasoning(event.target.value)}
+                  className="message-editor-textarea reasoning-editor-textarea"
+                  rows={4}
+                />
+              </label>
+              <div className="message-editor-actions">
+                <button onClick={() => setEditing(false)} className="message-action-btn" disabled={editSaving}>取消</button>
+                <button onClick={() => void handleAssistantEditSubmit()} className="composer-send-btn" disabled={!editText.trim() || editDisabled}>
+                  {editSaving ? '保存中' : '保存'}
+                </button>
               </div>
             </div>
+          ) : (
+            <>
+              {hasThinkingProcess && (
+                <details className="reasoning-panel">
+                  <summary className="reasoning-summary">思考过程</summary>
+                  <StoredThinkingProcess messages={thinkingMessages} />
+                </details>
+              )}
+              {msg.Content && (
+                <div className="message-card assistant">
+                  <div className="message-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.Content}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+              <div className="message-actions assistant-message-actions">
+                {sibs.length > 1 && (
+                  <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
+                )}
+                <IconButton label={copied ? '已复制' : '复制'} onClick={handleCopy}>
+                  <Copy />
+                </IconButton>
+                {canEdit && (
+                  <button
+                    onClick={() => { setEditText(msg.Content); setEditReasoning(msg.ReasoningContent); setEditing(true) }}
+                    className="message-action-btn message-icon-btn"
+                    disabled={editDisabled}
+                    aria-label="编辑"
+                    title="编辑"
+                  >
+                    <Pencil />
+                  </button>
+                )}
+                {onRegenerate && (
+                  <button
+                    onClick={onRegenerate}
+                    className="message-action-btn message-icon-btn"
+                    aria-label="重新生成"
+                    title="重新生成"
+                  >
+                    <RefreshCw />
+                  </button>
+                )}
+              </div>
+            </>
           )}
-          <div className="message-actions">
-            {sibs.length > 1 && (
-              <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
-            )}
-            {onRegenerate && (
-              <button onClick={onRegenerate} className="message-action-btn">重新生成</button>
-            )}
-          </div>
         </div>
       </div>
     )
@@ -129,6 +216,19 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
     <div className="message-row assistant">
       <div className="message-card system">[{msg.Role}] {msg.Content.slice(0, 200)}</div>
     </div>
+  )
+}
+
+function IconButton({ label, onClick, children }: { label: string; onClick: () => void | Promise<void>; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={() => void onClick()}
+      className="message-action-btn message-icon-btn"
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </button>
   )
 }
 

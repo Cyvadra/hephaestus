@@ -125,7 +125,21 @@ function SessionItem({ session, active, onSelect }: { session: Session; active: 
       className={'session-item ' + (active ? 'active' : '')}
     >
       <div className="session-item-title">{label}</div>
-      <div className="session-item-meta">{session.FlagArchived ? '已归档' : '进行中'}</div>
+      <div className="session-item-meta">{formatRelativeTime(session.UpdatedAt)}</div>
     </button>
   )
+}
+
+function formatRelativeTime(updatedAt: string): string {
+  const timestamp = new Date(updatedAt).getTime()
+  if (Number.isNaN(timestamp)) return '刚刚更新'
+
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000))
+  if (elapsedMinutes < 1) return '刚刚更新'
+  if (elapsedMinutes < 60) return `${elapsedMinutes} 分钟前`
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60)
+  if (elapsedHours < 24) return `${elapsedHours} 小时前`
+
+  return `${Math.floor(elapsedHours / 24)} 天前`
 }

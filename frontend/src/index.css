@@ -4848,8 +4848,7 @@ body {
 
 
 :root {
-    --message-list-padding-horizontal: 44px;
-    --message-list-max-width: 840px
+    --message-list-padding-horizontal: 44px
 }
 
 .cookie_banner-wrap {
@@ -5166,7 +5165,7 @@ body {
 
 .messages-pane {
     box-sizing: border-box;
-    width: min(100%, var(--message-list-max-width));
+    width: 100%;
     flex: 1;
     align-self: center;
     overflow-y: auto;
@@ -5255,11 +5254,13 @@ body {
 }
 
 .message-stack {
-    width: min(100%, 680px)
+    width: 100%
 }
 
 .message-stack.user {
-    width: min(100%, 560px)
+    width: fit-content;
+    min-width: 5em;
+    max-width: min(100%, 760px)
 }
 
 .message-card,.streaming-bubble,.command-block,.error-block {
@@ -5497,11 +5498,33 @@ body {
     margin-top: 6px
 }
 
+.user-message-actions {
+    justify-content: flex-end
+}
+
+.assistant-message-actions {
+    padding-left: 8px
+}
+
 .message-action-btn,.branch-switcher button {
     color: var(--dsw-alias-label-secondary);
     border-radius: 6px;
     padding: 3px 6px;
     font-size: 12px
+}
+
+.message-icon-btn {
+    justify-content: center;
+    align-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex
+}
+
+.message-icon-btn svg {
+    width: 16px;
+    height: 16px
 }
 
 .branch-switcher {
@@ -5542,9 +5565,34 @@ body {
     justify-content: flex-end
 }
 
+.assistant-message-editor {
+    max-width: 100%
+}
+
+.message-editor-field {
+    color: var(--dsw-alias-label-secondary);
+    font-size: 12px;
+    display: block
+}
+
+.message-editor-field + .message-editor-field {
+    border-top: 1px solid var(--dsw-alias-border-l2);
+    margin-top: 6px;
+    padding-top: 8px
+}
+
+.message-editor-field > span {
+    padding: 0 5px;
+    display: block
+}
+
+.reasoning-editor-textarea {
+    min-height: 68px
+}
+
 .composer-panel {
     box-sizing: border-box;
-    width: min(100%, var(--message-list-max-width));
+    width: 100%;
     align-self: center;
     padding: 10px var(--message-list-padding-horizontal) 20px
 }
