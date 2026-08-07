@@ -108,6 +108,13 @@ type sendMessageResponse struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
+// streamEventEnvelope makes every SSE payload self-describing and ordered.
+// Sequence begins at one for each HTTP stream.
+type streamEventEnvelope struct {
+	Sequence uint64 `json:"sequence"`
+	Data     any    `json:"data"`
+}
+
 type editAssistantMessageRequest struct {
 	ActiveLeafMessageID uint   `json:"active_leaf_message_id" binding:"required"`
 	Content             string `json:"content" binding:"required"`
@@ -256,15 +263,20 @@ func (s *Server) streamMessage(c *gin.Context) {
 		resultCh <- result
 	}()
 
+	sequence := uint64(0)
+	streamEvent := func(event string, data any) {
+		sequence++
+		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
+	}
 	c.Stream(func(w io.Writer) bool {
 		delta, ok := <-deltas
 		if !ok {
 			return false
 		}
 		if delta.ToolCall != nil {
-			c.SSEvent(delta.Type, delta.ToolCall)
+			streamEvent(delta.Type, delta.ToolCall)
 		} else {
-			c.SSEvent(delta.Type, delta.Text)
+			streamEvent(delta.Type, delta.Text)
 		}
 		return true
 	})
@@ -272,12 +284,12 @@ func (s *Server) streamMessage(c *gin.Context) {
 	select {
 	case err := <-errCh:
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
-			c.SSEvent("error", "session changed; refresh and retry")
+			streamEvent("error", "session changed; refresh and retry")
 		} else {
-			c.SSEvent("error", err.Error())
+			streamEvent("error", err.Error())
 		}
 	case result := <-resultCh:
-		c.SSEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
+		streamEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
 	}
 }
 
@@ -387,24 +399,29 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 		resultCh <- result
 	}()
 
+	sequence := uint64(0)
+	streamEvent := func(event string, data any) {
+		sequence++
+		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
+	}
 	c.Stream(func(w io.Writer) bool {
 		delta, ok := <-deltas
 		if !ok {
 			return false
 		}
 		if delta.ToolCall != nil {
-			c.SSEvent(delta.Type, delta.ToolCall)
+			streamEvent(delta.Type, delta.ToolCall)
 		} else {
-			c.SSEvent(delta.Type, delta.Text)
+			streamEvent(delta.Type, delta.Text)
 		}
 		return true
 	})
 
 	select {
 	case err := <-errCh:
-		c.SSEvent("error", err.Error())
+		streamEvent("error", err.Error())
 	case result := <-resultCh:
-		c.SSEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
+		streamEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
 	}
 }
 

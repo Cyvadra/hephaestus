@@ -1,20 +1,35 @@
 import type { SendMessageResponse, StreamToolCall } from './types'
 
 export type StreamEvent =
-  | { type: 'delta'; data: string }
-  | { type: 'reasoning'; data: string }
-  | { type: 'tool_call'; data: StreamToolCall }
-  | { type: 'tool_result'; data: StreamToolCall }
-  | { type: 'done'; data: SendMessageResponse }
-  | { type: 'error'; data: string }
+  | { sequence: number; type: 'delta'; data: string }
+  | { sequence: number; type: 'reasoning'; data: string }
+  | { sequence: number; type: 'tool_call'; data: StreamToolCall }
+  | { sequence: number; type: 'tool_result'; data: StreamToolCall }
+  | { sequence: number; type: 'done'; data: SendMessageResponse }
+  | { sequence: number; type: 'error'; data: string }
 
-function parseJSONOrRawString(raw: string): string {
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return typeof parsed === 'string' ? parsed : String(parsed)
-  } catch {
-    return raw
+interface EventEnvelope {
+  sequence: number
+  data: unknown
+}
+
+function parseEnvelope(raw: string): EventEnvelope {
+  const parsed: unknown = JSON.parse(raw)
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !Number.isSafeInteger((parsed as EventEnvelope).sequence) ||
+    (parsed as EventEnvelope).sequence < 1 ||
+    !('data' in parsed)
+  ) {
+    throw new Error('Invalid SSE event envelope')
   }
+  return parsed as EventEnvelope
+}
+
+function requireString(data: unknown): string {
+  if (typeof data !== 'string') throw new Error('Invalid SSE text event data')
+  return data
 }
 
 // EventSource only supports GET; we need POST, so we use fetch + ReadableStream
@@ -48,7 +63,7 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
   const contentType = res.headers.get('content-type') ?? ''
   if (!contentType.includes('text/event-stream')) {
     const payload: SendMessageResponse = await res.json()
-    yield { type: 'done', data: payload }
+    yield { sequence: 0, type: 'done', data: payload }
     return
   }
 
@@ -57,27 +72,37 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
   let buf = ''
   let eventName = ''
   let dataLines: string[] = []
+  let expectedSequence = 1
 
   const dispatch = async function* (): AsyncGenerator<StreamEvent> {
-    if (!eventName || dataLines.length === 0) {
+    if (!eventName && dataLines.length === 0) {
       eventName = ''
       dataLines = []
       return
     }
 
-    const raw = dataLines.join('\n')
+    if (!eventName || dataLines.length === 0) {
+      throw new Error('Malformed SSE event')
+    }
+
+    const envelope = parseEnvelope(dataLines.join('\n'))
+    if (envelope.sequence !== expectedSequence) {
+      throw new Error(`Out-of-order SSE event: expected ${expectedSequence}, received ${envelope.sequence}`)
+    }
+    expectedSequence++
 
     if (eventName === 'delta') {
-      yield { type: 'delta', data: parseJSONOrRawString(raw) }
+      yield { sequence: envelope.sequence, type: 'delta', data: requireString(envelope.data) }
     } else if (eventName === 'reasoning') {
-      yield { type: 'reasoning', data: parseJSONOrRawString(raw) }
+      yield { sequence: envelope.sequence, type: 'reasoning', data: requireString(envelope.data) }
     } else if (eventName === 'tool_call' || eventName === 'tool_result') {
-      yield { type: eventName, data: JSON.parse(raw) as StreamToolCall }
+      yield { sequence: envelope.sequence, type: eventName, data: envelope.data as StreamToolCall }
     } else if (eventName === 'done') {
-      const payload: SendMessageResponse = JSON.parse(raw)
-      yield { type: 'done', data: payload }
+      yield { sequence: envelope.sequence, type: 'done', data: envelope.data as SendMessageResponse }
     } else if (eventName === 'error') {
-      yield { type: 'error', data: parseJSONOrRawString(raw) }
+      yield { sequence: envelope.sequence, type: 'error', data: requireString(envelope.data) }
+    } else {
+      throw new Error(`Unknown SSE event: ${eventName}`)
     }
 
     eventName = ''
