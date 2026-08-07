@@ -52,7 +52,8 @@ type Session struct {
 	// CompressionID's compression covers.
 	CompressionLastMessageID *uint
 
-	FlagArchived bool `gorm:"default:false"`
+	FlagArchived bool  `gorm:"default:false"`
+	FlagPinned   uint8 `gorm:"default:0"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

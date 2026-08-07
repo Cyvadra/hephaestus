@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
@@ -465,6 +466,119 @@ func (s *Server) listSessions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sessions)
+}
+
+type updateSessionRequest struct {
+	Title    *string `json:"title"`
+	Archived *bool   `json:"archived"`
+	Pinned   *bool   `json:"pinned"`
+}
+
+// updateSession godoc
+//
+//	@Summary		Update a session
+//	@Tags			sessions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path	int					true	"Session ID"
+//	@Param			request	body	updateSessionRequest	true	"Session changes"
+//	@Success		200		{object}	store.Session
+//	@Failure		400		{object}	errorResponse
+//	@Failure		404		{object}	errorResponse
+//	@Router			/sessions/{id} [patch]
+func (s *Server) updateSession(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	var req updateSessionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if req.Title == nil && req.Archived == nil && req.Pinned == nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "no session changes provided"})
+		return
+	}
+
+	changes := map[string]any{}
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: "session title cannot be empty"})
+			return
+		}
+		if len([]rune(title)) > 64 {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: "session title must be 64 characters or fewer"})
+			return
+		}
+		changes["title"] = title
+	}
+	if req.Archived != nil {
+		changes["flag_archived"] = *req.Archived
+	}
+	if req.Pinned != nil {
+		if *req.Pinned {
+			changes["flag_pinned"] = uint8(1)
+		} else {
+			changes["flag_pinned"] = uint8(0)
+		}
+	}
+
+	var sess store.Session
+	if err := s.db.First(&sess, sessionID).Error; err != nil {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		return
+	}
+	if err := s.db.Model(&sess).Updates(changes).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	if err := s.db.First(&sess, sessionID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sess)
+}
+
+// deleteSession godoc
+//
+//	@Summary		Delete a session and its conversation data
+//	@Tags			sessions
+//	@Param			id	path	int	true	"Session ID"
+//	@Success		204
+//	@Failure		404	{object}	errorResponse
+//	@Router			/sessions/{id} [delete]
+func (s *Server) deleteSession(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var sess store.Session
+		if err := tx.First(&sess, sessionID).Error; err != nil {
+			return err
+		}
+		for _, model := range []any{&store.ChatMessage{}, &store.Compression{}, &store.PluginState{}} {
+			if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Delete(&sess).Error
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // conciergeItem is the JSON shape returned by listConcierges.

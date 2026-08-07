@@ -43,6 +43,8 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	api := s.engine.Group("/api/v1")
 	api.GET("/sessions", s.listSessions)
 	api.POST("/sessions", s.createSession)
+	api.PATCH("/sessions/:id", s.updateSession)
+	api.DELETE("/sessions/:id", s.deleteSession)
 	api.GET("/sessions/:id/history", s.getHistory)
 	api.POST("/sessions/:id/messages", s.sendMessage)
 	api.POST("/sessions/:id/messages/:messageID/edit", s.editAssistantMessage)

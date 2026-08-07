@@ -111,6 +111,84 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/{id}": {
+            "delete": {
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Delete a session and its conversation data",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Update a session",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Session changes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.updateSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Session"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sessions/{id}/history": {
             "get": {
                 "description": "Returns the session row plus every message in its (unpruned) tree, so the client can reconstruct and switch between branches itself.",
@@ -201,7 +279,7 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages/stream": {
             "post": {
-                "description": "Like sendMessage, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", and \"tool_result\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
+                "description": "Like sendMessage, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
                 "consumes": [
                     "application/json"
                 ],
@@ -453,6 +531,9 @@ const docTemplate = `{
                 "flagArchived": {
                     "type": "boolean"
                 },
+                "flagPinned": {
+                    "type": "integer"
+                },
                 "id": {
                     "type": "integer"
                 },
@@ -594,6 +675,20 @@ const docTemplate = `{
                     "description": "Metadata carries any plugin-attached data for this turn (e.g.\nsuggested next-user-message alternatives).",
                     "type": "object",
                     "additionalProperties": {}
+                }
+            }
+        },
+        "internal_server.updateSessionRequest": {
+            "type": "object",
+            "properties": {
+                "archived": {
+                    "type": "boolean"
+                },
+                "pinned": {
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         }

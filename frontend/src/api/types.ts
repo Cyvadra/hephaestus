@@ -18,6 +18,7 @@ export interface Session {
   CompressionID: number | null
   CompressionLastMessageID: number | null
   FlagArchived: boolean
+  FlagPinned: number
   CreatedAt: string
   UpdatedAt: string
 }

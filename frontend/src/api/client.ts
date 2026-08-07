@@ -24,6 +24,21 @@ export const createSession = (concierge: string) =>
     body: JSON.stringify({ concierge }),
   })
 
+export const updateSession = (sessionId: number, changes: { title?: string; archived?: boolean; pinned?: boolean }) =>
+  fetchJSON<Session>(`${BASE}/sessions/${sessionId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  })
+
+export const deleteSession = async (sessionId: number) => {
+  const res = await fetch(`${BASE}/sessions/${sessionId}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(body.error ?? res.statusText)
+  }
+}
+
 export const getHistory = (sessionId: number, signal?: AbortSignal) =>
   fetchJSON<HistoryResponse>(`${BASE}/sessions/${sessionId}/history`, { signal })
 
