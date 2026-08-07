@@ -1,4 +1,5 @@
 import { useState, useRef, type KeyboardEvent } from 'react'
+import { ArrowUp } from 'lucide-react'
 
 interface Props {
   onSend: (text: string) => void
@@ -43,15 +44,24 @@ export default function Composer({ onSend, onStop, disabled }: Props) {
             rows={3}
             className="composer-textarea"
           />
-          {disabled ? (
-            <button onClick={onStop} className="composer-stop-btn">
-              停止
-            </button>
-          ) : (
-            <button onClick={submit} disabled={!text.trim()} className="composer-send-btn">
-              发送
-            </button>
-          )}
+          <div className="composer-action-row">
+            {disabled ? (
+              <button type="button" onClick={onStop} className="composer-stop-btn">
+                停止
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!text.trim()}
+                className="composer-send-btn composer-send-icon-btn"
+                aria-label="发送"
+                title="发送"
+              >
+                <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

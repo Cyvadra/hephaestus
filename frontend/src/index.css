@@ -5727,7 +5727,16 @@ body {
 }
 
 .composer-input-row {
-    gap: 10px
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px
+}
+
+.composer-action-row {
+    min-height: 34px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center
 }
 
 .composer-textarea {
@@ -5737,7 +5746,7 @@ body {
     background: transparent;
     border: 0;
     outline: 0;
-    flex: 1;
+    width: 100%;
     min-width: 0;
     padding: 5px;
     font: inherit;
@@ -5751,6 +5760,21 @@ body {
 .composer-send-btn:disabled {
     cursor: not-allowed;
     opacity: .45
+}
+
+.composer-send-icon-btn {
+    border-radius: 50%;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: grid;
+    margin: 3px;
+    place-items: center
+}
+
+.composer-send-icon-btn svg {
+    display: block
 }
 
 .composer-stop-btn {
