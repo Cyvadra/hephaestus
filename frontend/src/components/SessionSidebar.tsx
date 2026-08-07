@@ -1,54 +1,37 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { listSessions, listConcierges } from '../api/client'
+import { useEffect, useState, useCallback } from 'react'
+import { Plus, Settings } from 'lucide-react'
+import { listSessions } from '../api/client'
 import type { Session, ConciergeItem } from '../api/types'
 
 interface Props {
   activeSessionId: number | null
   refreshKey: number
   draftConcierge: ConciergeItem | null
+  sessionUpdate: Session | null
   onSelect: (id: number) => void
-  onStartDraft: (concierge: ConciergeItem) => void
+  onOpenNewSession: () => void
 }
 
-export default function SessionSidebar({ activeSessionId, refreshKey, draftConcierge, onSelect, onStartDraft }: Props) {
+export default function SessionSidebar({ activeSessionId, refreshKey, draftConcierge, sessionUpdate, onSelect, onOpenNewSession }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
-  const [concierges, setConcierges] = useState<ConciergeItem[]>([])
-  const [showConciergeMenu, setShowConciergeMenu] = useState(false)
-  const hideTimerRef = useRef<number | null>(null)
 
   const reload = useCallback(async () => {
-    const [s, c] = await Promise.all([listSessions(), listConcierges()])
-    setSessions(s)
-    setConcierges(c)
+    setSessions(await listSessions())
   }, [])
 
   useEffect(() => {
     void reload()
   }, [reload, refreshKey])
 
-  const clearHideTimer = () => {
-    if (hideTimerRef.current != null) {
-      window.clearTimeout(hideTimerRef.current)
-      hideTimerRef.current = null
-    }
-  }
-
-  const openConciergeMenu = () => {
-    clearHideTimer()
-    setShowConciergeMenu(true)
-  }
-
-  const closeConciergeMenuSoon = () => {
-    clearHideTimer()
-    hideTimerRef.current = window.setTimeout(() => {
-      setShowConciergeMenu(false)
-      hideTimerRef.current = null
-    }, 140)
-  }
-
   useEffect(() => {
-    return () => clearHideTimer()
-  }, [])
+    if (sessionUpdate == null) return
+    setSessions(current => {
+      const withoutUpdated = current.filter(session => session.ID !== sessionUpdate.ID)
+      return [sessionUpdate, ...withoutUpdated].sort((left, right) =>
+        new Date(right.UpdatedAt).getTime() - new Date(left.UpdatedAt).getTime(),
+      )
+    })
+  }, [sessionUpdate])
 
   const active = sessions.filter(s => !s.FlagArchived)
   const archived = sessions.filter(s => s.FlagArchived)
@@ -57,6 +40,18 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
 
   return (
     <aside className="sidebar">
+      <div className="sidebar-brand">
+        <img src="/deepseek-logo.svg" alt="DeepSeek" />
+        <span>DeepSeek</span>
+      </div>
+      <button
+        className="sidebar-new-btn"
+        onClick={onOpenNewSession}
+      >
+        <Plus aria-hidden="true" size={16} strokeWidth={1.7} />
+        <span>New chat</span>
+      </button>
+
       <div className="sidebar-section">
         <div className="sidebar-section-title">最近会话</div>
         <div className="session-list">
@@ -76,41 +71,11 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
 
       <div className="sidebar-footer">
         <div className="sidebar-footer-label" title={currentConcierge}>{currentConcierge}</div>
-        <div
-          className="sidebar-new-wrap"
-          onMouseEnter={openConciergeMenu}
-          onMouseLeave={closeConciergeMenuSoon}
-        >
-          <button
-            onFocus={openConciergeMenu}
-            onBlur={closeConciergeMenuSoon}
-            className="sidebar-new-btn"
-          >
-            + 新建
+        <div className="settings-tooltip">
+          <button className="sidebar-settings-btn" aria-label="设置" type="button">
+            <Settings aria-hidden="true" size={16} strokeWidth={1.7} />
           </button>
-          {showConciergeMenu && (
-            <div
-              className="sidebar-new-menu"
-              role="menu"
-              aria-label="选择顾问"
-              onMouseEnter={openConciergeMenu}
-              onMouseLeave={closeConciergeMenuSoon}
-            >
-              {concierges.map(c => (
-                <button
-                  key={c.name}
-                  className="sidebar-new-menu-item"
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    onStartDraft(c)
-                    setShowConciergeMenu(false)
-                  }}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
-          )}
+          <span role="tooltip">Coming soon</span>
         </div>
       </div>
     </aside>

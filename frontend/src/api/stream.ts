@@ -1,10 +1,11 @@
-import type { SendMessageResponse, StreamToolCall } from './types'
+import type { SendMessageResponse, Session, StreamToolCall } from './types'
 
 export type StreamEvent =
   | { sequence: number; type: 'delta'; data: string }
   | { sequence: number; type: 'reasoning'; data: string }
   | { sequence: number; type: 'tool_call'; data: StreamToolCall }
   | { sequence: number; type: 'tool_result'; data: StreamToolCall }
+  | { sequence: number; type: 'session_updated'; data: Session }
   | { sequence: number; type: 'done'; data: SendMessageResponse }
   | { sequence: number; type: 'error'; data: string }
 
@@ -38,17 +39,20 @@ export async function* streamMessage(
   sessionId: number,
   text: string,
   activeLeafMessageId?: number,
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId }),
+    signal,
   })
 }
 
-export async function* streamRegenerate(sessionId: number): AsyncGenerator<StreamEvent> {
+export async function* streamRegenerate(sessionId: number, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   yield* streamResponse(`/api/v1/sessions/${sessionId}/regenerate/stream`, {
     method: 'POST',
+    signal,
   })
 }
 
@@ -97,6 +101,8 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
       yield { sequence: envelope.sequence, type: 'reasoning', data: requireString(envelope.data) }
     } else if (eventName === 'tool_call' || eventName === 'tool_result') {
       yield { sequence: envelope.sequence, type: eventName, data: envelope.data as StreamToolCall }
+    } else if (eventName === 'session_updated') {
+      yield { sequence: envelope.sequence, type: 'session_updated', data: envelope.data as Session }
     } else if (eventName === 'done') {
       yield { sequence: envelope.sequence, type: 'done', data: envelope.data as SendMessageResponse }
     } else if (eventName === 'error') {

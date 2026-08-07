@@ -4965,11 +4965,11 @@ body {
 /* Hephaestus application bridge for the restored design-system stylesheet. */
 #root {
     width: 100%;
-    min-height: 100vh
+    height: 100dvh
 }
 
 .app-shell {
-    min-height: 100vh;
+    height: 100%;
     color: var(--dsw-alias-label-primary);
     background: var(--dsw-alias-bg-base);
     display: flex
@@ -4982,24 +4982,34 @@ body {
     flex: 0 0 var(--sider-width);
     flex-direction: column;
     width: var(--sider-width);
-    min-height: 100vh;
+    height: 100%;
     padding: 12px;
     display: flex
 }
 
-.sidebar-new-wrap,.composer-input-row,.message-actions,.message-editor-actions {
+.sidebar-brand,.sidebar-new-btn,.sidebar-footer,.composer-input-row,.message-actions,.message-editor-actions {
     align-items: center;
     display: flex
+}
+
+.sidebar-brand {
+    color: var(--dsw-alias-brand-primary);
+    gap: 8px;
+    height: 40px;
+    padding: 0 8px;
+    font-size: 18px;
+    font-weight: 600
+}
+
+.sidebar-brand img {
+    width: 24px;
+    height: 24px
 }
 
 .session-item-meta,.sidebar-section-title,.sidebar-footer-label,.chat-header-eyebrow {
     color: var(--dsw-alias-label-tertiary);
     font-size: 12px;
     line-height: 18px
-}
-
-.sidebar-new-wrap {
-    position: relative
 }
 
 .sidebar-new-btn,.composer-send-btn,.composer-stop-btn {
@@ -5015,36 +5025,25 @@ body {
 }
 
 .sidebar-new-btn {
-    color: var(--dsw-alias-label-secondary);
-    background: transparent;
-    border-radius: 7px;
-    padding: 5px 7px;
-    font-size: 12px;
-    font-weight: 400
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-alias-button-elevated-fill);
+    box-shadow: 0 -2px 2px rgba(72,104,178,.04),0 2px 2px rgba(106,111,117,.09),0 1px 2px rgba(72,104,178,.08);
+    border: 1px solid transparent;
+    border-radius: 100px;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 40px;
+    margin: 8px 0 18px;
+    padding: 0 16px;
+    font-size: 14px
 }
 
-.sidebar-new-btn:hover,.composer-send-btn:hover,.composer-stop-btn:hover {
+.composer-send-btn:hover,.composer-stop-btn:hover {
     background: var(--dsw-alias-button-primary-hover)
 }
 
-.sidebar-new-btn:hover {
-    color: var(--dsw-alias-label-primary);
-    background: var(--dsw-alias-interactive-bg-hover)
-}
-
-.sidebar-new-menu {
-    z-index: 5;
-    background: var(--dsw-specific-menu);
-    box-shadow: var(--dsw-shadow-lv3);
-    border-radius: 10px;
-    min-width: 144px;
-    padding: 4px;
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0
-}
-
-.sidebar-new-menu-item,.session-item,.message-action-btn,.branch-switcher button {
+.session-item,.message-action-btn,.branch-switcher button {
     cursor: pointer;
     color: var(--dsw-alias-label-primary);
     background: transparent;
@@ -5052,14 +5051,7 @@ body {
     font: inherit
 }
 
-.sidebar-new-menu-item {
-    border-radius: 7px;
-    text-align: left;
-    width: 100%;
-    padding: 7px 9px
-}
-
-.sidebar-new-menu-item:hover,.session-item:hover,.message-action-btn:hover,.branch-switcher button:hover {
+.session-item:hover,.message-action-btn:hover,.branch-switcher button:hover {
     background: var(--dsw-alias-interactive-bg-hover)
 }
 
@@ -5075,7 +5067,8 @@ body {
 }
 
 .session-list {
-    overflow-y: auto
+    overflow-y: auto;
+    scrollbar-gutter: stable
 }
 
 .session-item {
@@ -5116,13 +5109,60 @@ body {
     min-width: 0
 }
 
+.settings-tooltip {
+    position: relative
+}
+
+.sidebar-settings-btn {
+    cursor: pointer;
+    color: var(--dsw-alias-label-secondary);
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    display: flex
+}
+
+.sidebar-settings-btn:hover,.sidebar-settings-btn:focus-visible {
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-alias-interactive-bg-hover);
+    outline: none
+}
+
+.settings-tooltip span {
+    z-index: 5;
+    color: var(--dsw-static-neutral-bluish-00);
+    background: var(--dsw-alias-tooltip-bg);
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    padding: 4px 8px;
+    font-size: 12px;
+    line-height: 18px;
+    transition: opacity .15s ease;
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px)
+}
+
+.settings-tooltip:focus-within span,.settings-tooltip:hover span {
+    opacity: 1
+}
+
 .main-panel {
     min-width: 0;
+    min-height: 0;
     flex: 1
 }
 
 .chat-surface {
-    height: 100vh;
+    height: 100%;
+    min-height: 0;
     flex-direction: column;
     display: flex
 }
@@ -5169,12 +5209,13 @@ body {
     flex: 1;
     align-self: center;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 28px var(--message-list-padding-horizontal)
 }
 
 .welcome-card,.empty-state-card {
     color: var(--dsw-alias-label-secondary);
-    max-width: 540px;
+    max-width: 760px;
     margin: 12vh auto;
     line-height: 1.7
 }
@@ -5190,6 +5231,60 @@ body {
     border-top: 1px solid var(--dsw-alias-border-l1);
     margin-top: 22px;
     padding-top: 18px
+}
+
+.concierge-card-grid {
+    grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+    gap: 12px;
+    margin-top: 22px;
+    display: grid
+}
+
+.concierge-card {
+    cursor: pointer;
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-alias-bg-layer-2);
+    border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 8px;
+    text-align: left;
+    min-height: 144px;
+    padding: 16px;
+    font: inherit;
+    transition: border-color .15s ease,box-shadow .15s ease,transform .15s ease
+}
+
+.concierge-card:hover,.concierge-card:focus-visible {
+    border-color: var(--dsw-alias-brand-primary);
+    box-shadow: 0 4px 12px rgba(72,104,178,.12);
+    outline: none;
+    transform: translateY(-1px)
+}
+
+.concierge-card > strong {
+    display: block;
+    font-size: 16px;
+    line-height: 24px
+}
+
+.concierge-card > p {
+    color: var(--dsw-alias-label-secondary);
+    margin: 2px 0 14px;
+    font-size: 13px;
+    line-height: 20px
+}
+
+.concierge-card-tags {
+    align-items: start;
+    gap: 6px;
+    margin-top: 8px;
+    display: flex
+}
+
+.concierge-card-tags > span {
+    color: var(--dsw-alias-label-tertiary);
+    flex: 0 0 36px;
+    font-size: 12px;
+    line-height: 22px
 }
 
 .concierge-detail {
@@ -5284,6 +5379,10 @@ body {
     background: var(--dsw-alias-bg-module-platform)
 }
 
+.command-block {
+    white-space: pre-wrap
+}
+
 .message-body {
     min-width: 0;
     overflow-wrap: anywhere
@@ -5337,6 +5436,23 @@ body {
     padding: 4px 0 4px 14px;
     font-size: 13px;
     line-height: 1.65
+}
+
+.reasoning-preview {
+    max-height: 180px;
+    overflow: hidden;
+    position: relative
+}
+
+.reasoning-preview::after {
+    background: linear-gradient(to bottom, transparent, var(--dsw-alias-background-base, #fff));
+    bottom: 0;
+    content: "";
+    height: 36px;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    right: 0
 }
 
 .reasoning-text {
@@ -5673,6 +5789,16 @@ body {
 
     .messages-pane {
         padding-top: 18px
+    }
+}
+
+@media not all and (min-width: 560px) {
+    .empty-state-card {
+        margin: 32px auto
+    }
+
+    .concierge-card-grid {
+        grid-template-columns: 1fr
     }
 }
 
@@ -6792,6 +6918,64 @@ body[data-ds-dark-theme] {
 
 .scrollable:hover {
     scrollbar-color: var(--scroll-color-hover) transparent
+}
+
+.messages-pane,.composer-textarea {
+    scrollbar-color: var(--scroll-color) transparent;
+    transition: scrollbar-color .1s ease-out
+}
+
+.messages-pane:hover,.composer-textarea:hover {
+    scrollbar-color: var(--scroll-color-hover) transparent
+}
+
+.messages-pane::-webkit-scrollbar,.composer-textarea::-webkit-scrollbar {
+    width: 6px;
+    height: 6px
+}
+
+.messages-pane::-webkit-scrollbar-track,.composer-textarea::-webkit-scrollbar-track {
+    background: transparent
+}
+
+.messages-pane::-webkit-scrollbar-thumb,.composer-textarea::-webkit-scrollbar-thumb {
+    background: var(--scroll-color);
+    border-radius: 100px
+}
+
+.messages-pane:hover::-webkit-scrollbar-thumb,.composer-textarea:hover::-webkit-scrollbar-thumb {
+    background: var(--scroll-color-hover)
+}
+
+.session-list {
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color .1s ease-out
+}
+
+.sidebar:hover .session-list,.sidebar:focus-within .session-list {
+    scrollbar-color: var(--scroll-color) transparent
+}
+
+.session-list::-webkit-scrollbar {
+    width: 6px
+}
+
+.session-list::-webkit-scrollbar-track {
+    background: transparent
+}
+
+.session-list::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 100px;
+    transition: background-color .1s ease-out
+}
+
+.sidebar:hover .session-list::-webkit-scrollbar-thumb,.sidebar:focus-within .session-list::-webkit-scrollbar-thumb {
+    background: var(--scroll-color)
+}
+
+.session-list::-webkit-scrollbar-thumb:hover,.session-list::-webkit-scrollbar-thumb:active {
+    background: var(--scroll-color-hover)
 }
 
 #zenuml-intersection-detector-container {

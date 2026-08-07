@@ -1,27 +1,42 @@
 import { useState, useCallback } from 'react'
 import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
-import type { ConciergeItem } from './api/types'
+import type { ConciergeItem, Session } from './api/types'
 
 export default function App() {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [draftConcierge, setDraftConcierge] = useState<ConciergeItem | null>(null)
+  const [isChoosingConcierge, setIsChoosingConcierge] = useState(false)
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0)
+  const [sidebarSessionUpdate, setSidebarSessionUpdate] = useState<Session | null>(null)
 
   const handleSessionSelect = useCallback((id: number) => {
     setDraftConcierge(null)
+    setIsChoosingConcierge(false)
     setSessionId(id)
   }, [])
 
   const handleStartDraft = useCallback((concierge: ConciergeItem) => {
     setSessionId(null)
     setDraftConcierge(concierge)
+    setIsChoosingConcierge(false)
+  }, [])
+
+  const handleOpenNewSession = useCallback(() => {
+    setSessionId(null)
+    setDraftConcierge(null)
+    setIsChoosingConcierge(true)
   }, [])
 
   const handleSessionCreated = useCallback((id: number) => {
     setSessionId(id)
     setDraftConcierge(null)
+    setIsChoosingConcierge(false)
     setSidebarRefreshKey(v => v + 1)
+  }, [])
+
+  const handleSessionUpdated = useCallback((session: Session) => {
+    setSidebarSessionUpdate(session)
   }, [])
 
   return (
@@ -30,15 +45,19 @@ export default function App() {
         activeSessionId={sessionId}
         refreshKey={sidebarRefreshKey}
         draftConcierge={draftConcierge}
+        sessionUpdate={sidebarSessionUpdate}
         onSelect={handleSessionSelect}
-        onStartDraft={handleStartDraft}
+        onOpenNewSession={handleOpenNewSession}
       />
       <main className="main-panel">
-        {sessionId != null || draftConcierge != null ? (
+        {sessionId != null || draftConcierge != null || isChoosingConcierge ? (
           <ChatView
             sessionId={sessionId}
             draftConcierge={draftConcierge}
+            isChoosingConcierge={isChoosingConcierge}
+            onChooseConcierge={handleStartDraft}
             onSessionCreated={handleSessionCreated}
+            onSessionUpdated={handleSessionUpdated}
           />
         ) : (
           <section className="chat-surface">

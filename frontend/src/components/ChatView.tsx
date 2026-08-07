@@ -1,34 +1,42 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { createSession, editAssistantMessage, getHistory } from '../api/client'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
+import { createSession, editAssistantMessage, getHistory, listConcierges } from '../api/client'
 import { streamMessage, streamRegenerate } from '../api/stream'
-import type { ChatMessage, ConciergeItem, StreamToolCall } from '../api/types'
+import type { ChatMessage, ConciergeItem, Session, StreamToolCall } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer from './Composer'
-import GenerationProgress from './GenerationProgress'
+import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 
 interface Props {
   sessionId: number | null
   draftConcierge?: ConciergeItem | null
+  isChoosingConcierge?: boolean
+  onChooseConcierge?: (concierge: ConciergeItem) => void
   onSessionCreated?: (id: number) => void
+  onSessionUpdated?: (session: Session) => void
 }
 
-export default function ChatView({ sessionId, draftConcierge, onSessionCreated }: Props) {
+export default function ChatView({ sessionId, draftConcierge, isChoosingConcierge = false, onChooseConcierge, onSessionCreated, onSessionUpdated }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
   const [streamingText, setStreamingText] = useState('')
-  const [streamingReasoning, setStreamingReasoning] = useState('')
-  const [streamingToolCalls, setStreamingToolCalls] = useState<StreamToolCall[]>([])
+  const [streamingActivities, setStreamingActivities] = useState<StreamActivity[]>([])
+  const [optimisticUserMessage, setOptimisticUserMessage] = useState<ChatMessage | null>(null)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<number | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [concierges, setConcierges] = useState<ConciergeItem[]>([])
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
+  const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const streamAbortRef = useRef<AbortController | null>(null)
+  const shouldAutoScrollRef = useRef(true)
 
   useEffect(() => {
     setResolvedSessionId(sessionId)
+    shouldAutoScrollRef.current = true
   }, [sessionId])
 
   const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal) => {
@@ -55,8 +63,29 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
   }, [resolvedSessionId, loadHistory])
 
   useEffect(() => {
+    if (!isChoosingConcierge) return
+    void listConcierges().then(setConcierges).catch((cause: unknown) => setError(String(cause)))
+  }, [isChoosingConcierge])
+
+  // 历史加载 / 切换会话 / 编辑完成：整段内容被替换，直接瞬间跳到最新位置，
+  // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。
+  useLayoutEffect(() => {
+    if (!shouldAutoScrollRef.current) return
+    const pane = messagesPaneRef.current
+    if (pane) pane.scrollTop = pane.scrollHeight
+  }, [messages])
+
+  // 流式输出过程中：增量内容很短，平滑跟随到底部更符合直觉。
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingText, streamingReasoning, streamingToolCalls])
+  }, [streamingText, streamingActivities])
+
+  const handleMessagesScroll = () => {
+    const pane = messagesPaneRef.current
+    if (!pane) return
+    shouldAutoScrollRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40
+  }
 
   const byId = buildById(messages)
   const childrenMap = buildChildrenMap(messages)
@@ -73,9 +102,22 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
     setError(null)
     setStreaming(true)
     setStreamingText('')
-    setStreamingReasoning('')
-    setStreamingToolCalls([])
+    setStreamingActivities([])
+    shouldAutoScrollRef.current = true
+    setOptimisticUserMessage({
+      ID: -Date.now(),
+      SessionID: resolvedSessionId ?? 0,
+      ParentMessageID: leafId ?? null,
+      Timestamp: new Date().toISOString(),
+      Role: 'user',
+      Content: text,
+      ReasoningContent: '',
+      ToolCalls: null,
+      ToolCallID: '',
+    })
 
+    const controller = new AbortController()
+    streamAbortRef.current = controller
     try {
       let targetSessionId = resolvedSessionId
       if (targetSessionId == null) {
@@ -88,14 +130,16 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
         onSessionCreated?.(created.ID)
       }
 
-      const gen = streamMessage(targetSessionId, text, leafId ?? undefined)
+      const gen = streamMessage(targetSessionId, text, leafId ?? undefined, controller.signal)
       for await (const ev of gen) {
         if (ev.type === 'delta') {
           setStreamingText(t => t + ev.data)
         } else if (ev.type === 'reasoning') {
-          setStreamingReasoning(t => t + ev.data)
+          setStreamingActivities(current => appendReasoningActivity(current, ev.sequence, ev.data))
         } else if (ev.type === 'tool_call' || ev.type === 'tool_result') {
-          setStreamingToolCalls(current => mergeToolCall(current, ev.data))
+          setStreamingActivities(current => mergeToolActivity(current, ev.sequence, ev.data))
+        } else if (ev.type === 'session_updated') {
+          onSessionUpdated?.(ev.data)
         } else if (ev.type === 'done') {
           if (ev.data.command_response) {
             setCommandResponse(ev.data.command_response)
@@ -103,18 +147,19 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
           await loadHistory(targetSessionId)
           if (ev.data.message) setLocalLeafId(ev.data.message.ID)
         } else if (ev.type === 'error') {
-          setError(ev.data)
+          if (!controller.signal.aborted) setError(ev.data)
         }
       }
-    } catch (e) {
-      setError(String(e))
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(String(cause))
     } finally {
+      if (streamAbortRef.current === controller) streamAbortRef.current = null
       setStreaming(false)
       setStreamingText('')
-      setStreamingReasoning('')
-      setStreamingToolCalls([])
+      setStreamingActivities([])
+      setOptimisticUserMessage(null)
     }
-  }, [resolvedSessionId, draftConcierge, localLeafId, loadHistory, onSessionCreated])
+  }, [resolvedSessionId, draftConcierge, localLeafId, loadHistory, onSessionCreated, onSessionUpdated])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -122,35 +167,39 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
     setError(null)
     setStreaming(true)
     setStreamingText('')
-    setStreamingReasoning('')
-    setStreamingToolCalls([])
+    setStreamingActivities([])
     setRegeneratingMessageId(messageId)
+    shouldAutoScrollRef.current = true
+    const controller = new AbortController()
+    streamAbortRef.current = controller
     try {
-      const gen = streamRegenerate(resolvedSessionId)
+      const gen = streamRegenerate(resolvedSessionId, controller.signal)
       for await (const ev of gen) {
         if (ev.type === 'delta') {
           setStreamingText(t => t + ev.data)
         } else if (ev.type === 'reasoning') {
-          setStreamingReasoning(t => t + ev.data)
+          setStreamingActivities(current => appendReasoningActivity(current, ev.sequence, ev.data))
         } else if (ev.type === 'tool_call' || ev.type === 'tool_result') {
-          setStreamingToolCalls(current => mergeToolCall(current, ev.data))
+          setStreamingActivities(current => mergeToolActivity(current, ev.sequence, ev.data))
+        } else if (ev.type === 'session_updated') {
+          onSessionUpdated?.(ev.data)
         } else if (ev.type === 'done') {
           await loadHistory(resolvedSessionId)
           if (ev.data.message) setLocalLeafId(ev.data.message.ID)
         } else if (ev.type === 'error') {
-          setError(ev.data)
+          if (!controller.signal.aborted) setError(ev.data)
         }
       }
-    } catch (e) {
-      setError(String(e))
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(String(cause))
     } finally {
+      if (streamAbortRef.current === controller) streamAbortRef.current = null
       setStreaming(false)
       setStreamingText('')
-      setStreamingReasoning('')
-      setStreamingToolCalls([])
+      setStreamingActivities([])
       setRegeneratingMessageId(null)
     }
-  }, [resolvedSessionId, loadHistory])
+  }, [resolvedSessionId, loadHistory, onSessionUpdated])
 
   const handleBranchSwitch = useCallback((newLeafId: number) => {
     setLocalLeafId(newLeafId)
@@ -189,6 +238,8 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
       })
     } catch (cause) {
       setError(String(cause))
+    } finally {
+      streamAbortRef.current?.abort()
     }
   }, [resolvedSessionId])
 
@@ -200,9 +251,8 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
     <div className={'chat-surface' + (isNewSession ? ' new-session' : '')}>
       <header className="chat-header">
         <div>
-          <p className="chat-header-eyebrow">会话详情</p>
           <h2 className="chat-header-title">
-            {resolvedSessionId == null ? `新会话 · ${draftConcierge?.name ?? '未选择顾问'}` : '对话内容'}
+            {resolvedSessionId == null ? `新会话${draftConcierge ? ` · ${draftConcierge.name}` : ''}` : '对话内容'}
           </h2>
         </div>
         <div className="chat-badge">
@@ -210,11 +260,26 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
           实时
         </div>
       </header>
-      <div className="messages-pane">
+      <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>
         {isNewSession ? (
           <div className="empty-state-card">
-            <h2>开始新的对话</h2>
-            {draftConcierge && (
+            <h2>{isChoosingConcierge ? '选择 Concierge' : '开始新的对话'}</h2>
+            {isChoosingConcierge ? (
+              <div className="concierge-card-grid">
+                {concierges.map(concierge => (
+                  <button
+                    className="concierge-card"
+                    key={concierge.name}
+                    onClick={() => onChooseConcierge?.(concierge)}
+                  >
+                    <strong>{concierge.name}</strong>
+                    <p>{concierge.identity}</p>
+                    <CardTags label="工具组" values={concierge.tool_groups} />
+                    <CardTags label="印象" values={concierge.impressions} />
+                  </button>
+                ))}
+              </div>
+            ) : draftConcierge && (
               <div className="concierge-details">
                 <div className="concierge-detail">
                   <span>顾问</span>
@@ -233,7 +298,7 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
         ) : (
           displayMessages.map((item, idx) => regeneratingMessageId === item.message.ID ? (
             <div className="message-row assistant" key={item.message.ID}>
-              <GenerationProgress content={streamingText} reasoning={streamingReasoning} toolCalls={streamingToolCalls} />
+              <GenerationProgress content={streamingText} activities={streamingActivities} />
             </div>
           ) : (
             <MessageBubble
@@ -251,9 +316,18 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
             />
           ))
         )}
+        {optimisticUserMessage && (
+          <div className="message-row user">
+            <div className="message-stack user">
+              <div className="message-card user">
+                <div className="message-body">{optimisticUserMessage.Content}</div>
+              </div>
+            </div>
+          </div>
+        )}
         {streaming && regeneratingMessageId == null && (
           <div className="message-row assistant">
-            <GenerationProgress content={streamingText} reasoning={streamingReasoning} toolCalls={streamingToolCalls} />
+            <GenerationProgress content={streamingText} activities={streamingActivities} />
           </div>
         )}
         {commandResponse && (
@@ -273,26 +347,38 @@ export default function ChatView({ sessionId, draftConcierge, onSessionCreated }
   )
 }
 
-function mergeToolCall(current: StreamToolCall[], incoming: StreamToolCall): StreamToolCall[] {
-  const index = current.findIndex(toolCall =>
-    toolCall.call_index === incoming.call_index && (
-      toolCall.index === incoming.index || Boolean(incoming.id && toolCall.id === incoming.id)
+function appendReasoningActivity(current: StreamActivity[], sequence: number, content: string): StreamActivity[] {
+  const previous = current.at(-1)
+  if (previous?.type === 'reasoning') {
+    return [...current.slice(0, -1), { ...previous, content: previous.content + content }]
+  }
+  return [...current, { type: 'reasoning', sequence, content }]
+}
+
+function mergeToolActivity(current: StreamActivity[], sequence: number, incoming: StreamToolCall): StreamActivity[] {
+  const index = current.findIndex(activity =>
+    activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && (
+      activity.toolCall.index === incoming.index || Boolean(incoming.id && activity.toolCall.id === incoming.id)
     ),
   )
-  if (index === -1) return [...current, incoming]
+  if (index === -1) return [...current, { type: 'tool', sequence, toolCall: incoming }]
 
   const existing = current[index]
+  if (existing.type !== 'tool') return current
   const updated = {
-    ...existing,
+    ...existing.toolCall,
     ...incoming,
-    id: incoming.id || existing.id,
-    name: incoming.name || existing.name,
+    id: incoming.id || existing.toolCall.id,
+    name: incoming.name || existing.toolCall.name,
     arguments: incoming.arguments
-      ? `${existing.arguments ?? ''}${incoming.arguments}`
-      : existing.arguments,
-    result: incoming.result || existing.result,
+      ? `${existing.toolCall.arguments ?? ''}${incoming.arguments}`
+      : existing.toolCall.arguments,
+    result: incoming.result || existing.toolCall.result,
   }
-  return current.map((toolCall, currentIndex) => currentIndex === index ? updated : toolCall)
+  return current.map((activity, currentIndex) => currentIndex === index
+    ? { ...existing, toolCall: updated }
+    : activity,
+  )
 }
 
 interface DisplayMessage {
@@ -346,6 +432,19 @@ function DetailList({ label, values }: { label: string; values?: string[] }) {
       ) : (
         <p>未配置</p>
       )}
+    </div>
+  )
+}
+
+function CardTags({ label, values }: { label: string; values: string[] }) {
+  if (values.length === 0) return null
+
+  return (
+    <div className="concierge-card-tags">
+      <span>{label}</span>
+      <div className="concierge-tag-list">
+        {values.map(value => <span className="concierge-tag" key={value}>{value}</span>)}
+      </div>
     </div>
   )
 }
