@@ -4,9 +4,10 @@ package bootstrap
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/Cyvadra/hephaestus/internal/fsutil"
 )
 
 // Config holds environment-derived settings needed to start the process.
@@ -48,7 +49,7 @@ type Config struct {
 // Load reads configuration from environment variables, applying defaults
 // where safe to do so, and validates required fields.
 func Load() (*Config, error) {
-	projectsRoot, err := expandHomePath(getenvDefault("HEPHAESTUS_PROJECTS_ROOT", "./data/projects"))
+	projectsRoot, err := fsutil.ExpandHome(getenvDefault("HEPHAESTUS_PROJECTS_ROOT", "./data/projects"))
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: projects root: %w", err)
 	}
@@ -79,20 +80,6 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
-}
-
-func expandHomePath(path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
-		return path, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	if path == "~" {
-		return home, nil
-	}
-	return filepath.Join(home, strings.TrimPrefix(path, "~"+string(filepath.Separator))), nil
 }
 
 func getenvBool(key string) bool {

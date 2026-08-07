@@ -22,16 +22,3 @@ type Tool interface {
 	// need a ToolResult even on failure.
 	Execute(ctx context.Context, args map[string]any) *ToolResult
 }
-
-// AsyncCallback is invoked (possibly from another goroutine) once an
-// AsyncExecutor's background work completes.
-type AsyncCallback func(ctx context.Context, result *ToolResult)
-
-// AsyncExecutor is an optional capability for tools whose work continues
-// past the current turn (e.g. a spawned subagent). ExecuteAsync must
-// return immediately with an Async ToolResult and later invoke cb exactly
-// once with the final result.
-type AsyncExecutor interface {
-	Tool
-	ExecuteAsync(ctx context.Context, args map[string]any, cb AsyncCallback) *ToolResult
-}

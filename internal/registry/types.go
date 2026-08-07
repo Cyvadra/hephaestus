@@ -64,7 +64,9 @@ type Concierge struct {
 	Plugins     []string `yaml:"plugins"`
 }
 
-// WorkflowStep is a single natural-language instruction executed by the LLM.
+// Workflow is a named sequence of natural-language steps executed by the LLM
+// via a Concierge. It is currently loaded and validated but not yet executed
+// by any scheduler.
 type Workflow struct {
 	Name         string   `yaml:"name"`
 	Description  string   `yaml:"description"`

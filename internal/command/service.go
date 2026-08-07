@@ -167,7 +167,7 @@ var kindDescriptors = map[Kind]kindDescriptor{
 		detail: func(s *Service, name string) (any, error) { return s.reg.ToolGroups[name], nil },
 	},
 	KindPlugin: {
-		names: func(s *Service) ([]string, error) { return keysOfBool(s.pluginReg.KnownNames()), nil },
+		names: func(s *Service) ([]string, error) { return keysOf(s.pluginReg.KnownNames()), nil },
 	},
 	KindConcierge: {
 		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Concierges), nil },
@@ -522,14 +522,6 @@ func (s *Service) resolveName(sessionID uint, kind Kind, ref string) (string, er
 }
 
 func keysOf[T any](m map[string]T) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-func keysOfBool(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

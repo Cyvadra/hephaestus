@@ -82,8 +82,8 @@ func (s *Server) getHistory(c *gin.Context) {
 		return
 	}
 
-	var messages []store.ChatMessage
-	if err := s.db.Where("session_id = ?", sessionID).Order("id").Find(&messages).Error; err != nil {
+	messages, err := s.sessions.Messages(sessionID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
@@ -206,7 +206,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 	s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID)
 
-	result, err := s.pipeline.RunTurnAtLeaf(ctx, sessionID, req.ActiveLeafMessageID, req.Text)
+	result, err := s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID})
 	if err != nil {
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
 			c.JSON(http.StatusConflict, errorResponse{Error: "session changed; refresh and retry"})
@@ -241,59 +241,9 @@ func (s *Server) streamMessage(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(c.Request.Context())
-	s.commands.RegisterCancel(sessionID, cancel)
-	defer s.commands.UnregisterCancel(sessionID)
-
-	deltas := make(chan chat.StreamEvent, 16)
-	resultCh := make(chan *chat.TurnResult, 1)
-	errCh := make(chan error, 1)
-
-	go func() {
-		defer close(deltas)
-		result, err := s.pipeline.RunTurnStreamAtLeaf(ctx, sessionID, req.ActiveLeafMessageID, req.Text, func(delta chat.StreamEvent) {
-			select {
-			case deltas <- delta:
-			case <-ctx.Done():
-			}
-		})
-		if err != nil {
-			errCh <- err
-			return
-		}
-		resultCh <- result
-	}()
-
-	sequence := uint64(0)
-	streamEvent := func(event string, data any) {
-		sequence++
-		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
-	}
-	c.Stream(func(w io.Writer) bool {
-		delta, ok := <-deltas
-		if !ok {
-			return false
-		}
-		if delta.Session != nil {
-			streamEvent(delta.Type, delta.Session)
-		} else if delta.ToolCall != nil {
-			streamEvent(delta.Type, delta.ToolCall)
-		} else {
-			streamEvent(delta.Type, delta.Text)
-		}
-		return true
+	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
+		return s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID, OnDelta: onDelta})
 	})
-
-	select {
-	case err := <-errCh:
-		if errors.Is(err, session.ErrStaleActiveLeaf) {
-			streamEvent("error", "session changed; refresh and retry")
-		} else {
-			streamEvent("error", err.Error())
-		}
-	case result := <-resultCh:
-		streamEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
-	}
 }
 
 // prepareMessage performs the shared request parsing, active-branch switch,
@@ -349,7 +299,7 @@ func (s *Server) regenerate(c *gin.Context) {
 	s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID)
 
-	result, err := s.pipeline.Regenerate(ctx, sessionID)
+	result, err := s.pipeline.Regenerate(ctx, sessionID, chat.TurnOptions{})
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
@@ -379,6 +329,17 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 		return
 	}
 
+	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
+		return s.pipeline.Regenerate(ctx, sessionID, chat.TurnOptions{OnDelta: onDelta})
+	})
+}
+
+// streamTurn runs a turn-producing closure and streams its progress events
+// as Server-Sent Events, finishing with a "done" event carrying the same
+// body sendMessage would return (or an "error" event). It owns the cancel
+// registration, the delta fan-out, and the SSE sequence numbering shared by
+// every streaming endpoint.
+func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error)) {
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID)
@@ -389,7 +350,7 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 
 	go func() {
 		defer close(deltas)
-		result, err := s.pipeline.RegenerateStream(ctx, sessionID, func(delta chat.StreamEvent) {
+		result, err := run(ctx, func(delta chat.StreamEvent) {
 			select {
 			case deltas <- delta:
 			case <-ctx.Done():
@@ -424,7 +385,11 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 
 	select {
 	case err := <-errCh:
-		streamEvent("error", err.Error())
+		if errors.Is(err, session.ErrStaleActiveLeaf) {
+			streamEvent("error", "session changed; refresh and retry")
+		} else {
+			streamEvent("error", err.Error())
+		}
 	case result := <-resultCh:
 		streamEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
 	}

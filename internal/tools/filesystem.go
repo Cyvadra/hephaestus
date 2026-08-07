@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Cyvadra/hephaestus/internal/fsutil"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
@@ -50,7 +51,7 @@ func projectPath(ctx context.Context, path string, config FileAccessConfig) (str
 		projectRoot = resolved
 	}
 
-	expanded, err := expandHomePath(path)
+	expanded, err := fsutil.ExpandHome(path)
 	if err != nil {
 		return "", err
 	}
@@ -82,20 +83,6 @@ func projectPath(ctx context.Context, path string, config FileAccessConfig) (str
 		return "", fmt.Errorf("access denied: symlink resolves outside allowed roots")
 	}
 	return candidate, nil
-}
-
-func expandHomePath(path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
-		return path, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	if path == "~" {
-		return home, nil
-	}
-	return filepath.Join(home, strings.TrimPrefix(path, "~"+string(filepath.Separator))), nil
 }
 
 func pathAllowed(path, projectRoot string, sharedRoots []string) bool {

@@ -97,6 +97,9 @@ func main() {
 	if err := reg.Validate(toolReg.KnownNames(), pluginReg.KnownNames()); err != nil {
 		log.Fatalf("registry: validation failed: %v", err)
 	}
+	if len(reg.Workflows) > 0 || len(reg.Jobs) > 0 {
+		log.Printf("registry: loaded %d workflow(s) and %d job(s); no scheduler is implemented yet, so they will not run", len(reg.Workflows), len(reg.Jobs))
+	}
 
 	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects)
 	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects)

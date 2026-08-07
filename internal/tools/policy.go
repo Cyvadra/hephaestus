@@ -2,19 +2,20 @@ package tools
 
 import "regexp"
 
-// execDenyPatterns is a tripwire against destructive or delegating shell
-// invocations, NOT a security boundary. This platform runs for a single
-// trusted local user, and any pattern list can be bypassed (e.g. via
-// python -c ...); the list exists to make the most common foot-guns fail
-// loudly and to stop accidental destructive commands. It must not be
-// relied on to protect against untrusted users.
+// execDenyPatterns is a small tripwire against a few highly destructive or
+// delegating shell invocations, NOT a security boundary. This platform runs
+// for a single trusted local user, and any pattern list can be bypassed
+// (e.g. via `python -c ...` or by rephrasing the command), so the list only
+// catches the most common foot-guns and must never be relied on to protect
+// against untrusted users. The real protection for destructive commands is
+// user confirmation, which is not yet implemented.
 //
-// Patterns are case-insensitive and cover the main rm/del variants (short
-// and long flags, including combined -rf and -r -f forms), host-affecting
-// commands, disk tools, and shell delegation (`$(...)`, backticks,
-// `| sh`, `curl ... | sh`).
+// Current patterns (case-insensitive) are intentionally few:
+//   - host-affecting commands: shutdown, reboot, poweroff, sudo
+//   - fork bombs, e.g. `:(){ :|:& };:`
+//   - command substitution: `$(...)` and backticks
+//   - pipe-to-shell delegation: curl|wget|nc|ncat ... | sh|bash|zsh|dash|cmd|powershell
 var execDenyPatterns = []*regexp.Regexp{
-	// TODO: 这肯定要让用户确认啊，规则是限不死的，这里缺的不是 rule repo，是 user interaction
 	regexp.MustCompile(`(?i)\b(shutdown|reboot|poweroff|sudo)\b`),
 	regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`), // fork bomb
 	regexp.MustCompile(`\$\s*\(|` + "`"),      // command substitution

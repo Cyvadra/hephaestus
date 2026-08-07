@@ -26,13 +26,110 @@ type fileKind struct {
 	ext    string // required extension, without leading dot
 }
 
-var kinds = []fileKind{
-	{prefix: "identity-", ext: "toml"},
-	{prefix: "impression-", ext: "toml"},
-	{prefix: "toolgroup-", ext: "yaml"},
-	{prefix: "concierge-", ext: "yaml"},
-	{prefix: "workflow-", ext: "yaml"},
-	{prefix: "job-", ext: "yaml"},
+// loader describes how one config kind is decoded and registered. Keeping
+// the six kinds as data instead of a switch makes adding a kind a one-line
+// table entry.
+type loader[T any] struct {
+	kind   fileKind
+	decode func(path string, v any) error
+	dest   func(*Registry) map[string]T
+	name   func(T) string
+	extra  func(filename string, v *T) error
+}
+
+// kindLoader pairs a kind's file signature with its load step, so Load can
+// match filenames against a homogeneous slice.
+type kindLoader struct {
+	kind fileKind
+	load func(reg *Registry, filename, path, expectedName string) error
+}
+
+// loadInto builds the load step for a kind: decode, check the name matches
+// the filename, run kind-specific validation, then register (rejecting
+// duplicates).
+func loadInto[T any](l loader[T]) kindLoader {
+	return kindLoader{
+		kind: l.kind,
+		load: func(reg *Registry, filename, path, expectedName string) error {
+			var v T
+			if err := l.decode(path, &v); err != nil {
+				return err
+			}
+			if err := checkName(filename, expectedName, l.name(v)); err != nil {
+				return err
+			}
+			if l.extra != nil {
+				if err := l.extra(filename, &v); err != nil {
+					return err
+				}
+			}
+			dest := l.dest(reg)
+			name := l.name(v)
+			if _, dup := dest[name]; dup {
+				return fmt.Errorf("registry: duplicate %s name %q (file %s)", strings.TrimSuffix(l.kind.prefix, "-"), name, filename)
+			}
+			dest[name] = v
+			return nil
+		},
+	}
+}
+
+// loaders is the ordered set of config kinds Load recognizes.
+var loaders = []kindLoader{
+	loadInto(loader[Identity]{
+		kind:   fileKind{prefix: "identity-", ext: "toml"},
+		decode: decodeTOML,
+		dest:   func(r *Registry) map[string]Identity { return r.Identities },
+		name:   func(v Identity) string { return v.Name },
+		extra: func(filename string, v *Identity) error {
+			if v.SystemPrompt == "" {
+				v.SystemPrompt = DefaultSystemPrompt
+			}
+			if err := validateReasoningEffort(v.Name, v.ReasoningEffort); err != nil {
+				return err
+			}
+			if v.ContextWindowTokens <= 0 {
+				return fmt.Errorf("registry: identity %q: context_window_tokens must be positive", v.Name)
+			}
+			return nil
+		},
+	}),
+	loadInto(loader[Impression]{
+		kind:   fileKind{prefix: "impression-", ext: "toml"},
+		decode: decodeTOML,
+		dest:   func(r *Registry) map[string]Impression { return r.Impressions },
+		name:   func(v Impression) string { return v.Name },
+	}),
+	loadInto(loader[ToolGroup]{
+		kind:   fileKind{prefix: "toolgroup-", ext: "yaml"},
+		decode: decodeYAML,
+		dest:   func(r *Registry) map[string]ToolGroup { return r.ToolGroups },
+		name:   func(v ToolGroup) string { return v.Name },
+	}),
+	loadInto(loader[Concierge]{
+		kind:   fileKind{prefix: "concierge-", ext: "yaml"},
+		decode: decodeYAML,
+		dest:   func(r *Registry) map[string]Concierge { return r.Concierges },
+		name:   func(v Concierge) string { return v.Name },
+	}),
+	loadInto(loader[Workflow]{
+		kind:   fileKind{prefix: "workflow-", ext: "yaml"},
+		decode: decodeYAML,
+		dest:   func(r *Registry) map[string]Workflow { return r.Workflows },
+		name:   func(v Workflow) string { return v.Name },
+		extra: func(filename string, v *Workflow) error {
+			if len(v.Name) < 10 || strings.ContainsAny(v.Name, " \t") {
+				return fmt.Errorf("registry: workflow name %q must be a slug of at least 10 chars with no spaces (file %s)", v.Name, filename)
+			}
+			return nil
+		},
+	}),
+	loadInto(loader[Job]{
+		kind:   fileKind{prefix: "job-", ext: "yaml"},
+		decode: decodeYAML,
+		dest:   func(r *Registry) map[string]Job { return r.Jobs },
+		name:   func(v Job) string { return v.Name },
+	}),
 }
 
 // Load scans dir (non-recursively) and parses every recognized config file.
@@ -58,118 +155,20 @@ func Load(dir string) (*Registry, error) {
 			continue
 		}
 		filename := entry.Name()
-		kind, ok := matchKind(filename)
-		if !ok {
-			continue // ignore files that don't match any known prefix
-		}
-
-		expectedName := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(filename, kind.prefix), "."+kind.ext))
-		path := filepath.Join(dir, filename)
-
-		switch kind.prefix {
-		case "identity-":
-			var v Identity
-			if err := decodeTOML(path, &v); err != nil {
+		lower := strings.ToLower(filename)
+		for _, kl := range loaders {
+			if !strings.HasPrefix(lower, kl.kind.prefix) || !strings.HasSuffix(lower, "."+kl.kind.ext) {
+				continue
+			}
+			expectedName := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(filename, kl.kind.prefix), "."+kl.kind.ext))
+			if err := kl.load(reg, filename, filepath.Join(dir, filename), expectedName); err != nil {
 				return nil, err
 			}
-			if err := checkName(filename, expectedName, v.Name); err != nil {
-				return nil, err
-			}
-			if v.SystemPrompt == "" {
-				v.SystemPrompt = DefaultSystemPrompt
-			}
-			if err := validateReasoningEffort(v.Name, v.ReasoningEffort); err != nil {
-				return nil, err
-			}
-			if v.ContextWindowTokens <= 0 {
-				return nil, fmt.Errorf("registry: identity %q: context_window_tokens must be positive", v.Name)
-			}
-			if _, dup := reg.Identities[v.Name]; dup {
-				return nil, fmt.Errorf("registry: duplicate identity name %q (file %s)", v.Name, filename)
-			}
-			reg.Identities[v.Name] = v
-
-		case "impression-":
-			var v Impression
-			if err := decodeTOML(path, &v); err != nil {
-				return nil, err
-			}
-			if err := checkName(filename, expectedName, v.Name); err != nil {
-				return nil, err
-			}
-			if _, dup := reg.Impressions[v.Name]; dup {
-				return nil, fmt.Errorf("registry: duplicate impression name %q (file %s)", v.Name, filename)
-			}
-			reg.Impressions[v.Name] = v
-
-		case "toolgroup-":
-			var v ToolGroup
-			if err := decodeYAML(path, &v); err != nil {
-				return nil, err
-			}
-			if err := checkName(filename, expectedName, v.Name); err != nil {
-				return nil, err
-			}
-			if _, dup := reg.ToolGroups[v.Name]; dup {
-				return nil, fmt.Errorf("registry: duplicate tool group name %q (file %s)", v.Name, filename)
-			}
-			reg.ToolGroups[v.Name] = v
-
-		case "concierge-":
-			var v Concierge
-			if err := decodeYAML(path, &v); err != nil {
-				return nil, err
-			}
-			if err := checkName(filename, expectedName, v.Name); err != nil {
-				return nil, err
-			}
-			if _, dup := reg.Concierges[v.Name]; dup {
-				return nil, fmt.Errorf("registry: duplicate concierge name %q (file %s)", v.Name, filename)
-			}
-			reg.Concierges[v.Name] = v
-
-		case "workflow-":
-			var v Workflow
-			if err := decodeYAML(path, &v); err != nil {
-				return nil, err
-			}
-			if err := checkName(filename, expectedName, v.Name); err != nil {
-				return nil, err
-			}
-			if len(v.Name) < 10 || strings.ContainsAny(v.Name, " \t") {
-				return nil, fmt.Errorf("registry: workflow name %q must be a slug of at least 10 chars with no spaces (file %s)", v.Name, filename)
-			}
-			if _, dup := reg.Workflows[v.Name]; dup {
-				return nil, fmt.Errorf("registry: duplicate workflow name %q (file %s)", v.Name, filename)
-			}
-			reg.Workflows[v.Name] = v
-
-		case "job-":
-			var v Job
-			if err := decodeYAML(path, &v); err != nil {
-				return nil, err
-			}
-			if err := checkName(filename, expectedName, v.Name); err != nil {
-				return nil, err
-			}
-			if _, dup := reg.Jobs[v.Name]; dup {
-				return nil, fmt.Errorf("registry: duplicate job name %q (file %s)", v.Name, filename)
-			}
-			reg.Jobs[v.Name] = v
+			break // a filename matches at most one kind
 		}
 	}
 
 	return reg, nil
-}
-
-func matchKind(filename string) (fileKind, bool) {
-	lower := strings.ToLower(filename)
-	for _, k := range kinds {
-		if strings.HasPrefix(lower, k.prefix) && strings.HasSuffix(lower, "."+k.ext) {
-			return k, true
-		}
-	}
-	return fileKind{}, false
 }
 
 func checkName(filename, expectedName, actualName string) error {

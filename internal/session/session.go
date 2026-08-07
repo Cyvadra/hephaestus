@@ -125,9 +125,6 @@ func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, c
 		if err := tx.First(&sess, sessionID).Error; err != nil {
 			return fmt.Errorf("session: load for append: %w", err)
 		}
-		if checkActiveLeaf && !sameID(sess.ActiveLeafMessageID, expectedLeaf) {
-			return ErrStaleActiveLeaf
-		}
 		if parentID != nil {
 			var count int64
 			if err := tx.Model(&store.ChatMessage{}).Where("id = ? AND session_id = ?", *parentID, sessionID).Count(&count).Error; err != nil {
@@ -224,9 +221,9 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 			return ErrToolCallMessage
 		}
 
-		var all []store.ChatMessage
-		if err := tx.Where("session_id = ?", sessionID).Find(&all).Error; err != nil {
-			return fmt.Errorf("session: load active path for assistant edit: %w", err)
+		all, err := loadMessages(tx, sessionID)
+		if err != nil {
+			return err
 		}
 		path, err := walkActivePath(all, &expectedLeaf)
 		if err != nil {
@@ -324,11 +321,9 @@ func (s *Service) withDefaultProject(settings store.SessionSettings) store.Sessi
 	return settings
 }
 
-func sameID(left, right *uint) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
+// Messages returns every ChatMessage of sessionID in ascending id order.
+func (s *Service) Messages(sessionID uint) ([]store.ChatMessage, error) {
+	return loadMessages(s.db, sessionID)
 }
 
 // ActivePath loads every ChatMessage belonging to sessionID and walks
@@ -340,12 +335,22 @@ func (s *Service) ActivePath(sess store.Session) ([]store.ChatMessage, error) {
 		return nil, nil
 	}
 
-	var all []store.ChatMessage
-	if err := s.db.Where("session_id = ?", sess.ID).Find(&all).Error; err != nil {
-		return nil, fmt.Errorf("session: load messages for session %d: %w", sess.ID, err)
+	all, err := loadMessages(s.db, sess.ID)
+	if err != nil {
+		return nil, err
 	}
-
 	return walkActivePath(all, sess.ActiveLeafMessageID)
+}
+
+// loadMessages loads every ChatMessage of sessionID in ascending id order.
+// Used by ActivePath, the edit path, and HTTP history: message trees are
+// walked in memory rather than queried hop-by-hop.
+func loadMessages(db *gorm.DB, sessionID uint) ([]store.ChatMessage, error) {
+	var all []store.ChatMessage
+	if err := db.Where("session_id = ?", sessionID).Order("id").Find(&all).Error; err != nil {
+		return nil, fmt.Errorf("session: load messages for session %d: %w", sessionID, err)
+	}
+	return all, nil
 }
 
 // walkActivePath is the pure part of ActivePath: given every message of a
@@ -362,8 +367,13 @@ func walkActivePath(all []store.ChatMessage, leafID *uint) ([]store.ChatMessage,
 	}
 
 	var reversed []store.ChatMessage
+	visited := make(map[uint]bool, len(all))
 	currentID := leafID
 	for currentID != nil {
+		if visited[*currentID] {
+			return nil, fmt.Errorf("session: cycle detected at message %d", *currentID)
+		}
+		visited[*currentID] = true
 		m, ok := byID[*currentID]
 		if !ok {
 			return nil, fmt.Errorf("session: active_leaf_message_id %d not found among provided messages", *currentID)

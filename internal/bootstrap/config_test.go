@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -18,20 +17,6 @@ func TestGetenvBoolAcceptsStandardTrueValues(t *testing.T) {
 	t.Setenv("HEPHAESTUS_TEST_BOOL", "1")
 	if !getenvBool("HEPHAESTUS_TEST_BOOL") {
 		t.Fatal("expected ParseBool-compatible true value")
-	}
-}
-
-func TestExpandHomePath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	got, err := expandHomePath("~/Documents/hephaestus-projects")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := filepath.Join(home, "Documents", "hephaestus-projects")
-	if got != want {
-		t.Fatalf("expandHomePath() = %q, want %q", got, want)
 	}
 }
 

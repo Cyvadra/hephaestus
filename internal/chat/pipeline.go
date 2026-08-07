@@ -167,31 +167,25 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	return prep, nil
 }
 
-// RunTurn processes one incoming user message for sessionID: it assembles
+// TurnOptions carries the optional axes of a turn. ExpectedLeaf enables
+// optimistic-concurrency on HTTP continuations (the turn commits only if
+// that leaf is still active); OnDelta enables streaming of assistant
+// progress events. Either may be nil.
+type TurnOptions struct {
+	ExpectedLeaf *uint
+	OnDelta      func(StreamEvent)
+}
+
+// Run processes one incoming user message for sessionID: it assembles
 // context (identity, impressions, compression, active-path history), calls
 // the LLM (running the tool loop as needed), and persists the resulting
 // user/assistant/tool messages as a single transaction. On any error, or if
-// ctx is cancelled (e.g. /stop), nothing is persisted.
-func (p *Pipeline) RunTurn(ctx context.Context, sessionID uint, userText string) (*TurnResult, error) {
-	return p.runTurn(ctx, sessionID, userText, nil, nil)
-}
-
-// RunTurnAtLeaf commits only if expectedLeaf is still active after the turn
-// completes. It is the HTTP continuation entry point.
-func (p *Pipeline) RunTurnAtLeaf(ctx context.Context, sessionID uint, expectedLeaf *uint, userText string) (*TurnResult, error) {
-	return p.runTurn(ctx, sessionID, userText, expectedLeaf, nil)
-}
-
-// RunTurnStream behaves like RunTurn but streams assistant content deltas to
-// onDelta as they arrive from the model. Persistence only happens once the
-// full turn completes, exactly as in RunTurn.
-func (p *Pipeline) RunTurnStream(ctx context.Context, sessionID uint, userText string, onDelta func(StreamEvent)) (*TurnResult, error) {
-	return p.runTurn(ctx, sessionID, userText, nil, onDelta)
-}
-
-// RunTurnStreamAtLeaf is RunTurnAtLeaf with incremental assistant deltas.
-func (p *Pipeline) RunTurnStreamAtLeaf(ctx context.Context, sessionID uint, expectedLeaf *uint, userText string, onDelta func(StreamEvent)) (*TurnResult, error) {
-	return p.runTurn(ctx, sessionID, userText, expectedLeaf, onDelta)
+// ctx is cancelled (e.g. /stop), nothing is persisted. With
+// opts.ExpectedLeaf set, persistence is skipped when that leaf is no longer
+// active; with opts.OnDelta set, assistant content deltas are streamed as
+// they arrive while persistence still only happens once the turn completes.
+func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
+	return p.runTurn(ctx, sessionID, userText, opts.ExpectedLeaf, opts.OnDelta)
 }
 
 func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, expectedLeaf *uint, onDelta func(StreamEvent)) (*TurnResult, error) {
@@ -288,15 +282,10 @@ func (p *Pipeline) awaitSessionSummary(ctx context.Context, done <-chan struct{}
 // Regenerate re-answers the nearest ancestor user message on sessionID's
 // active path, creating a sibling assistant branch under it instead of
 // persisting a new user message. If the active leaf is itself an
-// unanswered user message, this is equivalent to answering it fresh.
-func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint) (*TurnResult, error) {
-	return p.regenerate(ctx, sessionID, nil)
-}
-
-// RegenerateStream behaves like Regenerate but forwards assistant content
-// deltas while the reply is being generated.
-func (p *Pipeline) RegenerateStream(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
-	return p.regenerate(ctx, sessionID, onDelta)
+// unanswered user message, this is equivalent to answering it fresh. With
+// opts.OnDelta set, assistant content deltas are streamed as they arrive.
+func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
+	return p.regenerate(ctx, sessionID, opts.OnDelta)
 }
 
 func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
@@ -331,7 +320,17 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 	staticMessageCount := len(p.staticContext(prep.settings))
 
 	turn := newTurnContext(sessionID, llmContext, userIdx == 0, userMsg.Content)
-	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, pathUpToUser, prep.compRow, staticMessageCount, turn)
+	// Compression on the regenerate path covers history up to (but not
+	// including) the user message being regenerated from: that message must
+	// stay in context, and it is what the regenerated reply re-answers.
+	// Passing the path without the user message lands the coverage boundary
+	// on the message before it, matching maybeCompress's assumption that the
+	// kept tail is the message the reply answers. This is safe because
+	// compression coverage always ends on an assistant message, never on a
+	// user message, so the message before the user is always at or after the
+	// previous coverage boundary.
+	compressPath := pathUpToUser[:userIdx]
+	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, prep.compRow, staticMessageCount, turn)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +340,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 
 // runFrom runs converse and persists its output as a single chain parented
 // at parentID. newUserMessage, when non-nil, is prepended to that chain and
-// persisted as a new user message (RunTurn's case); when nil, the chain is
+// persisted as a new user message (Run's case); when nil, the chain is
 // parented directly onto an already-persisted user message (Regenerate's
 // case) and no new user message is created.
 func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
