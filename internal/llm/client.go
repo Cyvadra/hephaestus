@@ -167,7 +167,16 @@ func (c *Client) buildChat(identity registry.Identity, messages []store.ChatMess
 	}
 
 	for _, t := range toolset {
-		builder.Tool(ds4.NewFunction(t.Name(), t.Description(), t.Parameters()))
+		description := t.Description()
+		// Tools that carry a concrete example (input + response data) get it
+		// appended to their description whenever they are registered to a
+		// request, so the model sees a real usage pair up front.
+		if example, ok := t.(toolkit.Example); ok {
+			if text := example.Example(); text != "" {
+				description += "\n\nExample:\n" + text
+			}
+		}
+		builder.Tool(ds4.NewFunction(t.Name(), description, t.Parameters()))
 	}
 
 	return builder

@@ -22,3 +22,11 @@ type Tool interface {
 	// need a ToolResult even on failure.
 	Execute(ctx context.Context, args map[string]any) *ToolResult
 }
+
+// Example is an optional Tool capability. A tool that implements it provides
+// a concrete usage example, including sample response data, that is attached
+// to the tool's registration whenever it is offered to the LLM. This teaches
+// the model the tool's input/output shape and, where relevant, host context.
+type Example interface {
+	Example() string
+}

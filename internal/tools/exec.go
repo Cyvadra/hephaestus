@@ -35,6 +35,7 @@ type ExecTool struct {
 	timeout      time.Duration
 	writeTimeout time.Duration
 	sessions     *processManager
+	hostInfo     string
 }
 
 func NewExecTool(enabled bool, timeout time.Duration) *ExecTool {
@@ -45,12 +46,38 @@ func NewExecToolWithAccess(enabled bool, timeout time.Duration, access FileAcces
 	if timeout <= 0 {
 		timeout = defaultForegroundTimeout
 	}
-	return &ExecTool{enabled: enabled, access: access, timeout: timeout, writeTimeout: defaultWriteTimeout, sessions: newProcessManager(0)}
+	return &ExecTool{enabled: enabled, access: access, timeout: timeout, writeTimeout: defaultWriteTimeout, sessions: newProcessManager(0), hostInfo: captureHostInfo()}
 }
 
 // Shutdown terminates all background sessions; call on server stop so no
 // process outlives the server.
 func (t *ExecTool) Shutdown() { t.sessions.shutdown() }
+
+// captureHostInfo records the output of `uname -a` once at construction so
+// the model sees the exact host environment (kernel, architecture, hostname)
+// whenever the exec tool is registered to a request. The platform targets
+// Linux/Unix, where uname is always available; on any failure the example is
+// simply omitted rather than failing construction.
+func captureHostInfo() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "uname", "-a").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Example returns a concrete exec invocation (uname -a) together with the
+// host's actual response, so the model sees both the tool's I/O format and
+// the environment it runs in. It is attached to the tool's description when
+// the tool is registered to an LLM request.
+func (t *ExecTool) Example() string {
+	if t.hostInfo == "" {
+		return ""
+	}
+	return `{"action": "run", "command": "uname -a"}` + "\n\u2192 " + t.hostInfo
+}
 
 func (ExecTool) Name() string       { return "exec" }
 func (t *ExecTool) Available() bool { return t.enabled }

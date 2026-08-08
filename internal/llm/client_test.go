@@ -6,10 +6,60 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/registry"
+	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
+
+// exampleTool exercises the toolkit.Example capability: buildChat must append
+// the example to the tool's description when it is registered to a request.
+type exampleTool struct{}
+
+func (exampleTool) Name() string        { return "example_tool" }
+func (exampleTool) Description() string { return "A tool with a usage example." }
+func (exampleTool) Parameters() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
+}
+func (exampleTool) Example() string {
+	return `{"action": "run", "command": "uname -a"}` + "\n\u2192 Linux test 6.8.0 x86_64"
+}
+func (exampleTool) Execute(context.Context, map[string]any) *toolkit.ToolResult {
+	return toolkit.NewToolResult("ok")
+}
+
+func TestCallAttachesToolExampleToDescription(t *testing.T) {
+	var captured ds4.ChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+	if _, err := client.Call(context.Background(), registry.Identity{}, []store.ChatMessage{}, []toolkit.Tool{exampleTool{}}); err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+
+	var found *ds4.Function
+	for i := range captured.Tools {
+		if captured.Tools[i].Function.Name == "example_tool" {
+			found = &captured.Tools[i].Function
+		}
+	}
+	if found == nil {
+		t.Fatal("expected example_tool in request tools")
+	}
+	if !strings.Contains(found.Description, "Example:") || !strings.Contains(found.Description, "uname -a") || !strings.Contains(found.Description, "Linux test") {
+		t.Errorf("expected example attached to description, got %q", found.Description)
+	}
+}
 
 func TestRawCallRetriesWithProviderMaxTokens(t *testing.T) {
 	var received []int

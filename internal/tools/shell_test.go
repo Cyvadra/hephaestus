@@ -12,11 +12,32 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
+func projectTestContext(t *testing.T) (context.Context, string) {
+	t.Helper()
+	root := t.TempDir()
+	return toolkit.WithWorkspace(context.Background(), root), root
+}
+
 func TestExecToolDisabled(t *testing.T) {
 	ctx, _ := projectTestContext(t)
 	result := NewExecTool(false, 0).Execute(ctx, map[string]any{"command": "printf hello"})
 	if !result.IsError || !strings.Contains(result.ForLLM, "disabled") {
 		t.Fatalf("expected disabled error, got %+v", result)
+	}
+}
+
+func TestExecToolExampleCarriesUname(t *testing.T) {
+	tool := NewExecTool(true, 0)
+	example := tool.Example()
+	if example == "" {
+		t.Fatal("expected non-empty exec example")
+	}
+	if !strings.Contains(example, "uname -a") {
+		t.Fatalf("expected uname -a invocation, got %q", example)
+	}
+	// Response data should be the host's own uname output (Linux, Darwin, ...).
+	if !strings.Contains(example, "Linux") && !strings.Contains(example, "Darwin") {
+		t.Fatalf("expected host uname response data, got %q", example)
 	}
 }
 
