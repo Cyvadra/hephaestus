@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -48,7 +49,7 @@ func (s *Server) createSession(c *gin.Context) {
 
 	sess, err := s.sessions.CreateFromConcierge(concierge)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, sess)
@@ -84,7 +85,7 @@ func (s *Server) getHistory(c *gin.Context) {
 
 	messages, err := s.sessions.Messages(sessionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 
@@ -175,7 +176,7 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 			errors.Is(err, session.ErrEmptyContent):
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		default:
-			c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			internalError(c, err)
 		}
 		return
 	}
@@ -203,8 +204,8 @@ func (s *Server) sendMessage(c *gin.Context) {
 	}
 
 	ctx, cancel := context.WithCancel(c.Request.Context())
-	s.commands.RegisterCancel(sessionID, cancel)
-	defer s.commands.UnregisterCancel(sessionID)
+	registrationID := s.commands.RegisterCancel(sessionID, cancel)
+	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
 	result, err := s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID})
 	if err != nil {
@@ -216,7 +217,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 
@@ -296,8 +297,8 @@ func (s *Server) regenerate(c *gin.Context) {
 	}
 
 	ctx, cancel := context.WithCancel(c.Request.Context())
-	s.commands.RegisterCancel(sessionID, cancel)
-	defer s.commands.UnregisterCancel(sessionID)
+	registrationID := s.commands.RegisterCancel(sessionID, cancel)
+	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
 	result, err := s.pipeline.Regenerate(ctx, sessionID, chat.TurnOptions{})
 	if err != nil {
@@ -305,7 +306,7 @@ func (s *Server) regenerate(c *gin.Context) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 
@@ -341,8 +342,8 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 // every streaming endpoint.
 func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error)) {
 	ctx, cancel := context.WithCancel(c.Request.Context())
-	s.commands.RegisterCancel(sessionID, cancel)
-	defer s.commands.UnregisterCancel(sessionID)
+	registrationID := s.commands.RegisterCancel(sessionID, cancel)
+	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
 	deltas := make(chan chat.StreamEvent, 16)
 	resultCh := make(chan *chat.TurnResult, 1)
@@ -399,6 +400,11 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
+func internalError(c *gin.Context, err error) {
+	log.Printf("server: %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+	c.JSON(http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+}
+
 type errValidation string
 
 func (e errValidation) Error() string { return string(e) }
@@ -427,7 +433,7 @@ func parseUintParam(c *gin.Context, param, label string) (uint, error) {
 func (s *Server) listSessions(c *gin.Context) {
 	var sessions []store.Session
 	if err := s.db.Order("updated_at desc").Find(&sessions).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sessions)
@@ -498,11 +504,11 @@ func (s *Server) updateSession(c *gin.Context) {
 		return
 	}
 	if err := s.db.Model(&sess).Updates(changes).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 	if err := s.db.First(&sess, sessionID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sess)
@@ -528,7 +534,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 		if err := tx.First(&sess, sessionID).Error; err != nil {
 			return err
 		}
-		for _, model := range []any{&store.ChatMessage{}, &store.Compression{}, &store.PluginState{}} {
+		for _, model := range []any{&store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
 			if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
 				return err
 			}
@@ -540,7 +546,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		internalError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)

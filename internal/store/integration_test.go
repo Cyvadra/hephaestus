@@ -47,6 +47,7 @@ func newTestSession(t *testing.T, db *gorm.DB, marker string) *store.Session {
 		db.Where("session_id = ?", sess.ID).Delete(&store.ChatMessage{})
 		db.Where("session_id = ?", sess.ID).Delete(&store.Compression{})
 		db.Where("session_id = ?", sess.ID).Delete(&store.PluginState{})
+		db.Where("session_id = ?", sess.ID).Delete(&store.ToolAudit{})
 		db.Delete(&store.Session{}, sess.ID)
 	})
 	return sess

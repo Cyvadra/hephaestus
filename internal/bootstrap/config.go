@@ -58,7 +58,7 @@ func Load() (*Config, error) {
 		PostgresDSN:             os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
 		DeepSeekAPIKey:          os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
 		WeComWebhookURL:         os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
-		ListenAddr:              getenvDefault("HEPHAESTUS_LISTEN_ADDR", ":9016"),
+		ListenAddr:              getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
 		ProjectsRoot:            projectsRoot,
 		ProjectAccessOverride:   getenvBool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
 		ExecEnabled:             getenvBool("HEPHAESTUS_EXEC_ENABLED"),

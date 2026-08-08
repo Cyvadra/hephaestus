@@ -60,7 +60,12 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 
 // Run serves until ctx is canceled, then drains in-flight requests.
 func (s *Server) Run(ctx context.Context, addr string) error {
-	httpServer := &http.Server{Addr: addr, Handler: s.engine}
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           s.engine,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.ListenAndServe() }()
 

@@ -52,8 +52,14 @@ type Service struct {
 	projects  *project.Service
 
 	mu       sync.Mutex
-	lastList map[uint]map[Kind][]string  // sessionID -> kind -> ordered names, for /detail /switch /activate /deactivate by id
-	cancels  map[uint]context.CancelFunc // sessionID -> cancel for the turn currently in flight
+	lastList map[uint]map[Kind][]string
+	cancels  map[uint]cancelRegistration
+	nextTurn uint64
+}
+
+type cancelRegistration struct {
+	id     uint64
+	cancel context.CancelFunc
 }
 
 // NewService wires the command dispatcher to its dependencies.
@@ -67,7 +73,7 @@ func NewService(reg *registry.Registry, toolReg *toolkit.Registry, pluginReg *pl
 		db:        db,
 		projects:  projects,
 		lastList:  map[uint]map[Kind][]string{},
-		cancels:   map[uint]context.CancelFunc{},
+		cancels:   map[uint]cancelRegistration{},
 	}
 }
 
@@ -80,17 +86,21 @@ func IsCommand(text string) bool {
 // RegisterCancel records cancel as the way to interrupt sessionID's
 // in-flight turn, so a later /stop can invoke it. Callers must call
 // UnregisterCancel once the turn finishes.
-func (s *Service) RegisterCancel(sessionID uint, cancel context.CancelFunc) {
+func (s *Service) RegisterCancel(sessionID uint, cancel context.CancelFunc) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cancels[sessionID] = cancel
+	s.nextTurn++
+	s.cancels[sessionID] = cancelRegistration{id: s.nextTurn, cancel: cancel}
+	return s.nextTurn
 }
 
 // UnregisterCancel removes sessionID's cancel func once its turn is done.
-func (s *Service) UnregisterCancel(sessionID uint) {
+func (s *Service) UnregisterCancel(sessionID uint, registrationID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.cancels, sessionID)
+	if registration, ok := s.cancels[sessionID]; ok && registration.id == registrationID {
+		delete(s.cancels, sessionID)
+	}
 }
 
 // Execute parses and runs a slash command, returning its template response.
@@ -138,9 +148,9 @@ const helpText = `Available commands:
 /status - session info, context usage, recent warnings
 /list <kind> - list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)
 /detail <kind> <id> - show details of one option
-/switch <identity|concierge|session|project> <id|name> - switch
-/activate <impression|toolgroup|plugin> <id[,id...]> - enable
-/deactivate <impression|toolgroup|plugin> <id[,id...]> - disable
+/switch <identity|concierge|project> <#id|name> - switch
+/activate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - enable
+/deactivate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - disable
 /clear - archive this session and start a fresh one with the same settings
 /new - archive this session and start a fresh one from its source concierge`
 
@@ -149,29 +159,49 @@ const helpText = `Available commands:
 // parallel switch statements. Either func may be nil where that operation
 // isn't supported for the Kind (e.g. /detail on a plugin).
 type kindDescriptor struct {
-	names  func(s *Service) ([]string, error)
-	detail func(s *Service, name string) (any, error)
+	names    func(s *Service) ([]string, error)
+	detail   func(s *Service, name string) (any, error)
+	validate func(s *Service, name string) error
+}
+
+func knownName[T any](kind Kind, values func(*Service) map[string]T) func(*Service, string) error {
+	return func(s *Service, name string) error {
+		if _, ok := values(s)[name]; !ok {
+			return fmt.Errorf("command: unknown %s %q", kind, name)
+		}
+		return nil
+	}
 }
 
 var kindDescriptors = map[Kind]kindDescriptor{
 	KindIdentity: {
-		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Identities), nil },
-		detail: func(s *Service, name string) (any, error) { return s.reg.Identities[name], nil },
+		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.Identities), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.reg.Identities[name], nil },
+		validate: knownName(KindIdentity, func(s *Service) map[string]registry.Identity { return s.reg.Identities }),
 	},
 	KindImpression: {
-		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Impressions), nil },
-		detail: func(s *Service, name string) (any, error) { return s.reg.Impressions[name], nil },
+		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.Impressions), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.reg.Impressions[name], nil },
+		validate: knownName(KindImpression, func(s *Service) map[string]registry.Impression { return s.reg.Impressions }),
 	},
 	KindToolGroup: {
-		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.ToolGroups), nil },
-		detail: func(s *Service, name string) (any, error) { return s.reg.ToolGroups[name], nil },
+		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.ToolGroups), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.reg.ToolGroups[name], nil },
+		validate: knownName(KindToolGroup, func(s *Service) map[string]registry.ToolGroup { return s.reg.ToolGroups }),
 	},
 	KindPlugin: {
 		names: func(s *Service) ([]string, error) { return keysOf(s.pluginReg.KnownNames()), nil },
+		validate: func(s *Service, name string) error {
+			if !s.pluginReg.Has(name) {
+				return fmt.Errorf("command: unknown plugin %q", name)
+			}
+			return nil
+		},
 	},
 	KindConcierge: {
-		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Concierges), nil },
-		detail: func(s *Service, name string) (any, error) { return s.reg.Concierges[name], nil },
+		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.Concierges), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.reg.Concierges[name], nil },
+		validate: knownName(KindConcierge, func(s *Service) map[string]registry.Concierge { return s.reg.Concierges }),
 	},
 	KindWorkflow: {
 		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Workflows), nil },
@@ -214,17 +244,23 @@ var kindDescriptors = map[Kind]kindDescriptor{
 			return names, nil
 		},
 		detail: func(s *Service, name string) (any, error) { return s.projects.GetByName(name) },
+		validate: func(s *Service, name string) error {
+			if _, err := s.projects.GetByName(name); err != nil {
+				return fmt.Errorf("command: unknown project %q", name)
+			}
+			return nil
+		},
 	},
 }
 
 func (s *Service) stop(sessionID uint) string {
 	s.mu.Lock()
-	cancel, ok := s.cancels[sessionID]
+	registration, ok := s.cancels[sessionID]
 	s.mu.Unlock()
 	if !ok {
 		return "Nothing is currently running for this session."
 	}
-	cancel()
+	registration.cancel()
 	return "Stopping current task."
 }
 
@@ -327,7 +363,7 @@ func (s *Service) detail(sessionID uint, args []string) (string, error) {
 
 func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 	if len(args) != 2 {
-		return "", fmt.Errorf("command: usage: /switch <identity|concierge|session|project> <id|name>")
+		return "", fmt.Errorf("command: usage: /switch <identity|concierge|project> <#id|name>")
 	}
 	kind, target := Kind(args[0]), args[1]
 
@@ -343,8 +379,8 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if _, ok := s.reg.Identities[name]; !ok {
-			return "", fmt.Errorf("command: unknown identity %q", name)
+		if err := validateKindName(s, KindIdentity, name); err != nil {
+			return "", err
 		}
 		settings.Identity = name
 		if err := s.saveSettings(sess, settings); err != nil {
@@ -357,40 +393,26 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		c, ok := s.reg.Concierges[name]
-		if !ok {
-			return "", fmt.Errorf("command: unknown concierge %q", name)
+		if err := validateKindName(s, KindConcierge, name); err != nil {
+			return "", err
 		}
-		settings = store.SessionSettings{
-			Identity:    c.Identity,
-			Impressions: append([]string(nil), c.Impressions...),
-			ToolGroups:  append([]string(nil), c.ToolGroups...),
-			Plugins:     append([]string(nil), c.Plugins...),
-			Project:     settings.Project,
-		}
+		c := s.reg.Concierges[name]
+		nextSettings := session.SettingsFromConcierge(c)
+		nextSettings.Project = settings.Project
+		settings = nextSettings
 		sess.SourceConcierge = c.Name
 		if err := s.saveSettings(sess, settings); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Switched to concierge %q (identity now %q).", name, c.Identity), nil
 
-	case KindSession:
-		id, err := strconv.Atoi(target)
-		if err != nil {
-			return "", fmt.Errorf("command: invalid session id %q", target)
-		}
-		if _, err := s.loadSession(uint(id)); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Switched to session %d.", id), nil
-
 	case KindProject:
 		name, err := s.resolveName(sessionID, KindProject, target)
 		if err != nil {
 			return "", err
 		}
-		if _, err := s.projects.GetByName(name); err != nil {
-			return "", fmt.Errorf("command: unknown project %q", name)
+		if err := validateKindName(s, KindProject, name); err != nil {
+			return "", err
 		}
 		settings.Project = name
 		if err := s.saveSettings(sess, settings); err != nil {
@@ -417,6 +439,11 @@ func (s *Service) setActive(sessionID uint, args []string, active bool) (string,
 			return "", err
 		}
 		names = append(names, name)
+	}
+	for _, name := range names {
+		if err := validateKindName(s, kind, name); err != nil {
+			return "", err
+		}
 	}
 
 	sess, err := s.loadSession(sessionID)
@@ -470,6 +497,7 @@ func (s *Service) clear(sessionID uint) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	s.forgetSession(sess.ID)
 	return fmt.Sprintf("Archived session %d. New session: %d.", sess.ID, newSess.ID), nil
 }
 
@@ -482,15 +510,11 @@ func (s *Service) new(sessionID uint) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("command: source concierge %q no longer exists", sess.SourceConcierge)
 	}
-	newSess, err := s.sessions.Replace(sess.ID, c.Name, store.SessionSettings{
-		Identity:    c.Identity,
-		Impressions: append([]string(nil), c.Impressions...),
-		ToolGroups:  append([]string(nil), c.ToolGroups...),
-		Plugins:     append([]string(nil), c.Plugins...),
-	})
+	newSess, err := s.sessions.Replace(sess.ID, c.Name, session.SettingsFromConcierge(c))
 	if err != nil {
 		return "", err
 	}
+	s.forgetSession(sess.ID)
 	return fmt.Sprintf("Archived session %d. New session: %d (from concierge %q).", sess.ID, newSess.ID, c.Name), nil
 }
 
@@ -506,10 +530,13 @@ func (s *Service) saveSettings(sess *store.Session, settings store.SessionSettin
 	return s.db.Model(sess).Update("settings", datatypes.NewJSONType(settings)).Error
 }
 
-// resolveName accepts either a session-temporary id (from the most recent
-// /list of the same kind) or a literal name, and returns the literal name.
+// resolveName accepts a #id from the most recent list or a literal name.
 func (s *Service) resolveName(sessionID uint, kind Kind, ref string) (string, error) {
-	if id, err := strconv.Atoi(ref); err == nil {
+	if strings.HasPrefix(ref, "#") {
+		id, err := strconv.Atoi(strings.TrimPrefix(ref, "#"))
+		if err != nil {
+			return "", fmt.Errorf("command: invalid list reference %q", ref)
+		}
 		s.mu.Lock()
 		names := s.lastList[sessionID][kind]
 		s.mu.Unlock()
@@ -519,6 +546,20 @@ func (s *Service) resolveName(sessionID uint, kind Kind, ref string) (string, er
 		return names[id-1], nil
 	}
 	return ref, nil
+}
+
+func validateKindName(s *Service, kind Kind, name string) error {
+	desc, ok := kindDescriptors[kind]
+	if !ok || desc.validate == nil {
+		return fmt.Errorf("command: unknown kind %q", kind)
+	}
+	return desc.validate(s, name)
+}
+
+func (s *Service) forgetSession(sessionID uint) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.lastList, sessionID)
 }
 
 func keysOf[T any](m map[string]T) []string {

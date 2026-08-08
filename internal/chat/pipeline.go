@@ -642,7 +642,47 @@ func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools
 		}
 	}
 
-	return toolkit.RunTool(toolkit.WithSessionID(ctx, sessionID), t, args)
+	auditID := p.beginToolAudit(sessionID, tc, args)
+	result := toolkit.RunTool(toolkit.WithSessionID(ctx, sessionID), t, args)
+	p.finishToolAudit(auditID, result)
+	return result
+}
+
+var auditedTools = map[string]bool{
+	"append_file":    true,
+	"create_project": true,
+	"edit_file":      true,
+	"exec":           true,
+	"write_file":     true,
+}
+
+func (p *Pipeline) beginToolAudit(sessionID uint, tc ds4.ToolCall, args map[string]any) uint {
+	if !auditedTools[tc.Function.Name] {
+		return 0
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		p.notify.Warn("chat: marshal audit arguments for tool %q: %v", tc.Function.Name, err)
+		return 0
+	}
+	row := store.ToolAudit{SessionID: sessionID, ToolCallID: tc.ID, ToolName: tc.Function.Name, Arguments: encoded}
+	if err := p.db.Create(&row).Error; err != nil {
+		p.notify.Warn("chat: persist audit start for tool %q: %v", tc.Function.Name, err)
+		return 0
+	}
+	return row.ID
+}
+
+func (p *Pipeline) finishToolAudit(auditID uint, result *toolkit.ToolResult) {
+	if auditID == 0 {
+		return
+	}
+	if err := p.db.Model(&store.ToolAudit{}).Where("id = ?", auditID).Updates(map[string]any{
+		"result":   result.ContentForLLM(),
+		"is_error": result.IsError,
+	}).Error; err != nil {
+		p.notify.Warn("chat: persist audit result %d: %v", auditID, err)
+	}
 }
 
 func trackConsecutiveToolCall(lastToolName *string, consecutiveToolCalls *int, toolName string) error {

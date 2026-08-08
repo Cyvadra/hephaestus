@@ -48,7 +48,7 @@ func New(db *gorm.DB, defaultProject ...string) *Service {
 // CreateFromConcierge creates a new Session whose initial Settings are a
 // snapshot of concierge's identity/impressions/tool groups/plugins.
 func (s *Service) CreateFromConcierge(concierge registry.Concierge) (*store.Session, error) {
-	return s.Create(concierge.Name, settingsFromConcierge(concierge))
+	return s.Create(concierge.Name, SettingsFromConcierge(concierge))
 }
 
 // Create makes a new session from an explicit settings snapshot.
@@ -64,7 +64,8 @@ func (s *Service) Create(sourceConcierge string, settings store.SessionSettings)
 	return sess, nil
 }
 
-func settingsFromConcierge(concierge registry.Concierge) store.SessionSettings {
+// SettingsFromConcierge copies a concierge's mutable session settings.
+func SettingsFromConcierge(concierge registry.Concierge) store.SessionSettings {
 	return store.SessionSettings{
 		Identity:    concierge.Identity,
 		Impressions: append([]string(nil), concierge.Impressions...),

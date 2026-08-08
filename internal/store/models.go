@@ -131,3 +131,18 @@ type PluginState struct {
 
 	UpdatedAt time.Time
 }
+
+// ToolAudit records externally visible tool actions even when a turn aborts.
+type ToolAudit struct {
+	ID uint `gorm:"primaryKey;autoIncrement"`
+
+	SessionID  uint           `gorm:"index"`
+	ToolCallID string         `gorm:"size:255;index"`
+	ToolName   string         `gorm:"size:255"`
+	Arguments  datatypes.JSON `gorm:"type:jsonb"`
+	Result     string         `gorm:"type:text"`
+	IsError    bool
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
