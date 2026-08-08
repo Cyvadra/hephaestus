@@ -34,13 +34,11 @@ type Config struct {
 	ProjectAccessOverride bool
 	// ExecEnabled defaults to false.
 	ExecEnabled             bool
-	WebSearchProvider       string
 	WebSearchBraveAPIKeys   []string
 	WebSearchTavilyAPIKeys  []string
 	WebSearchSerpAPIKeys    []string
 	WebSearchSerpAPIEngine  string
 	WebSearchSearXNGBaseURL string
-	WebSearchSogouEnabled   bool
 	// FixedPlugins run for every session and cannot be disabled through
 	// mutable session settings.
 	FixedPlugins []string
@@ -62,13 +60,11 @@ func Load() (*Config, error) {
 		ProjectsRoot:            projectsRoot,
 		ProjectAccessOverride:   getenvBool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
 		ExecEnabled:             getenvBool("HEPHAESTUS_EXEC_ENABLED"),
-		WebSearchProvider:       getenvDefault("HEPHAESTUS_WEB_SEARCH_PROVIDER", "auto"),
 		WebSearchBraveAPIKeys:   splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS")),
 		WebSearchTavilyAPIKeys:  splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS")),
 		WebSearchSerpAPIKeys:    splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS")),
 		WebSearchSerpAPIEngine:  getenvDefault("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE", "google_light"),
 		WebSearchSearXNGBaseURL: os.Getenv("HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL"),
-		WebSearchSogouEnabled:   getenvBool("HEPHAESTUS_WEB_SEARCH_SOGOU_ENABLED"),
 		FixedPlugins:            splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "session_summary")),
 	}
 

@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/joho/godotenv"
 )
 
@@ -26,56 +29,27 @@ func TestWebSearchProvidersLive(t *testing.T) {
 		t.Skip("set HEPHAESTUS_RUN_LIVE_TESTS=1 to run live web-search tests (requires network and .env)")
 	}
 	loadRepositoryEnv(t)
-	testCases := []struct {
-		name   string
-		config WebSearchConfig
-		query  string
-	}{
-		{name: "sogou", config: WebSearchConfig{Provider: "sogou", SogouEnabled: true}, query: "人工智能 开源项目"},
-		{name: "duckduckgo", config: WebSearchConfig{Provider: "duckduckgo"}, query: "open source artificial intelligence"},
-	}
+	config := WebSearchConfig{}
 	if keys := os.Getenv("HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS"); strings.TrimSpace(keys) != "" {
-		testCases = append(testCases, struct {
-			name   string
-			config WebSearchConfig
-			query  string
-		}{name: "brave", config: WebSearchConfig{Provider: "brave", BraveAPIKeys: []string{keys}}, query: "open source artificial intelligence"})
+		config.BraveAPIKeys = splitTestKeys(keys)
 	}
 	if keys := os.Getenv("HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS"); strings.TrimSpace(keys) != "" {
-		testCases = append(testCases, struct {
-			name   string
-			config WebSearchConfig
-			query  string
-		}{name: "tavily", config: WebSearchConfig{Provider: "tavily", TavilyAPIKeys: []string{keys}}, query: "open source artificial intelligence"})
+		config.TavilyAPIKeys = splitTestKeys(keys)
 	}
 	if keys := splitTestKeys(os.Getenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS")); len(keys) > 0 {
-		testCases = append(testCases, struct {
-			name   string
-			config WebSearchConfig
-			query  string
-		}{name: "serpapi", config: WebSearchConfig{Provider: "serpapi", SerpAPIKeys: keys, SerpAPIEngine: os.Getenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE")}, query: "open source artificial intelligence"})
+		config.SerpAPIKeys = keys
+		config.SerpAPIEngine = os.Getenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE")
 	}
 	if baseURL := os.Getenv("HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL"); strings.TrimSpace(baseURL) != "" {
-		testCases = append(testCases, struct {
-			name   string
-			config WebSearchConfig
-			query  string
-		}{name: "searxng", config: WebSearchConfig{Provider: "searxng", SearXNGBaseURL: baseURL}, query: "open source artificial intelligence"})
+		config.SearXNGBaseURL = baseURL
 	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			tool, err := NewWebSearchTool(testCase.config)
-			if err != nil {
-				t.Fatalf("construct provider: %s", err)
-			}
-			result := tool.Execute(context.Background(), map[string]any{"query": testCase.query, "count": float64(5)})
-			if result.IsError {
-				t.Fatalf("provider request failed: %s", result.ForLLM)
-			}
-			if found := len(searchResultLine.FindAllString(result.ForLLM, -1)); found <= 1 {
-				t.Fatalf("expected more than one search result, found %d: %s", found, result.ForLLM)
-			}
-		})
+	tool := NewWebSearchTool(config)
+	result := tool.Execute(context.Background(), map[string]any{"query": "open source artificial intelligence"})
+	if result.IsError {
+		t.Fatalf("provider request failed: %s", result.ForLLM)
+	}
+	if found := len(searchResultLine.FindAllString(result.ForLLM, -1)); found == 0 || found > finalResultLimit {
+		t.Fatalf("expected 1-%d search results, found %d: %s", finalResultLimit, found, result.ForLLM)
 	}
 }
 
@@ -116,41 +90,16 @@ func TestDecodeSearchFormatsResults(t *testing.T) {
 	}
 }
 
-func TestWebSearchRejectsUnconfiguredProvider(t *testing.T) {
-	if _, err := NewWebSearchTool(WebSearchConfig{Provider: "brave"}); err == nil {
-		t.Fatal("expected construction error for an explicit provider with no keys")
+func TestWebSearchProviderGroups(t *testing.T) {
+	tool := NewWebSearchTool(WebSearchConfig{BraveAPIKeys: []string{"k1"}, TavilyAPIKeys: []string{"k2"}, SerpAPIKeys: []string{"k3"}, SearXNGBaseURL: "https://search.test"})
+	if got, want := providerNames(tool.fixed), []string{"duckduckgo", "sogou"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("fixed providers = %v, want %v", got, want)
 	}
-}
-
-func TestWebSearchRejectsUnconfiguredSerpAPI(t *testing.T) {
-	if _, err := NewWebSearchTool(WebSearchConfig{Provider: "serpapi"}); err == nil {
-		t.Fatal("expected construction error for SerpApi with no keys")
+	if got, want := providerNames(tool.primary), []string{"brave", "tavily"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("primary providers = %v, want %v", got, want)
 	}
-}
-
-func TestSogouRequiresExplicitEnablement(t *testing.T) {
-	if _, err := NewWebSearchTool(WebSearchConfig{Provider: "sogou"}); err == nil || !strings.Contains(err.Error(), "not configured") {
-		t.Fatalf("expected unconfigured Sogou provider error, got %v", err)
-	}
-}
-
-func TestWebSearchAutoResolvesWithoutKeys(t *testing.T) {
-	tool, err := NewWebSearchTool(WebSearchConfig{})
-	if err != nil {
-		t.Fatalf("auto config should always resolve: %v", err)
-	}
-	if got := providerNames(tool.providers); len(got) != 1 || got[0] != "duckduckgo" {
-		t.Fatalf("expected only duckduckgo with no keys, got %v", got)
-	}
-}
-
-func TestWebSearchAutoPrefersKeyedProviders(t *testing.T) {
-	tool, err := NewWebSearchTool(WebSearchConfig{BraveAPIKeys: []string{"k1"}, TavilyAPIKeys: []string{"k2"}, SerpAPIKeys: []string{"k3"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := providerNames(tool.providers), []string{"brave", "tavily", "serpapi", "duckduckgo"}; fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("provider order = %v, want %v", got, want)
+	if got, want := providerNames(tool.occasional), []string{"serpapi", "searxng"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("occasional providers = %v, want %v", got, want)
 	}
 }
 
@@ -247,28 +196,27 @@ func TestExtractDuckDuckGoStripsRutToken(t *testing.T) {
 }
 
 func TestRenderSearchResults(t *testing.T) {
-	rendered := RenderSearchResults("duckduckgo", "golang", []SearchResult{
+	rendered := RenderSearchResults([]string{"duckduckgo", "sogou"}, "golang", []SearchResult{
 		{Title: "Go", URL: "https://go.dev", Snippet: "The Go language"},
 	})
-	if !strings.Contains(rendered, "1. Go") || !strings.Contains(rendered, "https://go.dev") || !strings.Contains(rendered, "via duckduckgo") {
+	if !strings.Contains(rendered, "1. Go") || !strings.Contains(rendered, "https://go.dev") || !strings.Contains(rendered, "via duckduckgo, sogou") {
 		t.Fatalf("unexpected rendering: %q", rendered)
 	}
-	if rendered := RenderSearchResults("duckduckgo", "golang", nil); !strings.Contains(rendered, "No results") {
+	if rendered := RenderSearchResults([]string{"duckduckgo"}, "golang", nil); !strings.Contains(rendered, "No results") {
 		t.Fatalf("expected empty-state rendering, got %q", rendered)
 	}
 }
 
-func TestWebSearchFallsBackAcrossProviders(t *testing.T) {
-	failing := stubProvider{name: "first", err: fmt.Errorf("blocked")}
-	empty := stubProvider{name: "second"}
-	working := stubProvider{name: "third", results: []SearchResult{{Title: "Hit", URL: "https://example.test"}}}
-	tool := &WebSearchTool{providers: []Provider{failing, empty, working}}
+func TestWebSearchToleratesPartialProviderFailure(t *testing.T) {
+	failing := &stubProvider{name: "first", err: fmt.Errorf("blocked")}
+	working := &stubProvider{name: "second", results: []SearchResult{{Title: "Hit", URL: "https://example.test"}}}
+	tool := &WebSearchTool{fixed: []Provider{failing, working}, random: &stubRandom{}}
 	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
 	if result.IsError || !strings.Contains(result.ForLLM, "Hit") {
-		t.Fatalf("expected fallback to working provider, got %+v", result)
+		t.Fatalf("expected successful aggregation, got %+v", result)
 	}
-	if !strings.Contains(result.ForLLM, "via third") {
-		t.Fatalf("expected winning provider in result, got %q", result.ForLLM)
+	if !strings.Contains(result.ForLLM, "via second") {
+		t.Fatalf("expected successful provider in result, got %q", result.ForLLM)
 	}
 }
 
@@ -276,9 +224,248 @@ type stubProvider struct {
 	name    string
 	results []SearchResult
 	err     error
+	started chan<- string
+	release <-chan struct{}
+	mu      sync.Mutex
+	calls   int
+	count   int
 }
 
-func (s stubProvider) Name() string { return s.name }
-func (s stubProvider) Search(context.Context, string, int) ([]SearchResult, error) {
+func (s *stubProvider) Name() string { return s.name }
+func (s *stubProvider) Search(ctx context.Context, _ string, count int) ([]SearchResult, error) {
+	s.mu.Lock()
+	s.calls++
+	s.count = count
+	s.mu.Unlock()
+	if s.started != nil {
+		s.started <- s.name
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return s.results, s.err
+}
+
+type stubRandom struct {
+	float64s []float64
+	ints     []int
+}
+
+func (r *stubRandom) Float64() float64 {
+	if len(r.float64s) == 0 {
+		return 1
+	}
+	value := r.float64s[0]
+	r.float64s = r.float64s[1:]
+	return value
+}
+
+func (r *stubRandom) IntN(limit int) int {
+	if len(r.ints) == 0 {
+		return 0
+	}
+	value := r.ints[0]
+	r.ints = r.ints[1:]
+	return value % limit
+}
+
+func (*stubRandom) Shuffle(int, func(int, int)) {}
+
+func TestWebSearchSelectsProvidersByGroup(t *testing.T) {
+	fixedOne := &stubProvider{name: "duckduckgo"}
+	fixedTwo := &stubProvider{name: "sogou"}
+	brave := &stubProvider{name: "brave"}
+	tavily := &stubProvider{name: "tavily"}
+	serpapi := &stubProvider{name: "serpapi"}
+	searxng := &stubProvider{name: "searxng"}
+	tool := &WebSearchTool{
+		fixed:      []Provider{fixedOne, fixedTwo},
+		primary:    []Provider{brave, tavily},
+		occasional: []Provider{serpapi, searxng},
+		random:     &stubRandom{ints: []int{1, 1}, float64s: []float64{0.19}},
+	}
+	if got, want := providerNames(tool.selectedProviders()), []string{"duckduckgo", "sogou", "tavily", "searxng"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("selected providers = %v, want %v", got, want)
+	}
+	tool.random = &stubRandom{float64s: []float64{0.2}}
+	if got, want := providerNames(tool.selectedProviders()), []string{"duckduckgo", "sogou", "brave"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("selected providers at threshold = %v, want %v", got, want)
+	}
+}
+
+func TestWebSearchRunsProvidersConcurrently(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	first := &stubProvider{name: "first", results: []SearchResult{{Title: "One", URL: "https://one.test"}}, started: started, release: release}
+	second := &stubProvider{name: "second", results: []SearchResult{{Title: "Two", URL: "https://two.test"}}, started: started, release: release}
+	tool := &WebSearchTool{fixed: []Provider{first, second}, random: &stubRandom{}}
+	done := make(chan *toolkit.ToolResult, 1)
+	go func() { done <- tool.Execute(context.Background(), map[string]any{"query": "q"}) }()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("providers did not start concurrently")
+		}
+	}
+	close(release)
+	result := <-done
+	if result.IsError {
+		t.Fatalf("unexpected search error: %s", result.ForLLM)
+	}
+	for _, provider := range []*stubProvider{first, second} {
+		provider.mu.Lock()
+		if provider.calls != 1 || provider.count != providerResultLimit {
+			t.Fatalf("%s calls=%d count=%d", provider.name, provider.calls, provider.count)
+		}
+		provider.mu.Unlock()
+	}
+}
+
+func TestWebSearchParametersOnlyRequireQuery(t *testing.T) {
+	parameters := WebSearchTool{}.Parameters()
+	properties, ok := parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected parameters: %#v", parameters)
+	}
+	if _, ok := properties["query"]; !ok || len(properties) != 1 {
+		t.Fatalf("expected query-only schema, got %#v", properties)
+	}
+}
+
+func TestWebSearchCapsEachProviderAtTenResults(t *testing.T) {
+	results := make([]SearchResult, 12)
+	for index := range results {
+		results[index] = SearchResult{Title: fmt.Sprintf("Result %d", index), URL: fmt.Sprintf("https://site%d.test/page", index)}
+	}
+	provider := &stubProvider{name: "many", results: results}
+	tool := &WebSearchTool{fixed: []Provider{provider}, random: &stubRandom{}}
+	_, filtered, err := tool.search(context.Background(), "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != finalResultLimit {
+		t.Fatalf("final results = %d, want %d", len(filtered), finalResultLimit)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if provider.count != providerResultLimit {
+		t.Fatalf("provider count = %d, want %d", provider.count, providerResultLimit)
+	}
+}
+
+func TestCanonicalSearchURLRemovesParameters(t *testing.T) {
+	canonical, hostname, ok := canonicalSearchURL("HTTPS://Docs.Example.COM/path?utm_source=test#section")
+	if !ok || canonical != "https://docs.example.com/path" || hostname != "docs.example.com" {
+		t.Fatalf("canonical URL = %q, hostname = %q, ok = %v", canonical, hostname, ok)
+	}
+	if _, _, ok := canonicalSearchURL("not a URL"); ok {
+		t.Fatal("expected URL without scheme and hostname to be rejected")
+	}
+}
+
+func TestFilterSearchResultsAppliesURLDomainAndBlacklistRules(t *testing.T) {
+	results := []SearchResult{
+		{Title: "First", URL: "https://a.example.co.uk/page?one=1"},
+		{Title: "Duplicate", URL: "https://a.example.co.uk/page?two=2#fragment"},
+		{Title: "Second root hit", URL: "https://b.example.co.uk/other"},
+		{Title: "Third root hit", URL: "https://c.example.co.uk/third"},
+		{Title: "Blocked", URL: "https://news.zhihu.com/question"},
+		{Title: "Allowed", URL: "https://allowed.test/page"},
+		{Title: "Invalid", URL: "relative/path"},
+	}
+	filtered := filterSearchResults(results, &stubRandom{})
+	if len(filtered) != 3 {
+		t.Fatalf("filtered results = %+v", filtered)
+	}
+	rootCount := 0
+	for _, result := range filtered {
+		if strings.Contains(result.URL, "example.co.uk") {
+			rootCount++
+		}
+		if strings.Contains(result.URL, "zhihu.com") || result.Title == "Duplicate" {
+			t.Fatalf("unexpected filtered result: %+v", result)
+		}
+	}
+	if rootCount != 2 {
+		t.Fatalf("example.co.uk results = %d, want 2", rootCount)
+	}
+}
+
+func TestInferSearchLanguage(t *testing.T) {
+	testCases := []struct {
+		name   string
+		result SearchResult
+		want   searchLanguage
+	}{
+		{name: "english", result: SearchResult{Title: "Open source project"}, want: searchEnglish},
+		{name: "other", result: SearchResult{Title: "Projet logiciel français"}, want: searchOther},
+		{name: "chinese wins", result: SearchResult{Title: "开源 project"}, want: searchChinese},
+		{name: "unknown defaults english", result: SearchResult{Title: "1234"}, want: searchEnglish},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := inferSearchLanguage(testCase.result); got != testCase.want {
+				t.Fatalf("language = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestSelectSearchResultsUsesLanguageQuotasAndFillsShortages(t *testing.T) {
+	var results []SearchResult
+	for index := range 5 {
+		results = append(results, SearchResult{Title: fmt.Sprintf("English %d", index), URL: fmt.Sprintf("https://en%d.test", index)})
+	}
+	for index := range 3 {
+		results = append(results, SearchResult{Title: fmt.Sprintf("Français %d", index), URL: fmt.Sprintf("https://fr%d.test", index)})
+	}
+	for index := range 4 {
+		results = append(results, SearchResult{Title: fmt.Sprintf("中文 %d", index), URL: fmt.Sprintf("https://zh%d.test", index)})
+	}
+	selected := selectSearchResults(results, &stubRandom{})
+	if len(selected) != finalResultLimit {
+		t.Fatalf("selected results = %d, want %d", len(selected), finalResultLimit)
+	}
+	counts := map[searchLanguage]int{}
+	for _, result := range selected {
+		counts[inferSearchLanguage(result)]++
+	}
+	if counts[searchEnglish] != 3 || counts[searchOther] != 2 || counts[searchChinese] != 2 {
+		t.Fatalf("language counts = %#v", counts)
+	}
+
+	selected = selectSearchResults(results[:6], &stubRandom{})
+	if len(selected) != 6 {
+		t.Fatalf("short result set = %d, want all 6", len(selected))
+	}
+	if counts := countLanguages(selected); counts[searchEnglish] != 5 || counts[searchOther] != 1 {
+		t.Fatalf("filled language counts = %#v", counts)
+	}
+}
+
+func countLanguages(results []SearchResult) map[searchLanguage]int {
+	counts := make(map[searchLanguage]int)
+	for _, result := range results {
+		counts[inferSearchLanguage(result)]++
+	}
+	return counts
+}
+
+func TestWebSearchReturnsErrorWhenAllProvidersFail(t *testing.T) {
+	tool := &WebSearchTool{
+		fixed: []Provider{
+			&stubProvider{name: "failed", err: errors.New("blocked")},
+			&stubProvider{name: "empty"},
+		},
+		random: &stubRandom{},
+	}
+	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
+	if !result.IsError || !strings.Contains(result.ForLLM, "failed: blocked") || !strings.Contains(result.ForLLM, "empty: no results") {
+		t.Fatalf("unexpected result: %+v", result)
+	}
 }

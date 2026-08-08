@@ -74,10 +74,7 @@ func main() {
 	toolReg.Register(tools.NewAppendFileTool(fileAccess))
 	toolReg.Register(tools.NewListDirTool(fileAccess))
 	toolReg.Register(tools.NewWebFetchTool(0, 0))
-	webSearch, err := tools.NewWebSearchTool(tools.WebSearchConfig{Provider: cfg.WebSearchProvider, BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, SogouEnabled: cfg.WebSearchSogouEnabled})
-	if err != nil {
-		log.Fatalf("bootstrap: web search: %v", err)
-	}
+	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL})
 	toolReg.Register(webSearch)
 	execTool := tools.NewExecToolWithAccess(cfg.ExecEnabled, 0, fileAccess)
 	toolReg.Register(execTool)

@@ -13,11 +13,9 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/htmltext"
 )
 
-// Scraping providers (duckduckgo, sogou) parse search-engine HTML. They
-// need no API keys but are coupled to page markup and can be rate-limited
-// or blocked, so the web search tool treats them as last-resort fallbacks,
-// never as the preferred provider. Scraping is an accepted fallback for
-// this single-user platform.
+// Scraping providers (duckduckgo, sogou) parse search-engine HTML. They need
+// no API keys and are always queried, but remain coupled to page markup and
+// can be rate-limited or blocked.
 
 var (
 	sogouTitle   = regexp.MustCompile(`<a\s+class="?resultLink"?\s+href="([^"]+)"[^>]*id="sogou_vr_\d+_\d+"[^>]*>\s*(.*?)\s*</a>`)
