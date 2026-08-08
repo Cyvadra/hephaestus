@@ -8,6 +8,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 )
 
 // OptionsPlugin suggests short next-user-message alternatives after every
@@ -35,7 +36,7 @@ func (p *OptionsPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plug
 			"user might say next. Respond with ONLY a JSON array of strings.",
 		last.Content,
 	)
-	result, err := p.llm.RawCall(ctx, "You suggest brief next-message options for a chat user.", prompt, 200)
+	result, err := transform.SuggestOptions(ctx, p.llm, prompt, 200)
 	if err != nil {
 		return turn, fmt.Errorf("options: %w", err)
 	}

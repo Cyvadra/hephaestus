@@ -10,6 +10,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
@@ -56,7 +57,7 @@ func (p *StorylineStatusPlugin) Handle(ctx context.Context, hook plugin.Hook, ph
 			"Respond with ONLY the updated, one-line status. No other text.",
 		state.StatusLine, cleaned,
 	)
-	newStatus, err := p.llm.RawCall(ctx, "You track and update a compact status line for an ongoing storyline.", prompt, 128)
+	newStatus, err := transform.StorylineStatus(ctx, p.llm, prompt, 128)
 	if err != nil {
 		return turn, fmt.Errorf("storyline_status: %w", err)
 	}

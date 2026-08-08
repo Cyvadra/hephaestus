@@ -78,12 +78,15 @@ func main() {
 		Provider:        cfg.WebFetchProvider,
 		FirecrawlAPIKey: cfg.FirecrawlAPIKey,
 		ChromePath:      cfg.WebFetchChromePath,
+		MaxChars:        cfg.WebFetchMaxChars,
+		SummaryMaxChars: cfg.WebFetchSummaryMaxChars,
+		LLMClient:       llmClient,
 	})
 	if err != nil {
 		log.Fatalf("web fetch: %v", err)
 	}
 	toolReg.Register(webFetch)
-	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL})
+	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars})
 	toolReg.Register(webSearch)
 	execTool := tools.NewExecToolWithAccess(cfg.ExecEnabled, 0, fileAccess)
 	toolReg.Register(execTool)

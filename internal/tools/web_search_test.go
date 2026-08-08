@@ -469,3 +469,63 @@ func TestWebSearchReturnsErrorWhenAllProvidersFail(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
+
+// largeStubResults builds seven results with verbose snippets so the rendered
+// list exceeds a small summary cap.
+func largeStubResults() []SearchResult {
+	results := make([]SearchResult, 0, 7)
+	for i := 1; i <= 7; i++ {
+		results = append(results, SearchResult{
+			Title:   fmt.Sprintf("Result %d", i),
+			URL:     fmt.Sprintf("https://example%d.test/page", i),
+			Snippet: strings.Repeat(fmt.Sprintf("snippet %d ", i), 40),
+		})
+	}
+	return results
+}
+
+func TestWebSearchSummarizesLargeResultList(t *testing.T) {
+	provider := &stubProvider{name: "stub", results: largeStubResults()}
+	var gotTarget int
+	summarizer := func(_ context.Context, _ string, maxOutputLen int) (string, error) {
+		gotTarget = maxOutputLen
+		return "condensed results", nil
+	}
+	tool := &WebSearchTool{fixed: []Provider{provider}, random: &stubRandom{}, summaryMaxChars: 100, summarizer: summarizer}
+	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
+	if result.IsError || result.ForLLM != "condensed results" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if gotTarget != 100 {
+		t.Fatalf("summarizer target = %d, want 100", gotTarget)
+	}
+}
+
+func TestWebSearchSkipsSummarizeForShortResultList(t *testing.T) {
+	provider := &stubProvider{name: "stub", results: []SearchResult{{Title: "Hit", URL: "https://example.test"}}}
+	called := false
+	summarizer := func(_ context.Context, _ string, _ int) (string, error) {
+		called = true
+		return "", nil
+	}
+	tool := &WebSearchTool{fixed: []Provider{provider}, random: &stubRandom{}, summaryMaxChars: 5000, summarizer: summarizer}
+	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
+	if result.IsError || !strings.Contains(result.ForLLM, "Hit") {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if called {
+		t.Fatal("summarizer should not be called for short result list")
+	}
+}
+
+func TestWebSearchDegradesToRawListOnSummarizeError(t *testing.T) {
+	provider := &stubProvider{name: "stub", results: largeStubResults()}
+	summarizer := func(_ context.Context, _ string, _ int) (string, error) {
+		return "", errors.New("summarizer down")
+	}
+	tool := &WebSearchTool{fixed: []Provider{provider}, random: &stubRandom{}, summaryMaxChars: 100, summarizer: summarizer}
+	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
+	if result.IsError || !strings.Contains(result.ForLLM, "Result 1") {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}

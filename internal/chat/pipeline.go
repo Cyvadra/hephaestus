@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Cyvadra/ds4"
-	"github.com/Cyvadra/hephaestus/internal/compress"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
@@ -20,6 +19,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
@@ -384,7 +384,7 @@ func (p *Pipeline) buildContext(settings store.SessionSettings, activePath []sto
 		return append(out, activePath...), nil
 	}
 
-	var unpacked []compress.Message
+	var unpacked []transform.Message
 	if err := json.Unmarshal(compRow.Messages, &unpacked); err != nil {
 		return nil, fmt.Errorf("chat: unpack compression %d: %w", compRow.ID, err)
 	}
@@ -437,7 +437,7 @@ func (p *Pipeline) compressIfNeeded(ctx context.Context, pluginNames []string, s
 func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, staticMessageCount int, turn plugin.TurnContext) (plugin.TurnContext, error) {
 	total := 0
 	for _, m := range turn.Messages {
-		total += compress.EstimateLength(m.Content)
+		total += transform.EstimateLength(m.Content)
 	}
 	if float64(total) <= compressionTriggerRatio*float64(identity.ContextWindowTokens) {
 		return turn, nil
@@ -452,12 +452,12 @@ func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identi
 	}
 	keep := turn.Messages[len(turn.Messages)-1:]
 
-	input := make([]compress.Message, len(toCompress))
+	input := make([]transform.Message, len(toCompress))
 	for i, m := range toCompress {
-		input[i] = compress.Message{Role: m.Role, Content: m.Content}
+		input[i] = transform.Message{Role: m.Role, Content: m.Content}
 	}
 
-	compacted, err := compress.Compress(ctx, p.llm, input, int(float64(total)*0.3))
+	compacted, err := transform.Compress(ctx, p.llm, input, int(float64(total)*0.3))
 	if err != nil {
 		// Compression failure behaves like /stop: abort the turn, leave
 		// everything as-is.

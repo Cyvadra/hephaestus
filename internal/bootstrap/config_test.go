@@ -23,6 +23,7 @@ func TestGetenvBoolAcceptsStandardTrueValues(t *testing.T) {
 func TestLoadSerpAPIConfig(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
 	t.Setenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS", " first, second , ")
 	t.Setenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE", "")
 
@@ -44,5 +45,39 @@ func TestLoadSerpAPIConfig(t *testing.T) {
 	}
 	if cfg.WebSearchSerpAPIEngine != "bing" {
 		t.Fatalf("SerpApi engine = %q, want bing", cfg.WebSearchSerpAPIEngine)
+	}
+}
+
+func TestLoadWebFetchConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebFetchProvider != "firecrawl" || cfg.FirecrawlAPIKey != "firecrawl-key" {
+		t.Fatalf("unexpected web fetch config: %+v", cfg)
+	}
+
+	t.Setenv("HEPHAESTUS_WEB_FETCH_PROVIDER", "local")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "")
+	if _, err := Load(); err != nil {
+		t.Fatalf("local provider should not require Firecrawl key: %v", err)
+	}
+
+	t.Setenv("HEPHAESTUS_WEB_FETCH_PROVIDER", "invalid")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid web fetch provider error")
+	}
+}
+
+func TestLoadRequiresFirecrawlKeyByDefault(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing Firecrawl key error")
 	}
 }

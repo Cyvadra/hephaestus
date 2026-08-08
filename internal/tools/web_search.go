@@ -11,13 +11,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"golang.org/x/net/publicsuffix"
 )
 
 const (
 	providerResultLimit = 10
 	finalResultLimit    = 7
+	// defaultWebSearchSummaryChars caps the LLM-condensed digest returned to
+	// the calling agent when summarization is enabled.
+	defaultWebSearchSummaryChars = 4_000
 )
 
 var (
@@ -67,6 +72,11 @@ type WebSearchConfig struct {
 	SearXNGBaseURL                           string
 	SerpAPIEngine                            string
 	BraveAPIKeys, TavilyAPIKeys, SerpAPIKeys []string
+	// LLMClient, when set, enables LLM condensation of result lists: rendered
+	// results over SummaryMaxChars are condensed before being returned to the
+	// calling agent. When nil, results are returned as-is.
+	LLMClient       *llm.Client
+	SummaryMaxChars int
 }
 
 type searchRandom interface {
@@ -106,10 +116,12 @@ func (r *lockedRandom) Shuffle(count int, swap func(int, int)) {
 // WebSearchTool selects provider groups for each request, searches the
 // selected providers concurrently, then filters and samples their results.
 type WebSearchTool struct {
-	fixed      []Provider
-	primary    []Provider
-	occasional []Provider
-	random     searchRandom
+	fixed           []Provider
+	primary         []Provider
+	occasional      []Provider
+	random          searchRandom
+	summaryMaxChars int
+	summarizer      summarizeFunc
 }
 
 // NewWebSearchTool builds the provider groups used for per-request selection.
@@ -135,6 +147,16 @@ func NewWebSearchTool(config WebSearchConfig) *WebSearchTool {
 	if base := strings.TrimRight(strings.TrimSpace(config.SearXNGBaseURL), "/"); base != "" {
 		tool.occasional = append(tool.occasional, searxngSearch{client: client, baseURL: base})
 	}
+	tool.summaryMaxChars = config.SummaryMaxChars
+	if tool.summaryMaxChars <= 0 {
+		tool.summaryMaxChars = defaultWebSearchSummaryChars
+	}
+	if config.LLMClient != nil {
+		llmClient := config.LLMClient
+		tool.summarizer = func(ctx context.Context, text string, maxOutputLen int) (string, error) {
+			return transform.SummarizeSearchResults(ctx, llmClient, text, maxOutputLen)
+		}
+	}
 	return tool
 }
 
@@ -156,7 +178,16 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *toolk
 	if err != nil {
 		return toolkit.ErrorResult("web_search: " + err.Error())
 	}
-	return toolkit.SilentResult(RenderSearchResults(providers, query, results))
+	rendered := RenderSearchResults(providers, query, results)
+	// Condense the ranked results with the LLM when enabled. Summarization is
+	// best-effort: on any failure we degrade to the raw rendered list so the
+	// calling agent still receives the links.
+	if t.summarizer != nil && len([]rune(rendered)) > t.summaryMaxChars {
+		if summary, summaryErr := t.summarizer(ctx, rendered, t.summaryMaxChars); summaryErr == nil {
+			return toolkit.SilentResult(summary)
+		}
+	}
+	return toolkit.SilentResult(rendered)
 }
 
 type providerResponse struct {

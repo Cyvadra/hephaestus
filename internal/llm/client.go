@@ -29,6 +29,13 @@ func New(apiKey string) *Client {
 	return &Client{ds4: ds4.New(apiKey)}
 }
 
+// NewWithBaseURL creates a Client authenticated with apiKey that sends
+// requests to baseURL instead of the provider default. It exists for
+// self-hosted endpoints and for tests that point at a stub server.
+func NewWithBaseURL(apiKey, baseURL string) *Client {
+	return &Client{ds4: ds4.New(apiKey).WithBaseURL(baseURL)}
+}
+
 // Call sends messages (in order) to the model configured by identity,
 // optionally offering toolset, and returns the raw ds4 response.
 //

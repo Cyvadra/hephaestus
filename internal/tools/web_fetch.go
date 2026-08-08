@@ -3,53 +3,98 @@ package tools
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"net/netip"
 	"net/url"
-	"regexp"
 	"strings"
-	"time"
-	"unicode/utf8"
 
-	"github.com/Cyvadra/hephaestus/internal/htmltext"
+	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 )
 
-const defaultWebFetchChars = 50_000
-const defaultWebFetchBytes = 10 * 1024 * 1024
+const (
+	// defaultWebFetchChars caps the raw captured page text fed to either a
+	// summarizer or the calling agent.
+	defaultWebFetchChars = 16_000
+	// defaultWebFetchSummaryChars caps the LLM-condensed digest returned to
+	// the calling agent when summarization is enabled.
+	defaultWebFetchSummaryChars = 4_000
+)
 
-var htmlScript = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-var htmlStyle = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-var htmlSpace = regexp.MustCompile(`[\t\r ]+`)
-
-// WebFetchTool fetches a public HTTP(S) URL and extracts readable text.
-type WebFetchTool struct {
-	maxChars int
-	maxBytes int64
-	client   *http.Client
+type webFetchProvider interface {
+	Name() string
+	Fetch(context.Context, *url.URL) (string, error)
 }
 
-func NewWebFetchTool(maxChars int, maxBytes int64) *WebFetchTool {
+type summarizeFunc func(ctx context.Context, text string, maxOutputLen int) (string, error)
+
+type WebFetchConfig struct {
+	Provider         string
+	FirecrawlAPIKey  string
+	ChromePath       string
+	MaxChars         int
+	FirecrawlBaseURL string
+	// LLMClient, when set, enables LLM summarization of large fetched pages:
+	// content over SummaryMaxChars is condensed before it is returned to the
+	// calling agent. When nil, large pages are returned truncated only.
+	LLMClient       *llm.Client
+	SummaryMaxChars int
+}
+
+// WebFetchTool fetches readable content from a public HTTP(S) URL.
+type WebFetchTool struct {
+	maxChars        int
+	summaryMaxChars int
+	primary         webFetchProvider
+	fallback        webFetchProvider
+	summarizer      summarizeFunc
+}
+
+func NewWebFetchTool(config WebFetchConfig) (*WebFetchTool, error) {
+	maxChars := config.MaxChars
 	if maxChars <= 0 {
 		maxChars = defaultWebFetchChars
 	}
-	if maxBytes <= 0 {
-		maxBytes = defaultWebFetchBytes
+	summaryMaxChars := config.SummaryMaxChars
+	if summaryMaxChars <= 0 {
+		summaryMaxChars = defaultWebFetchSummaryChars
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DialContext = safeDialContext((&net.Dialer{Timeout: 10 * time.Second}).DialContext)
-	return &WebFetchTool{maxChars: maxChars, maxBytes: maxBytes, client: &http.Client{
-		Timeout: 60 * time.Second, Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("stopped after 5 redirects")
-			}
-			return validatePublicURL(req.URL)
-		},
-	}}
+	var summarizer summarizeFunc
+	if config.LLMClient != nil {
+		client := config.LLMClient
+		summarizer = func(ctx context.Context, text string, maxOutputLen int) (string, error) {
+			return transform.Summarize(ctx, client, text, maxOutputLen)
+		}
+	}
+	local := newLocalWebFetchProvider(config.ChromePath)
+	switch strings.ToLower(strings.TrimSpace(config.Provider)) {
+	case "local":
+		return &WebFetchTool{maxChars: maxChars, summaryMaxChars: summaryMaxChars, primary: local, summarizer: summarizer}, nil
+	case "", "firecrawl":
+		if strings.TrimSpace(config.FirecrawlAPIKey) == "" {
+			return nil, fmt.Errorf("Firecrawl API key is required")
+		}
+		return &WebFetchTool{
+			maxChars:        maxChars,
+			summaryMaxChars: summaryMaxChars,
+			primary:         newFirecrawlWebFetchProvider(config.FirecrawlAPIKey, config.FirecrawlBaseURL),
+			fallback:        local,
+			summarizer:      summarizer,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported web fetch provider %q", config.Provider)
+	}
+}
+
+func newWebFetchToolForTest(maxChars, summaryMaxChars int, primary, fallback webFetchProvider, summarizer summarizeFunc) *WebFetchTool {
+	if maxChars <= 0 {
+		maxChars = defaultWebFetchChars
+	}
+	if summaryMaxChars <= 0 {
+		summaryMaxChars = defaultWebFetchSummaryChars
+	}
+	return &WebFetchTool{maxChars: maxChars, summaryMaxChars: summaryMaxChars, primary: primary, fallback: fallback, summarizer: summarizer}
 }
 
 func (WebFetchTool) Name() string { return "web_fetch" }
@@ -68,39 +113,34 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *toolki
 	if err != nil {
 		return toolkit.ErrorResult("web_fetch: invalid URL: " + err.Error())
 	}
-	if err := validatePublicURL(parsed); err != nil {
+	if err := validatePublicURL(ctx, parsed, net.DefaultResolver); err != nil {
 		return toolkit.ErrorResult("web_fetch: " + err.Error())
+	}
+	text, primaryErr := t.primary.Fetch(ctx, parsed)
+	if primaryErr != nil && t.fallback != nil {
+		text, err = t.fallback.Fetch(ctx, parsed)
+		if err != nil {
+			return toolkit.ErrorResult(fmt.Sprintf("web_fetch: %s failed: %v; %s fallback failed: %v", t.primary.Name(), primaryErr, t.fallback.Name(), err))
+		}
+	} else if primaryErr != nil {
+		return toolkit.ErrorResult(fmt.Sprintf("web_fetch: %s failed: %v", t.primary.Name(), primaryErr))
+	}
+	if strings.TrimSpace(text) == "" {
+		return toolkit.ErrorResult("web_fetch: provider returned empty content")
 	}
 	maxChars := t.maxChars
 	if value, ok := args["max_chars"].(float64); ok && value >= 100 {
 		maxChars = min(int(value), t.maxChars)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
-	if err != nil {
-		return toolkit.ErrorResult("web_fetch: " + err.Error())
-	}
-	req.Header.Set("User-Agent", "hephaestus/1.0")
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return toolkit.ErrorResult("web_fetch: request failed: " + err.Error())
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return toolkit.ErrorResult(fmt.Sprintf("web_fetch: server returned HTTP %d", resp.StatusCode))
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, t.maxBytes+1))
-	if err != nil {
-		return toolkit.ErrorResult("web_fetch: read response: " + err.Error())
-	}
-	if int64(len(body)) > t.maxBytes {
-		return toolkit.ErrorResult(fmt.Sprintf("web_fetch: response exceeds %d-byte limit", t.maxBytes))
-	}
-	contentType := resp.Header.Get("Content-Type")
-	if !isHTMLContent(contentType) && !utf8.Valid(body) {
-		return toolkit.ErrorResult("web_fetch: response is not readable text content")
-	}
-	text := extractWebText(string(body), contentType)
 	text = truncateWebText(text, maxChars)
+	// Condense large content with the LLM when enabled. Summarization is
+	// best-effort: on any failure we degrade to the truncated raw text so
+	// the calling agent still receives usable content.
+	if t.summarizer != nil && len([]rune(text)) > t.summaryMaxChars {
+		if summary, summaryErr := t.summarizer(ctx, text, t.summaryMaxChars); summaryErr == nil {
+			return toolkit.SilentResult(summary)
+		}
+	}
 	return toolkit.SilentResult(text)
 }
 
@@ -112,11 +152,11 @@ func truncateWebText(text string, maxChars int) string {
 	return string(runes[:maxChars]) + "\n[TRUNCATED]"
 }
 
-func isHTMLContent(contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "html")
+type netIPResolver interface {
+	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
 }
 
-func validatePublicURL(target *url.URL) error {
+func validatePublicURL(ctx context.Context, target *url.URL, resolver netIPResolver) error {
 	if target.Scheme != "http" && target.Scheme != "https" {
 		return fmt.Errorf("only http/https URLs are allowed")
 	}
@@ -127,34 +167,32 @@ func validatePublicURL(target *url.URL) error {
 	if isPrivateHost(host) {
 		return fmt.Errorf("fetching private or local network hosts is not allowed")
 	}
+	if _, err := resolvePublicIPs(ctx, resolver, host); err != nil {
+		return err
+	}
 	return nil
 }
 
-func safeDialContext(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
-	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
+func resolvePublicIPs(ctx context.Context, resolver netIPResolver, host string) ([]netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if isPrivateAddr(ip) {
+			return nil, fmt.Errorf("fetching private or local network hosts is not allowed")
 		}
-		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-		if err != nil {
-			return nil, err
-		}
-		for _, ip := range ips {
-			if isPrivateAddr(ip) {
-				return nil, fmt.Errorf("private address blocked")
-			}
-		}
-		var dialErr error
-		for _, ip := range ips {
-			conn, err := dial(ctx, network, net.JoinHostPort(ip.String(), port))
-			if err == nil {
-				return conn, nil
-			}
-			dialErr = err
-		}
-		return nil, dialErr
+		return []netip.Addr{ip.Unmap()}, nil
 	}
+	ips, err := resolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve domain: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("domain has no IP addresses")
+	}
+	for _, ip := range ips {
+		if isPrivateAddr(ip) {
+			return nil, fmt.Errorf("fetching private or local network hosts is not allowed")
+		}
+	}
+	return ips, nil
 }
 
 func isPrivateHost(host string) bool {
@@ -176,15 +214,4 @@ func isPrivateAddr(ip netip.Addr) bool {
 		}
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
-}
-
-func extractWebText(body, contentType string) string {
-	if !isHTMLContent(contentType) {
-		return body
-	}
-	text := htmlScript.ReplaceAllString(body, "")
-	text = htmlStyle.ReplaceAllString(text, "")
-	text = htmltext.CleanFragment(text)
-	text = htmlSpace.ReplaceAllString(text, " ")
-	return strings.TrimSpace(text)
 }

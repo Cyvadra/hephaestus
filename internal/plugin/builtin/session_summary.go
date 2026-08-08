@@ -12,6 +12,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
@@ -53,7 +54,7 @@ func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, pha
 	}
 
 	prompt := p.prompt(turn)
-	result, err := p.llm.RawCall(ctx, "You produce concise session titles and summaries.", prompt, 256)
+	result, err := transform.SessionTitleSummary(ctx, p.llm, prompt, 256)
 	if err != nil {
 		return turn, fmt.Errorf("session_summary: %w", err)
 	}

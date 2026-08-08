@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cyvadra/hephaestus/internal/compress"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/project"
@@ -20,6 +19,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -277,7 +277,7 @@ func (s *Service) status(sessionID uint) (string, error) {
 	}
 	total := 0
 	for _, m := range activePath {
-		total += compress.EstimateLength(m.Content)
+		total += transform.EstimateLength(m.Content)
 	}
 
 	var b strings.Builder
