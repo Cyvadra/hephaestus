@@ -20,7 +20,7 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 const (
 	// DefaultName is the system-created Project bound to sessions unless
 	// the user explicitly switches to another Project.
-	DefaultName = "default-workspace"
+	DefaultName = store.DefaultProjectName
 
 	defaultDescription = "System default workspace for agent file operations."
 )

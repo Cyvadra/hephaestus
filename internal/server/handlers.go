@@ -12,6 +12,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
+	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,7 @@ import (
 
 type createSessionRequest struct {
 	Concierge string `json:"concierge" binding:"required"`
+	Project   string `json:"project"`
 }
 
 // createSession godoc
@@ -47,7 +49,21 @@ func (s *Server) createSession(c *gin.Context) {
 		return
 	}
 
-	sess, err := s.sessions.CreateFromConcierge(concierge)
+	projectName := strings.TrimSpace(req.Project)
+	if projectName == "" {
+		projectName = project.DefaultName
+	}
+	boundProject, err := s.projects.GetByName(projectName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
+			return
+		}
+		internalError(c, err)
+		return
+	}
+
+	sess, err := s.sessions.CreateFromConcierge(concierge, boundProject.ID)
 	if err != nil {
 		internalError(c, err)
 		return
@@ -431,12 +447,62 @@ func parseUintParam(c *gin.Context, param, label string) (uint, error) {
 //	@Failure		500	{object}	errorResponse
 //	@Router			/sessions [get]
 func (s *Server) listSessions(c *gin.Context) {
+	projectName := strings.TrimSpace(c.Query("project"))
+	if projectName == "" {
+		projectName = project.DefaultName
+	}
+	boundProject, err := s.projects.GetByName(projectName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
+			return
+		}
+		internalError(c, err)
+		return
+	}
 	var sessions []store.Session
-	if err := s.db.Order("updated_at desc").Find(&sessions).Error; err != nil {
+	if err := s.db.Where("project_id = ?", boundProject.ID).Order("updated_at desc").Find(&sessions).Error; err != nil {
 		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sessions)
+}
+
+type projectResponse struct {
+	store.Project
+	IsDefault bool `json:"is_default"`
+}
+
+type createProjectRequest struct {
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+}
+
+func (s *Server) listProjects(c *gin.Context) {
+	projects, err := s.projects.List()
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	response := make([]projectResponse, 0, len(projects))
+	for _, item := range projects {
+		response = append(response, projectResponse{Project: item, IsDefault: item.Name == project.DefaultName})
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (s *Server) createProject(c *gin.Context) {
+	var req createProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	created, err := s.projects.Create(strings.TrimSpace(req.Name), strings.TrimSpace(req.Description))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, projectResponse{Project: *created, IsDefault: created.Name == project.DefaultName})
 }
 
 type updateSessionRequest struct {

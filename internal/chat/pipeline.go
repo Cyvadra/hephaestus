@@ -104,7 +104,7 @@ type turnPrep struct {
 	toolset    []toolkit.Tool
 	activePath []store.ChatMessage
 	compRow    *store.Compression
-	// workspace is the bound Project's directory, or "" if none is bound.
+	// workspace is the required Project directory bound to this session.
 	workspace string
 }
 
@@ -143,14 +143,12 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	}
 	prep.toolset = toolset
 
-	if prep.settings.Project != "" {
-		proj, err := p.projects.GetByName(prep.settings.Project)
-		if err != nil {
-			p.notify.Error("chat: session %d has missing project %q; message not persisted", sessionID, prep.settings.Project)
-			return prep, fmt.Errorf("chat: project %q not found", prep.settings.Project)
-		}
-		prep.workspace = p.projects.Path(*proj)
+	proj, err := p.projects.Get(prep.sess.ProjectID)
+	if err != nil {
+		p.notify.Error("chat: session %d has missing project id %d; message not persisted", sessionID, prep.sess.ProjectID)
+		return prep, fmt.Errorf("chat: project %d not found", prep.sess.ProjectID)
 	}
+	prep.workspace = p.projects.Path(*proj)
 
 	activePath, err := p.sessions.ActivePath(prep.sess)
 	if err != nil {

@@ -9,6 +9,7 @@ import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 
 interface Props {
   sessionId: number | null
+	project: string | null
   draftConcierge?: ConciergeItem | null
   isChoosingConcierge?: boolean
   onChooseConcierge?: (concierge: ConciergeItem) => void
@@ -16,7 +17,7 @@ interface Props {
   onSessionUpdated?: (session: Session) => void
 }
 
-export default function ChatView({ sessionId, draftConcierge, isChoosingConcierge = false, onChooseConcierge, onSessionCreated, onSessionUpdated }: Props) {
+export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, onChooseConcierge, onSessionCreated, onSessionUpdated }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -124,7 +125,8 @@ export default function ChatView({ sessionId, draftConcierge, isChoosingConcierg
         if (!draftConcierge) {
           throw new Error('请先选择顾问再开始新会话')
         }
-        const created = await createSession(draftConcierge.name)
+        if (project == null) throw new Error('No project selected')
+        const created = await createSession(draftConcierge.name, project)
         targetSessionId = created.ID
         setResolvedSessionId(created.ID)
         onSessionCreated?.(created.ID)
@@ -159,7 +161,7 @@ export default function ChatView({ sessionId, draftConcierge, isChoosingConcierg
       setStreamingActivities([])
       setOptimisticUserMessage(null)
     }
-  }, [resolvedSessionId, draftConcierge, localLeafId, loadHistory, onSessionCreated, onSessionUpdated])
+  }, [resolvedSessionId, draftConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return

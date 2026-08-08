@@ -19,8 +19,7 @@ import (
 
 // Service provides session lifecycle operations backed by db.
 type Service struct {
-	db             *gorm.DB
-	defaultProject string
+	db *gorm.DB
 }
 
 var (
@@ -35,27 +34,23 @@ var (
 	ErrEmptyContent     = errors.New("session: message content cannot be empty")
 )
 
-// New creates a Service backed by db. When defaultProject is provided, new
-// and replacement sessions with no explicit Project bind to it.
-func New(db *gorm.DB, defaultProject ...string) *Service {
-	svc := &Service{db: db}
-	if len(defaultProject) > 0 {
-		svc.defaultProject = defaultProject[0]
-	}
-	return svc
-}
+// New creates a Service backed by db.
+func New(db *gorm.DB) *Service { return &Service{db: db} }
 
 // CreateFromConcierge creates a new Session whose initial Settings are a
 // snapshot of concierge's identity/impressions/tool groups/plugins.
-func (s *Service) CreateFromConcierge(concierge registry.Concierge) (*store.Session, error) {
-	return s.Create(concierge.Name, SettingsFromConcierge(concierge))
+func (s *Service) CreateFromConcierge(concierge registry.Concierge, projectID uint) (*store.Session, error) {
+	return s.Create(concierge.Name, SettingsFromConcierge(concierge), projectID)
 }
 
 // Create makes a new session from an explicit settings snapshot.
-func (s *Service) Create(sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
-	settings = s.withDefaultProject(settings)
+func (s *Service) Create(sourceConcierge string, settings store.SessionSettings, projectID uint) (*store.Session, error) {
+	if projectID == 0 {
+		return nil, fmt.Errorf("session: project id is required")
+	}
 	sess := &store.Session{
 		SourceConcierge: sourceConcierge,
+		ProjectID:       projectID,
 		Settings:        datatypes.NewJSONType(settings),
 	}
 	if err := s.db.Create(sess).Error; err != nil {
@@ -279,10 +274,14 @@ func hasToolCalls(raw datatypes.JSON) bool {
 
 // Replace archives sessionID and creates its replacement in one transaction.
 func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
-	settings = s.withDefaultProject(settings)
 	next := &store.Session{SourceConcierge: sourceConcierge, Settings: datatypes.NewJSONType(settings)}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&store.Session{}).Where("id = ?", sessionID).Update("flag_archived", true).Error; err != nil {
+		var previous store.Session
+		if err := tx.First(&previous, sessionID).Error; err != nil {
+			return err
+		}
+		next.ProjectID = previous.ProjectID
+		if err := tx.Model(&previous).Update("flag_archived", true).Error; err != nil {
 			return err
 		}
 		return tx.Create(next).Error
@@ -292,34 +291,32 @@ func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store
 	return next, nil
 }
 
-// BindUnscopedSessions attaches the default Project to sessions created
-// before one was configured. It is intended to run during startup.
-func (s *Service) BindUnscopedSessions() error {
-	if s.defaultProject == "" {
-		return nil
+// BindUnscopedSessions assigns ProjectID to sessions created before projects
+// were a required database-level relationship. It is intended to run at startup.
+func BindUnscopedSessions(db *gorm.DB, defaultProjectID uint) error {
+	if defaultProjectID == 0 {
+		return fmt.Errorf("session: default project id is required")
 	}
 	var sessions []store.Session
-	if err := s.db.Find(&sessions).Error; err != nil {
+	if err := db.Where("project_id = ?", 0).Find(&sessions).Error; err != nil {
 		return fmt.Errorf("session: list sessions for default project: %w", err)
 	}
 	for index := range sessions {
 		settings := sessions[index].Settings.Data()
+		projectID := defaultProjectID
 		if settings.Project != "" {
-			continue
+			var project store.Project
+			if err := db.Where("name = ?", settings.Project).First(&project).Error; err == nil {
+				projectID = project.ID
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("session: load legacy project %q: %w", settings.Project, err)
+			}
 		}
-		settings.Project = s.defaultProject
-		if err := s.db.Model(&sessions[index]).Update("settings", datatypes.NewJSONType(settings)).Error; err != nil {
+		if err := db.Model(&sessions[index]).Update("project_id", projectID).Error; err != nil {
 			return fmt.Errorf("session: bind default project to %d: %w", sessions[index].ID, err)
 		}
 	}
 	return nil
-}
-
-func (s *Service) withDefaultProject(settings store.SessionSettings) store.SessionSettings {
-	if settings.Project == "" {
-		settings.Project = s.defaultProject
-	}
-	return settings
 }
 
 // Messages returns every ChatMessage of sessionID in ascending id order.

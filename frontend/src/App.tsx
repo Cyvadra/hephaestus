@@ -4,6 +4,7 @@ import ChatView from './components/ChatView'
 import type { ConciergeItem, Session } from './api/types'
 
 export default function App() {
+  const [project, setProject] = useState<string | null>(() => localStorage.getItem('hephaestus.activeProject'))
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [draftConcierge, setDraftConcierge] = useState<ConciergeItem | null>(null)
   const [isChoosingConcierge, setIsChoosingConcierge] = useState(false)
@@ -28,6 +29,22 @@ export default function App() {
     setIsChoosingConcierge(true)
   }, [])
 
+  const handleProjectChange = useCallback((nextProject: string) => {
+    localStorage.setItem('hephaestus.activeProject', nextProject)
+    setProject(nextProject)
+    setSessionId(null)
+    setDraftConcierge(null)
+    setIsChoosingConcierge(false)
+  }, [])
+
+  const handleProjectsLoaded = useCallback((defaultProject: string) => {
+    setProject(current => {
+      if (current != null) return current
+      localStorage.setItem('hephaestus.activeProject', defaultProject)
+      return defaultProject
+    })
+  }, [])
+
   const handleSessionCreated = useCallback((id: number) => {
     setSessionId(id)
     setDraftConcierge(null)
@@ -46,6 +63,9 @@ export default function App() {
         refreshKey={sidebarRefreshKey}
         draftConcierge={draftConcierge}
         sessionUpdate={sidebarSessionUpdate}
+        project={project}
+        onProjectChange={handleProjectChange}
+        onProjectsLoaded={handleProjectsLoaded}
         onSelect={handleSessionSelect}
         onOpenNewSession={handleOpenNewSession}
       />
@@ -58,6 +78,7 @@ export default function App() {
             onChooseConcierge={handleStartDraft}
             onSessionCreated={handleSessionCreated}
             onSessionUpdated={handleSessionUpdated}
+            project={project}
           />
         ) : (
           <section className="chat-surface">

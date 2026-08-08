@@ -148,7 +148,7 @@ const helpText = `Available commands:
 /status - session info, context usage, recent warnings
 /list <kind> - list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)
 /detail <kind> <id> - show details of one option
-/switch <identity|concierge|project> <#id|name> - switch
+/switch <identity|concierge> <#id|name> - switch
 /activate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - enable
 /deactivate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - disable
 /clear - archive this session and start a fresh one with the same settings
@@ -286,11 +286,11 @@ func (s *Service) status(sessionID uint) (string, error) {
 	fmt.Fprintf(&b, "impressions: %s\n", strings.Join(settings.Impressions, ", "))
 	fmt.Fprintf(&b, "tool_groups: %s\n", strings.Join(settings.ToolGroups, ", "))
 	fmt.Fprintf(&b, "plugins: %s\n", strings.Join(settings.Plugins, ", "))
-	if settings.Project != "" {
-		fmt.Fprintf(&b, "project: %s\n", settings.Project)
-	} else {
-		b.WriteString("project: (none)\n")
+	boundProject, err := s.projects.Get(sess.ProjectID)
+	if err != nil {
+		return "", err
 	}
+	fmt.Fprintf(&b, "project: %s\n", boundProject.Name)
 	fmt.Fprintf(&b, "context usage (estimated units): %d\n", total)
 	if sess.CompressionID != nil {
 		fmt.Fprintf(&b, "compression: #%d (up to message %d)\n", *sess.CompressionID, *sess.CompressionLastMessageID)
@@ -398,27 +398,12 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 		}
 		c := s.reg.Concierges[name]
 		nextSettings := session.SettingsFromConcierge(c)
-		nextSettings.Project = settings.Project
 		settings = nextSettings
 		sess.SourceConcierge = c.Name
 		if err := s.saveSettings(sess, settings); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Switched to concierge %q (identity now %q).", name, c.Identity), nil
-
-	case KindProject:
-		name, err := s.resolveName(sessionID, KindProject, target)
-		if err != nil {
-			return "", err
-		}
-		if err := validateKindName(s, KindProject, name); err != nil {
-			return "", err
-		}
-		settings.Project = name
-		if err := s.saveSettings(sess, settings); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Switched project to %q.", name), nil
 
 	default:
 		return "", fmt.Errorf("command: /switch does not support kind %q", kind)

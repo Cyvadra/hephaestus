@@ -1,4 +1,4 @@
-import type { ConciergeItem, HistoryResponse, SendMessageResponse, Session } from './types'
+import type { ConciergeItem, HistoryResponse, Project, SendMessageResponse, Session } from './types'
 
 const BASE = '/api/v1'
 
@@ -11,17 +11,29 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export const listSessions = () =>
-  fetchJSON<Session[]>(`${BASE}/sessions`)
+export const listSessions = (project?: string) => {
+  const query = project ? `?project=${encodeURIComponent(project)}` : ''
+  return fetchJSON<Session[]>(`${BASE}/sessions${query}`)
+}
+
+export const listProjects = () =>
+  fetchJSON<Project[]>(`${BASE}/projects`)
+
+export const createProject = (name: string, description: string) =>
+  fetchJSON<Project>(`${BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description }),
+  })
 
 export const listConcierges = () =>
   fetchJSON<ConciergeItem[]>(`${BASE}/concierges`)
 
-export const createSession = (concierge: string) =>
+export const createSession = (concierge: string, project: string) =>
   fetchJSON<Session>(`${BASE}/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ concierge }),
+    body: JSON.stringify({ concierge, project }),
   })
 
 export const updateSession = (sessionId: number, changes: { title?: string; archived?: boolean; pinned?: boolean }) =>

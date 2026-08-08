@@ -55,12 +55,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("project: %v", err)
 	}
-	if _, err := projects.EnsureDefault(); err != nil {
+	defaultProject, err := projects.EnsureDefault()
+	if err != nil {
 		log.Fatalf("project: ensure default: %v", err)
 	}
 	llmClient := llm.New(cfg.DeepSeekAPIKey)
-	sessions := session.New(db, project.DefaultName)
-	if err := sessions.BindUnscopedSessions(); err != nil {
+	sessions := session.New(db)
+	if err := session.BindUnscopedSessions(db, defaultProject.ID); err != nil {
 		log.Fatalf("session: bind default project: %v", err)
 	}
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
@@ -73,7 +74,15 @@ func main() {
 	toolReg.Register(tools.NewEditFileTool(fileAccess))
 	toolReg.Register(tools.NewAppendFileTool(fileAccess))
 	toolReg.Register(tools.NewListDirTool(fileAccess))
-	toolReg.Register(tools.NewWebFetchTool(0, 0))
+	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
+		Provider:        cfg.WebFetchProvider,
+		FirecrawlAPIKey: cfg.FirecrawlAPIKey,
+		ChromePath:      cfg.WebFetchChromePath,
+	})
+	if err != nil {
+		log.Fatalf("web fetch: %v", err)
+	}
+	toolReg.Register(webFetch)
 	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL})
 	toolReg.Register(webSearch)
 	execTool := tools.NewExecToolWithAccess(cfg.ExecEnabled, 0, fileAccess)
@@ -101,7 +110,7 @@ func main() {
 	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects)
 	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects)
 
-	srv := server.New(db, reg, sessions, pipeline, commands)
+	srv := server.New(db, reg, sessions, pipeline, commands, projects)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {

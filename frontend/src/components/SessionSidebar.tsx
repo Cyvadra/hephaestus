@@ -2,17 +2,21 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Archive, ChevronRight, MoreHorizontal, Pencil, Pin, Plus, Settings, Trash2 } from 'lucide-react'
 import { deleteSession, listSessions, updateSession } from '../api/client'
 import type { Session, ConciergeItem } from '../api/types'
+import ProjectSwitcher from './ProjectSwitcher'
 
 interface Props {
   activeSessionId: number | null
   refreshKey: number
   draftConcierge: ConciergeItem | null
   sessionUpdate: Session | null
+  project: string | null
+  onProjectChange: (project: string) => void
+  onProjectsLoaded: (defaultProject: string) => void
   onSelect: (id: number) => void
   onOpenNewSession: () => void
 }
 
-export default function SessionSidebar({ activeSessionId, refreshKey, draftConcierge, sessionUpdate, onSelect, onOpenNewSession }: Props) {
+export default function SessionSidebar({ activeSessionId, refreshKey, draftConcierge, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [menuSessionId, setMenuSessionId] = useState<number | null>(null)
   const [renamingId, setRenamingId] = useState<number | null>(null)
@@ -20,8 +24,8 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
   const [archivedExpanded, setArchivedExpanded] = useState(false)
 
   const reload = useCallback(async () => {
-    setSessions(await listSessions())
-  }, [])
+    if (project != null) setSessions(await listSessions(project))
+  }, [project])
 
   useEffect(() => {
     void reload()
@@ -97,6 +101,7 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
         <img src="/deepseek-logo.svg" alt="DeepSeek" />
         <span>DeepSeek</span>
       </div>
+      <ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />
       <button
         className="sidebar-new-btn"
         onClick={onOpenNewSession}

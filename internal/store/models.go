@@ -9,6 +9,8 @@ import (
 	"gorm.io/datatypes"
 )
 
+const DefaultProjectName = "default-workspace"
+
 // SessionSettings is the mutable, per-session snapshot of which identity,
 // impressions, tool groups and plugins are active. It starts as a copy of
 // the source Concierge and may diverge from it over the session's lifetime.
@@ -18,15 +20,15 @@ type SessionSettings struct {
 	ToolGroups  []string `json:"tool_groups"`
 	Plugins     []string `json:"plugins"`
 
-	// Project is the bound Project's Name. File/exec tools resolve their
-	// workspace root from it. New sessions default to default-workspace and
-	// can switch to another runtime-created Project via /switch.
+	// Project is retained only to migrate legacy sessions to Session.ProjectID.
 	Project string `json:"project"`
 }
 
 // Session is a real, addressable conversation.
 type Session struct {
-	ID uint `gorm:"primaryKey;autoIncrement"`
+	ID        uint    `gorm:"primaryKey;autoIncrement"`
+	ProjectID uint    `gorm:"not null;index"`
+	Project   Project `gorm:"foreignKey:ProjectID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
 
 	// SourceConcierge is the Concierge name used at creation time, kept
 	// for reference only; it has no further business influence.

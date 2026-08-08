@@ -1,14 +1,16 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 
+	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// Open connects to Postgres and runs AutoMigrate for every runtime model.
+// Open connects to Postgres and migrates every runtime model.
 func Open(dsn string) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
@@ -17,9 +19,94 @@ func Open(dsn string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("store: connect postgres: %w", err)
 	}
 
-	if err := db.AutoMigrate(&Session{}, &ChatMessage{}, &Compression{}, &PluginState{}, &Project{}, &ToolAudit{}); err != nil {
+	if err := db.AutoMigrate(&Project{}, &ChatMessage{}, &Compression{}, &PluginState{}, &ToolAudit{}); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
+	}
+	defaultProject, err := ensureDefaultProject(db)
+	if err != nil {
+		return nil, err
+	}
+	if err := migrateSessions(db, defaultProject.ID); err != nil {
+		return nil, err
 	}
 
 	return db, nil
+}
+
+func ensureDefaultProject(db *gorm.DB) (*Project, error) {
+	var project Project
+	err := db.Where("name = ?", DefaultProjectName).First(&project).Error
+	if err == nil {
+		return &project, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("store: load default project: %w", err)
+	}
+	project = Project{
+		Name:        DefaultProjectName,
+		Description: "System default workspace for agent file operations.",
+	}
+	if err := db.Create(&project).Error; err != nil {
+		return nil, fmt.Errorf("store: create default project: %w", err)
+	}
+	return &project, nil
+}
+
+// legacySessionProjectID maps to sessions while allowing the new column to
+// remain nullable until existing rows have been assigned a Project.
+type legacySessionProjectID struct {
+	ProjectID *uint `gorm:"column:project_id"`
+}
+
+func (legacySessionProjectID) TableName() string { return "sessions" }
+
+type legacySession struct {
+	ID        uint
+	ProjectID *uint
+	Settings  datatypes.JSONType[SessionSettings] `gorm:"type:jsonb"`
+}
+
+func (legacySession) TableName() string { return "sessions" }
+
+func migrateSessions(db *gorm.DB, defaultProjectID uint) error {
+	if !db.Migrator().HasTable(&Session{}) {
+		if err := db.AutoMigrate(&Session{}); err != nil {
+			return fmt.Errorf("store: create sessions table: %w", err)
+		}
+		return nil
+	}
+	if !db.Migrator().HasColumn(&Session{}, "ProjectID") {
+		if err := db.Migrator().AddColumn(&legacySessionProjectID{}, "ProjectID"); err != nil {
+			return fmt.Errorf("store: add nullable sessions.project_id: %w", err)
+		}
+	}
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		var sessions []legacySession
+		if err := tx.Where("project_id IS NULL").Find(&sessions).Error; err != nil {
+			return fmt.Errorf("list legacy sessions: %w", err)
+		}
+		for _, sess := range sessions {
+			projectID := defaultProjectID
+			legacyProject := sess.Settings.Data().Project
+			if legacyProject != "" {
+				var project Project
+				if err := tx.Where("name = ?", legacyProject).First(&project).Error; err == nil {
+					projectID = project.ID
+				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("load legacy project %q: %w", legacyProject, err)
+				}
+			}
+			if err := tx.Model(&legacySession{}).Where("id = ?", sess.ID).Update("project_id", projectID).Error; err != nil {
+				return fmt.Errorf("bind project for session %d: %w", sess.ID, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := db.AutoMigrate(&Session{}); err != nil {
+		return fmt.Errorf("store: finalize sessions migration: %w", err)
+	}
+	return nil
 }

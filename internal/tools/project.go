@@ -59,8 +59,8 @@ func (t CreateProjectTool) Execute(_ context.Context, args map[string]any) *tool
 		return toolkit.ErrorResult(fmt.Sprintf("create_project: %s", err))
 	}
 	return toolkit.NewToolResult(fmt.Sprintf(
-		"Created project %q (id %d). The user can bind a session to it with /switch project %s.",
-		p.Name, p.ID, p.Name,
+		"Created project %q (id %d). Start a new session in it to use its workspace.",
+		p.Name, p.ID,
 	))
 }
 

@@ -10,6 +10,7 @@ export interface SessionSettings {
 
 export interface Session {
   ID: number
+  ProjectID: number
   SourceConcierge: string
   Settings: { Data: SessionSettings }
   Title: string
@@ -21,6 +22,14 @@ export interface Session {
   FlagPinned: number
   CreatedAt: string
   UpdatedAt: string
+}
+
+export interface Project {
+  ID: number
+  Name: string
+  Description: string
+  CreatedAt: string
+  is_default: boolean
 }
 
 export interface ChatMessage {

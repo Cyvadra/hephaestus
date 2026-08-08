@@ -34,7 +34,7 @@ func NewChatHistorySearchTool(db *gorm.DB, sessions *session.Service) *ChatHisto
 
 func (ChatHistorySearchTool) Name() string { return "chat_history_search" }
 func (ChatHistorySearchTool) Description() string {
-	return "Searches this session's (or, if scope=all, every session's) active chat history " +
+	return "Searches this session's (or, if scope=all, every session in the same Project's) active chat history " +
 		"by keyword and/or regex, returning matched messages with surrounding context."
 }
 
@@ -58,7 +58,7 @@ func (ChatHistorySearchTool) Parameters() map[string]any {
 			"scope": map[string]any{
 				"type":        "string",
 				"enum":        []string{"session", "all"},
-				"description": "'session' (default) searches only the calling session; 'all' searches every non-archived session, most recently active first.",
+				"description": "'session' (default) searches only the calling session; 'all' searches every non-archived session in the same Project, most recently active first.",
 			},
 		},
 	}
@@ -170,25 +170,24 @@ func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, erro
 }
 
 func (t ChatHistorySearchTool) targetSessions(ctx context.Context, scope string) ([]store.Session, error) {
+	sessionID, ok := toolkit.SessionIDFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("no session in context")
+	}
+	var caller store.Session
+	if err := t.db.First(&caller, sessionID).Error; err != nil {
+		return nil, fmt.Errorf("load session %d: %w", sessionID, err)
+	}
 	if scope == "all" {
 		var sessions []store.Session
-		if err := t.db.Where("flag_archived = ?", false).
+		if err := t.db.Where("flag_archived = ? AND project_id = ?", false, caller.ProjectID).
 			Order("updated_at DESC").
 			Find(&sessions).Error; err != nil {
 			return nil, fmt.Errorf("list sessions: %w", err)
 		}
 		return sessions, nil
 	}
-
-	sessionID, ok := toolkit.SessionIDFromContext(ctx)
-	if !ok {
-		return nil, fmt.Errorf("no session in context for scope=session")
-	}
-	var sess store.Session
-	if err := t.db.First(&sess, sessionID).Error; err != nil {
-		return nil, fmt.Errorf("load session %d: %w", sessionID, err)
-	}
-	return []store.Session{sess}, nil
+	return []store.Session{caller}, nil
 }
 
 // matchedIndices returns the indices of messages in path that match the
