@@ -68,12 +68,6 @@ func main() {
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
-	toolReg.Register(tools.NewReadFileTool(fileAccess))
-	toolReg.Register(tools.NewReadFileLinesTool(fileAccess))
-	toolReg.Register(tools.NewWriteFileTool(fileAccess))
-	toolReg.Register(tools.NewEditFileTool(fileAccess))
-	toolReg.Register(tools.NewAppendFileTool(fileAccess))
-	toolReg.Register(tools.NewListDirTool(fileAccess))
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
 		Provider:        cfg.WebFetchProvider,
 		FirecrawlAPIKey: cfg.FirecrawlAPIKey,

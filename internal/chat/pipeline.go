@@ -647,11 +647,8 @@ func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools
 }
 
 var auditedTools = map[string]bool{
-	"append_file":    true,
 	"create_project": true,
-	"edit_file":      true,
 	"exec":           true,
-	"write_file":     true,
 }
 
 func (p *Pipeline) beginToolAudit(sessionID uint, tc ds4.ToolCall, args map[string]any) uint {
