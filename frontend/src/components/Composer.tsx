@@ -14,9 +14,9 @@ interface Props {
 }
 
 const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
-  { value: 'none', label: '无' },
-  { value: 'high', label: '快速' },
   { value: 'max', label: '深度' },
+  { value: 'high', label: '快速' },
+  { value: 'none', label: '即答' },
 ]
 
 export default function Composer({ onSend, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange }: Props) {
