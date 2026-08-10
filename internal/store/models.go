@@ -108,7 +108,7 @@ type Compression struct {
 
 // Project is a named, on-disk folder the Agent may create (gated behind an
 // opt-in ToolGroup so creation only happens with the user's explicit
-// authorization) to scope file/exec tools and take memory-retrieval
+// authorization) to scope file/shell tools and take memory-retrieval
 // priority over raw chat history. Its directory lives under the process's
 // projects root and is named after it, with a skeleton AGENTS.md inside.
 type Project struct {

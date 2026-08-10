@@ -32,8 +32,8 @@ type Config struct {
 	// ProjectAccessOverride allows filesystem tools to access paths outside
 	// the bound Project and the system temporary directory.
 	ProjectAccessOverride bool
-	// ExecEnabled defaults to false.
-	ExecEnabled              bool
+	// ShellEnabled defaults to false.
+	ShellEnabled             bool
 	WebFetchProvider         string
 	FirecrawlAPIKey          string
 	WebFetchChromePath       string
@@ -65,7 +65,7 @@ func Load() (*Config, error) {
 		ListenAddr:               getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
 		ProjectsRoot:             projectsRoot,
 		ProjectAccessOverride:    getenvBool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
-		ExecEnabled:              getenvBool("HEPHAESTUS_EXEC_ENABLED"),
+		ShellEnabled:             getenvBool("HEPHAESTUS_SHELL_ENABLED"),
 		WebFetchProvider:         strings.ToLower(strings.TrimSpace(getenvDefault("HEPHAESTUS_WEB_FETCH_PROVIDER", "firecrawl"))),
 		FirecrawlAPIKey:          strings.TrimSpace(os.Getenv("HEPHAESTUS_FIRECRAWL_API_KEY")),
 		WebFetchChromePath:       strings.TrimSpace(os.Getenv("HEPHAESTUS_WEB_FETCH_CHROME_PATH")),

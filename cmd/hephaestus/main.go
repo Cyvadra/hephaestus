@@ -18,6 +18,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/bootstrap"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
@@ -45,7 +46,6 @@ func main() {
 	notifier := notify.New(cfg.WeComWebhookURL)
 
 	toolReg := toolkit.NewRegistry()
-	tools.RegisterPlaceholderTools(toolReg)
 
 	db, err := store.Open(cfg.PostgresDSN)
 	if err != nil {
@@ -68,6 +68,7 @@ func main() {
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
+	interactions := interaction.NewManager()
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
 		Provider:        cfg.WebFetchProvider,
 		FirecrawlAPIKey: cfg.FirecrawlAPIKey,
@@ -82,8 +83,9 @@ func main() {
 	toolReg.Register(webFetch)
 	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars})
 	toolReg.Register(webSearch)
-	execTool := tools.NewExecToolWithAccess(cfg.ExecEnabled, 0, fileAccess)
-	toolReg.Register(execTool)
+	shellTool := tools.NewShellToolWithAccess(cfg.ShellEnabled, 0, fileAccess)
+	shellTool.SetInteractionManager(interactions)
+	toolReg.Register(shellTool)
 
 	pluginReg := plugin.NewRegistry(notifier)
 	pluginReg.Register(builtin.NewSessionSummaryPlugin(db, llmClient, 5*time.Minute))
@@ -104,16 +106,14 @@ func main() {
 		log.Printf("registry: loaded %d workflow(s) and %d job(s); no scheduler is implemented yet, so they will not run", len(reg.Workflows), len(reg.Jobs))
 	}
 
-	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects)
-	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects)
+	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects, interactions)
+	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
 
 	srv := server.New(db, reg, sessions, pipeline, commands, projects)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {
-		execTool.Shutdown()
 		log.Printf("server: %v", err)
 		return
 	}
-	execTool.Shutdown()
 }

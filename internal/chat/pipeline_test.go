@@ -43,7 +43,7 @@ func TestLastUserMessage_RejectsEmpty(t *testing.T) {
 func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	pipeline := &Pipeline{}
 	result := pipeline.executeTool(context.Background(), 1, map[string]toolkit.Tool{}, ds4.ToolCall{
-		Function: ds4.FunctionCall{Name: "echo"},
+		Function: ds4.FunctionCall{Name: "shell"},
 	})
 	if !result.IsError {
 		t.Fatal("expected disabled tool to be rejected")
@@ -88,7 +88,7 @@ func TestStreamToolCall_JSONIncludesStableIdentityAndStatus(t *testing.T) {
 		CallIndex: 2,
 		Index:     1,
 		ID:        "call-123",
-		Name:      "current_time",
+		Name:      "shell",
 		Arguments: `{}`,
 		Status:    "calling",
 	}
@@ -105,7 +105,7 @@ func TestStreamToolCall_JSONIncludesStableIdentityAndStatus(t *testing.T) {
 	if got["call_index"] != float64(2) || got["index"] != float64(1) {
 		t.Fatalf("expected stable call identity, got %s", data)
 	}
-	if got["name"] != "current_time" || got["status"] != "calling" {
+	if got["name"] != "shell" || got["status"] != "calling" {
 		t.Fatalf("expected tool name and status, got %s", data)
 	}
 }

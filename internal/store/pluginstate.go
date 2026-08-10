@@ -12,12 +12,12 @@ import (
 // out. It returns (false, nil) if no state has been saved yet.
 func LoadPluginState(db *gorm.DB, sessionID uint, pluginName string, out any) (bool, error) {
 	var row PluginState
-	err := db.Where("session_id = ? AND plugin_name = ?", sessionID, pluginName).First(&row).Error
-	if err == gorm.ErrRecordNotFound {
-		return false, nil
+	result := db.Where("session_id = ? AND plugin_name = ?", sessionID, pluginName).Limit(1).Find(&row)
+	if result.Error != nil {
+		return false, fmt.Errorf("store: load plugin state (session=%d, plugin=%s): %w", sessionID, pluginName, result.Error)
 	}
-	if err != nil {
-		return false, fmt.Errorf("store: load plugin state (session=%d, plugin=%s): %w", sessionID, pluginName, err)
+	if result.RowsAffected == 0 {
+		return false, nil
 	}
 	if err := json.Unmarshal(row.Data, out); err != nil {
 		return false, fmt.Errorf("store: unmarshal plugin state (session=%d, plugin=%s): %w", sessionID, pluginName, err)

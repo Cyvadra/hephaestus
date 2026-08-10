@@ -6,12 +6,14 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/project"
@@ -43,13 +45,14 @@ const (
 // Service dispatches slash commands against the platform's static registry
 // and runtime store.
 type Service struct {
-	reg       *registry.Registry
-	toolReg   *toolkit.Registry
-	pluginReg *plugin.Registry
-	sessions  *session.Service
-	notifier  *notify.Notifier
-	db        *gorm.DB
-	projects  *project.Service
+	reg          *registry.Registry
+	toolReg      *toolkit.Registry
+	pluginReg    *plugin.Registry
+	sessions     *session.Service
+	notifier     *notify.Notifier
+	db           *gorm.DB
+	projects     *project.Service
+	interactions *interaction.Manager
 
 	mu       sync.Mutex
 	lastList map[uint]map[Kind][]string
@@ -63,17 +66,18 @@ type cancelRegistration struct {
 }
 
 // NewService wires the command dispatcher to its dependencies.
-func NewService(reg *registry.Registry, toolReg *toolkit.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service) *Service {
+func NewService(reg *registry.Registry, toolReg *toolkit.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service, interactions *interaction.Manager) *Service {
 	return &Service{
-		reg:       reg,
-		toolReg:   toolReg,
-		pluginReg: pluginReg,
-		sessions:  sessions,
-		notifier:  notifier,
-		db:        db,
-		projects:  projects,
-		lastList:  map[uint]map[Kind][]string{},
-		cancels:   map[uint]cancelRegistration{},
+		reg:          reg,
+		toolReg:      toolReg,
+		pluginReg:    pluginReg,
+		sessions:     sessions,
+		notifier:     notifier,
+		db:           db,
+		projects:     projects,
+		interactions: interactions,
+		lastList:     map[uint]map[Kind][]string{},
+		cancels:      map[uint]cancelRegistration{},
 	}
 }
 
@@ -136,9 +140,30 @@ func (s *Service) Execute(sessionID uint, text string) (string, error) {
 		return s.clear(sessionID)
 	case "/new":
 		return s.new(sessionID)
+	case "/interact":
+		return s.interact(sessionID, args)
 	default:
 		return "", fmt.Errorf("command: unknown command %q", name)
 	}
+}
+
+func (s *Service) interact(sessionID uint, args []string) (string, error) {
+	if len(args) != 1 || (args[0] != "approve" && args[0] != "deny") {
+		return "", fmt.Errorf("command: usage: /interact <approve|deny>")
+	}
+	if s.interactions == nil {
+		return "", fmt.Errorf("command: interactions are not configured")
+	}
+	if err := s.interactions.Respond(sessionID, args[0] == "approve"); err != nil {
+		if errors.Is(err, interaction.ErrNoPending) {
+			return "", fmt.Errorf("command: no interaction is awaiting a response")
+		}
+		return "", err
+	}
+	if args[0] == "approve" {
+		return "Permission approved. Continuing the task.", nil
+	}
+	return "Permission denied. The requested operation will not run.", nil
 }
 
 const helpText = `Available commands:
@@ -152,7 +177,8 @@ const helpText = `Available commands:
 /activate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - enable
 /deactivate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - disable
 /clear - archive this session and start a fresh one with the same settings
-/new - archive this session and start a fresh one from its source concierge`
+/new - archive this session and start a fresh one from its source concierge
+/interact <approve|deny> - respond to a pending runtime request`
 
 // kindDescriptor bundles the per-Kind lookups /list and /detail need, so
 // adding a new Kind means adding one table entry instead of extending two

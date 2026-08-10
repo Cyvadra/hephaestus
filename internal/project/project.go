@@ -1,6 +1,6 @@
 // Package project implements Project: a named, on-disk folder the Agent
 // may create (gated behind an opt-in ToolGroup, so creation only happens
-// with the user's explicit authorization) to scope file/exec tools and
+// with the user's explicit authorization) to scope file/shell tools and
 // take memory-retrieval priority over raw chat history.
 package project
 

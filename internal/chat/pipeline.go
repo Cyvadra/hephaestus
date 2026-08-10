@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
@@ -35,14 +36,15 @@ const (
 
 // Pipeline runs turns for sessions.
 type Pipeline struct {
-	db       *gorm.DB
-	reg      *registry.Registry
-	toolReg  *toolkit.Registry
-	plugins  *plugin.Registry
-	llm      *llm.Client
-	sessions *session.Service
-	notify   *notify.Notifier
-	projects *project.Service
+	db           *gorm.DB
+	reg          *registry.Registry
+	toolReg      *toolkit.Registry
+	plugins      *plugin.Registry
+	llm          *llm.Client
+	sessions     *session.Service
+	notify       *notify.Notifier
+	projects     *project.Service
+	interactions *interaction.Manager
 }
 
 // NewPipeline wires together every dependency a turn needs.
@@ -55,16 +57,18 @@ func NewPipeline(
 	sessions *session.Service,
 	notifier *notify.Notifier,
 	projects *project.Service,
+	interactions *interaction.Manager,
 ) *Pipeline {
 	return &Pipeline{
-		db:       db,
-		reg:      reg,
-		toolReg:  toolReg,
-		plugins:  plugins,
-		llm:      llmClient,
-		sessions: sessions,
-		notify:   notifier,
-		projects: projects,
+		db:           db,
+		reg:          reg,
+		toolReg:      toolReg,
+		plugins:      plugins,
+		llm:          llmClient,
+		sessions:     sessions,
+		notify:       notifier,
+		projects:     projects,
+		interactions: interactions,
 	}
 }
 
@@ -78,10 +82,11 @@ type TurnResult struct {
 
 // StreamEvent is one user-visible progress update emitted during a turn.
 type StreamEvent struct {
-	Type     string
-	Text     string
-	ToolCall *StreamToolCall
-	Session  *store.Session
+	Type        string
+	Text        string
+	ToolCall    *StreamToolCall
+	Session     *store.Session
+	Interaction *interaction.Request
 }
 
 // StreamToolCall identifies one tool invocation across incremental updates.
@@ -174,6 +179,17 @@ type TurnOptions struct {
 	OnDelta      func(StreamEvent)
 }
 
+type interactionReporterKey struct{}
+
+func withInteractionReporter(ctx context.Context, report func(*interaction.Request)) context.Context {
+	return context.WithValue(ctx, interactionReporterKey{}, report)
+}
+
+func interactionReporterFromContext(ctx context.Context) func(*interaction.Request) {
+	report, _ := ctx.Value(interactionReporterKey{}).(func(*interaction.Request))
+	return report
+}
+
 // Run processes one incoming user message for sessionID: it assembles
 // context (identity, impressions, compression, active-path history), calls
 // the LLM (running the tool loop as needed), and persists the resulting
@@ -187,6 +203,11 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 }
 
 func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, expectedLeaf *uint, onDelta func(StreamEvent)) (*TurnResult, error) {
+	if onDelta != nil {
+		ctx = withInteractionReporter(ctx, func(request *interaction.Request) {
+			onDelta(StreamEvent{Type: interaction.EventAskPermission, Interaction: request})
+		})
+	}
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -287,6 +308,11 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 }
 
 func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
+	if onDelta != nil {
+		ctx = withInteractionReporter(ctx, func(request *interaction.Request) {
+			onDelta(StreamEvent{Type: interaction.EventAskPermission, Interaction: request})
+		})
+	}
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -641,14 +667,24 @@ func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools
 	}
 
 	auditID := p.beginToolAudit(sessionID, tc, args)
-	result := toolkit.RunTool(toolkit.WithSessionID(ctx, sessionID), t, args)
+	toolCtx := toolkit.WithSessionID(ctx, sessionID)
+	if p.interactions != nil {
+		toolCtx = interaction.WithReporter(toolCtx, func(event interaction.Event) {
+			if event.Type == interaction.EventAskPermission {
+				if report := interactionReporterFromContext(ctx); report != nil {
+					report(&event.Request)
+				}
+			}
+		})
+	}
+	result := toolkit.RunTool(toolCtx, t, args)
 	p.finishToolAudit(auditID, result)
 	return result
 }
 
 var auditedTools = map[string]bool{
 	"create_project": true,
-	"exec":           true,
+	"shell":          true,
 }
 
 func (p *Pipeline) beginToolAudit(sessionID uint, tc ds4.ToolCall, args map[string]any) uint {

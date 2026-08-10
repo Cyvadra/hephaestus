@@ -390,7 +390,9 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 		if !ok {
 			return false
 		}
-		if delta.Session != nil {
+		if delta.Interaction != nil {
+			streamEvent(delta.Type, delta.Interaction)
+		} else if delta.Session != nil {
 			streamEvent(delta.Type, delta.Session)
 		} else if delta.ToolCall != nil {
 			streamEvent(delta.Type, delta.ToolCall)
@@ -556,22 +558,26 @@ func (s *Server) updateSession(c *gin.Context) {
 	if req.Archived != nil {
 		changes["flag_archived"] = *req.Archived
 	}
-	if req.Pinned != nil {
-		if *req.Pinned {
-			changes["flag_pinned"] = uint8(1)
-		} else {
-			changes["flag_pinned"] = uint8(0)
-		}
-	}
-
 	var sess store.Session
 	if err := s.db.First(&sess, sessionID).Error; err != nil {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
-	if err := s.db.Model(&sess).Updates(changes).Error; err != nil {
-		internalError(c, err)
-		return
+	if len(changes) > 0 {
+		if err := s.db.Model(&sess).Updates(changes).Error; err != nil {
+			internalError(c, err)
+			return
+		}
+	}
+	if req.Pinned != nil {
+		pinned := uint8(0)
+		if *req.Pinned {
+			pinned = 1
+		}
+		if err := s.db.Model(&sess).UpdateColumn("flag_pinned", pinned).Error; err != nil {
+			internalError(c, err)
+			return
+		}
 	}
 	if err := s.db.First(&sess, sessionID).Error; err != nil {
 		internalError(c, err)

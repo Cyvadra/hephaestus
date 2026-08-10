@@ -37,7 +37,7 @@ content = "remember this"
 	writeFile(t, dir, "toolgroup-basic.yaml", `
 name: basic
 tools:
-  - echo
+  - shell
 `)
 	writeFile(t, dir, "concierge-coding.yaml", `
 name: coding
@@ -90,7 +90,7 @@ max_executions_per_day: 1
 		t.Error("expected job 'morning-brief' to be loaded")
 	}
 
-	if err := reg.Validate(map[string]bool{"echo": true}, map[string]bool{}); err != nil {
+	if err := reg.Validate(map[string]bool{"shell": true}, map[string]bool{}); err != nil {
 		t.Errorf("Validate: unexpected error: %v", err)
 	}
 }
@@ -102,9 +102,9 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 	}
 
 	knownTools := map[string]bool{
-		"echo": true, "current_time": true, "chat_history_search": true,
-		"create_project": true, "list_projects": true,
-		"web_fetch": true, "web_search": true, "exec": true,
+		"chat_history_search": true,
+		"create_project":      true, "list_projects": true,
+		"web_fetch": true, "web_search": true, "shell": true,
 	}
 	if err := reg.Validate(knownTools, map[string]bool{}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)
