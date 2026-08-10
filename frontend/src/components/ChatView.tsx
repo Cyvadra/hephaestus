@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ConciergeItem, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from '../api/types'
+import type { ChatMessage, ConciergeItem, InteractionRequest, SendMessageResponse, Session, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
+import { pendingAttachmentPrefix } from '../lib/attachments'
 
 interface Props {
   sessionId: number | null
@@ -83,6 +84,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [uploadWarnings, setUploadWarnings] = useState<string[]>([])
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const messagesPaneRef = useRef<HTMLDivElement>(null)
@@ -115,6 +117,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setRegeneratingMessageId(null)
     setCommandResponse(null)
     setError(null)
+    setUploadWarnings([])
     return () => controller.abort()
   }, [resolvedSessionId, loadHistory])
 
@@ -155,7 +158,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const displayMessages = groupToolChains(path)
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
 
-  const handleSend = useCallback(async (text: string, leafOverride?: number) => {
+  const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
       return
     }
@@ -173,7 +176,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       ParentMessageID: leafId ?? null,
       Timestamp: new Date().toISOString(),
       Role: 'user',
-      Content: text,
+      Content: pendingAttachmentPrefix(files) + text,
       Status: 'complete',
       ReasoningContent: '',
       ToolCalls: null,
@@ -195,13 +198,15 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onSessionCreated?.(created.ID)
       }
 
-      const gen = streamMessage(targetSessionId, text, leafId ?? undefined, controller.signal)
+      const gen = streamMessage(targetSessionId, text, leafId ?? undefined, files, controller.signal)
       await consumeStream(gen, controller.signal, {
         setStreamingText,
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
           if (data.command_response) setCommandResponse(data.command_response)
+          const uploads = data.metadata?.uploads as UploadResult | undefined
+          setUploadWarnings(uploads?.warnings ?? [])
           await loadHistory(targetSessionId!)
           if (data.message) setLocalLeafId(data.message.ID)
         },
@@ -407,7 +412,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               processMessages={item.processMessages}
               childrenMap={childrenMap}
               onBranchSwitch={handleBranchSwitch}
-              onEditResend={(newText) => handleSend(newText, item.message.ParentMessageID ?? undefined)}
+              onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID ?? undefined)}
               onEditAssistant={(content, reasoningContent) => handleEditAssistant(item.message.ID, content, reasoningContent)}
               editSaving={editingMessageId === item.message.ID}
               editDisabled={streaming || editingMessageId != null}
@@ -419,12 +424,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           ))
         )}
         {optimisticUserMessage && (
-          <div className="message-row user">
-            <div className="message-stack user">
-              <div className="message-card user">
-                <div className="message-body">{optimisticUserMessage.Content}</div>
-              </div>
-            </div>
+          <div className="optimistic-message">
+            <MessageBubble
+              msg={optimisticUserMessage}
+              childrenMap={new Map()}
+              onBranchSwitch={() => undefined}
+              onEditResend={() => undefined}
+              onEditAssistant={async () => undefined}
+            />
           </div>
         )}
         {streaming && regeneratingMessageId == null && (
@@ -438,10 +445,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         {error && (
           <div className="error-block">{error}</div>
         )}
+        {uploadWarnings.length > 0 && (
+          <div className="upload-warning-block">{uploadWarnings.map(warning => <div key={warning}>{warning}</div>)}</div>
+        )}
         <div ref={bottomRef} />
       </div>
       <Composer
-        onSend={(text) => handleSend(text)}
+        onSend={(text, files) => handleSend(text, files)}
         disabled={streaming}
         onStop={handleStop}
       />

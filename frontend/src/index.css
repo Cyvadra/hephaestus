@@ -6059,6 +6059,119 @@ body {
     font-size: 12px
 }
 
+.composer-files {
+    display: grid;
+    gap: 4px;
+    padding: 3px 5px 8px
+}
+
+.composer-file {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--dsw-alias-label-secondary);
+    font-size: 12px
+}
+
+.composer-file span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.composer-file button {
+    display: grid;
+    place-items: center;
+    padding: 2px;
+    color: inherit;
+    background: transparent;
+    border: 0
+}
+
+.composer-upload-btn {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    margin: 3px;
+    padding: 0;
+    color: var(--dsw-button-text-color);
+    background: transparent;
+    border: 0;
+    border-radius: 50%
+}
+
+.composer-upload-tooltip {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center
+}
+
+.composer-upload-tooltip span {
+    z-index: 5;
+    color: var(--dsw-static-neutral-bluish-00);
+    background: var(--dsw-alias-tooltip-bg);
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    padding: 4px 8px;
+    font-size: 12px;
+    line-height: 18px;
+    transition: opacity .15s ease;
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px)
+}
+
+.composer-upload-tooltip:hover span,.composer-upload-tooltip:focus-within span {
+    opacity: 1
+}
+
+.composer-upload-btn:hover:not(:disabled) {
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-specific-input-major-hover)
+}
+
+.composer-upload-btn:disabled {
+    cursor: not-allowed;
+    opacity: .45
+}
+
+.message-attachment {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 5px 7px;
+    padding: 3px 0;
+    color: var(--dsw-alias-label-secondary);
+    font-size: 12px
+}
+
+.message-attachment span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.message-attachment small {
+    grid-column: 2;
+    color: var(--dsw-alias-label-tertiary)
+}
+
+.upload-warning-block {
+    margin: 8px var(--message-list-padding-horizontal);
+    padding: 8px 10px;
+    color: var(--dsw-alias-label-secondary);
+    background: var(--dsw-specific-input-major);
+    border-left: 3px solid var(--dsw-alias-state-warning-primary);
+    font-size: 12px
+}
+
 .composer-input-row {
     flex-direction: column;
     align-items: stretch;

@@ -87,6 +87,17 @@ export interface SendMessageResponse {
   metadata?: Record<string, unknown>
 }
 
+export interface UploadAttachment {
+  path: string
+  size: number
+  content_included: boolean
+}
+
+export interface UploadResult {
+  attachments: UploadAttachment[]
+  warnings?: string[]
+}
+
 export interface ConciergeItem {
   name: string
   identity: string

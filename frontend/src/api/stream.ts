@@ -41,12 +41,22 @@ export async function* streamMessage(
   sessionId: number,
   text: string,
   activeLeafMessageId?: number,
+  files: File[] = [],
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
+  const body = files.length > 0
+    ? (() => {
+        const form = new FormData()
+        form.set('text', text)
+        if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId))
+        files.forEach(file => form.append('files', file))
+        return form
+      })()
+    : JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId })
   yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId }),
+    headers: files.length > 0 ? undefined : { 'Content-Type': 'application/json' },
+    body,
     signal,
   })
 }

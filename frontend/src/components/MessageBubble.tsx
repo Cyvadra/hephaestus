@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Check, Copy, Pencil, RefreshCw, StepForward } from 'lucide-react'
+import { Check, Copy, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
 import { siblings, descendToLeaf } from '../lib/tree'
+import { parseAttachmentPrefix } from '../lib/attachments'
 
 interface Props {
   msg: ChatMessage
@@ -27,6 +28,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const [reasoningHovered, setReasoningHovered] = useState(false)
   const isUser = msg.Role === 'user'
   const isAssistant = msg.Role === 'assistant'
+  const parsedUserContent = isUser ? parseAttachmentPrefix(msg.Content) : null
+  const attachmentPrefix = parsedUserContent ? msg.Content.slice(0, msg.Content.length - parsedUserContent.body.length) : ''
 
   const messageSiblings = siblings(msg, childrenMap)
   const branchAnchor = messageSiblings.length > 1 ? msg : (branchMessage ?? msg)
@@ -47,7 +50,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
 
   const handleEditSubmit = () => {
     if (editText.trim()) {
-      onEditResend(editText.trim())
+      onEditResend(attachmentPrefix + editText.trim())
       setEditing(false)
     }
   }
@@ -89,7 +92,14 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
           ) : (
             <>
               <div className="message-card user">
-                <div className="message-body">{msg.Content}</div>
+                {parsedUserContent?.attachments.map(attachment => (
+                  <div className="message-attachment" key={attachment.path}>
+                    <FileText aria-hidden="true" size={15} />
+                    <span>{attachment.path}</span>
+                    <small>{attachment.size}{attachment.contentIncluded ? ' · 已提取内容' : ''}</small>
+                  </div>
+                ))}
+                <div className="message-body">{parsedUserContent?.body ?? msg.Content}</div>
               </div>
               <div className="message-actions user-message-actions">
                 {sibs.length > 1 && (
@@ -99,7 +109,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   {copied ? <Check /> : <Copy />}
                 </IconButton>
                 <button
-                  onClick={() => { setEditText(msg.Content); setEditing(true) }}
+                  onClick={() => { setEditText(parsedUserContent?.body ?? msg.Content); setEditing(true) }}
                   className="message-action-btn message-icon-btn"
                   aria-label="编辑"
                   title="编辑"
