@@ -5,11 +5,12 @@ interface Props {
   onSend: (text: string, files: File[]) => void
   onStop: () => void
   disabled: boolean
+  files: File[]
+  onFilesChange: (files: File[]) => void
 }
 
-export default function Composer({ onSend, onStop, disabled }: Props) {
+export default function Composer({ onSend, onStop, disabled, files, onFilesChange }: Props) {
   const [text, setText] = useState('')
-  const [files, setFiles] = useState<File[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -20,15 +21,8 @@ export default function Composer({ onSend, onStop, disabled }: Props) {
     if (!t || disabled) return
     onSend(t, files)
     setText('')
-    setFiles([])
+    onFilesChange([])
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
-  const addFiles = (incoming: FileList | null) => {
-    if (!incoming) return
-    const next = [...files, ...Array.from(incoming)]
-    if (next.length > 5 || next.some(file => file.size > 50 * 1024 * 1024) || next.reduce((total, file) => total + file.size, 0) > 250 * 1024 * 1024) return
-    setFiles(next)
   }
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -49,7 +43,7 @@ export default function Composer({ onSend, onStop, disabled }: Props) {
             {files.map((file, index) => (
               <div className="composer-file" key={`${file.name}-${file.lastModified}-${index}`}>
                 <span>{file.name} ({formatSize(file.size)})</span>
-                <button type="button" onClick={() => setFiles(current => current.filter((_, currentIndex) => currentIndex !== index))} title="移除文件" aria-label={`移除 ${file.name}`}>
+                <button type="button" onClick={() => onFilesChange(files.filter((_, currentIndex) => currentIndex !== index))} title="移除文件" aria-label={`移除 ${file.name}`}>
                   <X aria-hidden="true" size={14} />
                 </button>
               </div>
@@ -74,7 +68,7 @@ export default function Composer({ onSend, onStop, disabled }: Props) {
               </button>
             ) : (
               <>
-                <input ref={fileInputRef} type="file" multiple hidden onChange={event => addFiles(event.target.files)} />
+                <input ref={fileInputRef} type="file" multiple hidden onChange={event => onFilesChange([...files, ...Array.from(event.target.files ?? [])])} />
                 <div className="composer-upload-tooltip">
                   <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isCommand} className="composer-upload-btn" aria-label="上传文件（最多 5 个，单文件最大 50 MB，总计 250 MB）" aria-describedby="upload-file-limits">
                     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

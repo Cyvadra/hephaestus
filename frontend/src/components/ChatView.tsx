@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
+import { UploadCloud } from 'lucide-react'
 import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ConciergeItem, InteractionRequest, SendMessageResponse, Session, StreamToolCall, UploadResult } from '../api/types'
@@ -85,6 +86,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([])
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [dragDepth, setDragDepth] = useState(0)
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const messagesPaneRef = useRef<HTMLDivElement>(null)
@@ -151,6 +154,36 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (!pane) return
     shouldAutoScrollRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40
   }
+
+  const handleFilesChange = useCallback((next: File[]) => {
+    if (next.length > 5 || next.some(file => file.size > 50 * 1024 * 1024) || next.reduce((total, file) => total + file.size, 0) > 250 * 1024 * 1024) return
+    setPendingFiles(next)
+  }, [])
+
+  const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    setDragDepth(depth => depth + 1)
+  }, [streaming])
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [streaming])
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    setDragDepth(depth => Math.max(0, depth - 1))
+  }, [streaming])
+
+  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    setDragDepth(0)
+    handleFilesChange([...pendingFiles, ...Array.from(event.dataTransfer.files)])
+  }, [handleFilesChange, pendingFiles, streaming])
 
   const byId = buildById(messages)
   const childrenMap = buildChildrenMap(messages)
@@ -351,7 +384,20 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
 
   return (
-    <div className={'chat-surface' + (isNewSession ? ' new-session' : '')}>
+    <div
+      className={'chat-surface' + (isNewSession ? ' new-session' : '')}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {dragDepth > 0 && (
+        <div className="file-drop-overlay" role="status" aria-live="polite">
+          <UploadCloud aria-hidden="true" size={32} strokeWidth={1.8} />
+          <strong>释放以上传文件</strong>
+          <span>最多 5 个文件，单个文件最大 50 MB</span>
+        </div>
+      )}
       <header className="chat-header">
         <div>
           <h2 className="chat-header-title">
@@ -454,6 +500,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onSend={(text, files) => handleSend(text, files)}
         disabled={streaming}
         onStop={handleStop}
+        files={pendingFiles}
+        onFilesChange={handleFilesChange}
       />
     </div>
   )
