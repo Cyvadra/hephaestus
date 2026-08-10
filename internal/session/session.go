@@ -75,6 +75,9 @@ func SettingsFromConcierge(concierge registry.Concierge) store.SessionSettings {
 func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMessage) (*store.ChatMessage, error) {
 	msg.SessionID = sessionID
 	msg.ParentMessageID = parentID
+	if msg.Status == "" {
+		msg.Status = store.MessageStatusComplete
+	}
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now()
 	}
@@ -95,8 +98,8 @@ func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMe
 // becoming a child of parentID, each subsequent one a child of the
 // previous, then advances the session's active leaf to the last one. All
 // inserts and the leaf update happen in a single transaction: either the
-// whole turn is recorded or none of it is, matching the design doc's rule
-// that incomplete turns (from /stop or errors) must not be persisted.
+// whole turn is recorded or none of it is, so completed and incomplete turn
+// snapshots remain internally consistent.
 func (s *Service) AppendMessages(sessionID uint, parentID *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
 	return s.appendMessages(sessionID, parentID, nil, false, msgs)
 }
@@ -134,6 +137,9 @@ func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, c
 		for i := range out {
 			out[i].SessionID = sessionID
 			out[i].ParentMessageID = parent
+			if out[i].Status == "" {
+				out[i].Status = store.MessageStatusComplete
+			}
 			if out[i].Timestamp.IsZero() {
 				out[i].Timestamp = time.Now()
 			}

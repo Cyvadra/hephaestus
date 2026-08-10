@@ -58,6 +58,17 @@ type StreamDelta struct {
 	ToolCalls        []ToolCallDelta
 }
 
+// IncompleteResponseError retains the response assembled before a streaming
+// request ended unsuccessfully, allowing callers to persist visible output.
+type IncompleteResponseError struct {
+	Message ds4.Message
+	Err     error
+}
+
+func (e *IncompleteResponseError) Error() string { return e.Err.Error() }
+
+func (e *IncompleteResponseError) Unwrap() error { return e.Err }
+
 // ToolCallDelta is the provider-independent incremental portion of a tool
 // call. Arguments may arrive over multiple deltas for the same Index.
 type ToolCallDelta struct {
@@ -74,6 +85,33 @@ type ToolCallDelta struct {
 // tool loop don't need to special-case streaming vs non-streaming responses.
 func (c *Client) CallStream(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
 	builder := c.buildChat(identity, messages, toolset)
+	return c.stream(ctx, builder, onDelta)
+}
+
+// ContinueStream resumes an incomplete assistant message using ds4's chat
+// prefix-completion API. messages must exclude prefix, which is appended as
+// the final assistant response before Continue marks it as the request prefix.
+// The provider rejects function calls with prefixes, so tools are disabled
+// for this continuation request only. Its beta endpoint also rejects prior
+// tool-call messages, so those history entries are excluded for this request.
+func (c *Client) ContinueStream(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, prefix store.ChatMessage, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
+	builder := c.buildChat(identity, withoutToolCalls(messages), nil)
+	builder.AppendResponse(&ds4.ChatResponse{Choices: []ds4.Choice{{Message: store2ds4(prefix)}}}).Continue(0)
+	return c.stream(ctx, builder, onDelta)
+}
+
+func withoutToolCalls(messages []store.ChatMessage) []store.ChatMessage {
+	out := make([]store.ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if message.Role == ds4.RoleTool || len(message.ToolCalls) > 0 {
+			continue
+		}
+		out = append(out, message)
+	}
+	return out
+}
+
+func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
 
 	var content, reasoning strings.Builder
 	toolCalls := map[int]*ds4.ToolCall{}
@@ -118,24 +156,27 @@ func (c *Client) CallStream(ctx context.Context, identity registry.Identity, mes
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("llm: stream chat completion: %w", err)
-	}
-
 	sort.Ints(toolCallOrder)
 	calls := make([]ds4.ToolCall, 0, len(toolCallOrder))
 	for _, idx := range toolCallOrder {
 		calls = append(calls, *toolCalls[idx])
 	}
+	message := ds4.Message{
+		Role:             ds4.RoleAssistant,
+		Content:          content.String(),
+		ReasoningContent: reasoning.String(),
+		ToolCalls:        calls,
+	}
+	if err != nil {
+		return nil, &IncompleteResponseError{
+			Message: message,
+			Err:     fmt.Errorf("llm: stream chat completion: %w", err),
+		}
+	}
 
 	return &ds4.ChatResponse{
 		Choices: []ds4.Choice{{
-			Message: ds4.Message{
-				Role:             ds4.RoleAssistant,
-				Content:          content.String(),
-				ReasoningContent: reasoning.String(),
-				ToolCalls:        calls,
-			},
+			Message:      message,
 			FinishReason: finishReason,
 		}},
 	}, nil

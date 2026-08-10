@@ -2,6 +2,23 @@ package toolkit
 
 import "context"
 
+type outputReporterContextKey struct{}
+
+// WithOutputReporter attaches an ephemeral output sink for tools that can
+// expose incremental execution progress. Reported data is not persisted by
+// the toolkit.
+func WithOutputReporter(ctx context.Context, reporter func(string)) context.Context {
+	return context.WithValue(ctx, outputReporterContextKey{}, reporter)
+}
+
+// ReportOutput forwards an incremental tool output chunk when the caller
+// supplied a reporter.
+func ReportOutput(ctx context.Context, chunk string) {
+	if reporter, ok := ctx.Value(outputReporterContextKey{}).(func(string)); ok && reporter != nil {
+		reporter(chunk)
+	}
+}
+
 type sessionIDContextKey struct{}
 
 // WithSessionID attaches sessionID to ctx so tools invoked mid-turn (like

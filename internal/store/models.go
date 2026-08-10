@@ -11,6 +11,11 @@ import (
 
 const DefaultProjectName = "default-workspace"
 
+const (
+	MessageStatusComplete   = "complete"
+	MessageStatusIncomplete = "incomplete"
+)
+
 // SessionSettings is the mutable, per-session snapshot of which identity,
 // impressions, tool groups and plugins are active. It starts as a copy of
 // the source Concierge and may diverge from it over the session's lifetime.
@@ -76,6 +81,8 @@ type ChatMessage struct {
 
 	Role    string `gorm:"size:32"`
 	Content string `gorm:"type:text"`
+	// Status is complete unless generation ended before the Agent finished.
+	Status string `gorm:"size:32;default:complete"`
 
 	// ReasoningContent holds chain-of-thought output, when the model
 	// provided one.

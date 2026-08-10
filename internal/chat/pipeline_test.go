@@ -3,9 +3,11 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
@@ -44,7 +46,7 @@ func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	pipeline := &Pipeline{}
 	result := pipeline.executeTool(context.Background(), 1, map[string]toolkit.Tool{}, ds4.ToolCall{
 		Function: ds4.FunctionCall{Name: "shell"},
-	})
+	}, nil)
 	if !result.IsError {
 		t.Fatal("expected disabled tool to be rejected")
 	}
@@ -107,5 +109,43 @@ func TestStreamToolCall_JSONIncludesStableIdentityAndStatus(t *testing.T) {
 	}
 	if got["name"] != "shell" || got["status"] != "calling" {
 		t.Fatalf("expected tool name and status, got %s", data)
+	}
+}
+
+func TestIncompleteMessages_AppendsPartialResponseAndMarksItIncomplete(t *testing.T) {
+	partialErr := &llm.IncompleteResponseError{
+		Message: ds4.Message{Role: ds4.RoleAssistant, Content: "partial reply"},
+		Err:     errors.New("stream stopped"),
+	}
+
+	messages := incompleteMessages([]store.ChatMessage{{Role: ds4.RoleAssistant, Content: "tool request", Status: store.MessageStatusComplete}}, partialErr)
+	if len(messages) != 2 {
+		t.Fatalf("expected prior and partial assistant messages, got %+v", messages)
+	}
+	if messages[0].Status != store.MessageStatusComplete {
+		t.Fatalf("expected prior message to stay complete, got %q", messages[0].Status)
+	}
+	if messages[1].Content != "partial reply" || messages[1].Status != store.MessageStatusIncomplete {
+		t.Fatalf("expected incomplete partial response, got %+v", messages[1])
+	}
+}
+
+func TestIncompleteMessages_StripsDanglingToolCallsFromInterruptedAssistantMessage(t *testing.T) {
+	// Simulates the trackConsecutiveToolCall/limit failure path: the
+	// assistant message requesting tool calls is already in toPersist, but
+	// no matching tool-result messages were appended before the error.
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleAssistant, Content: "", ToolCalls: []byte(`[{"id":"call-1"}]`), Status: store.MessageStatusComplete},
+	}
+
+	got := incompleteMessages(messages, errors.New("too many consecutive tool calls"))
+	if len(got) != 1 {
+		t.Fatalf("expected converse's already-collected messages to survive, got %+v", got)
+	}
+	if got[0].Status != store.MessageStatusIncomplete {
+		t.Fatalf("expected message marked incomplete, got %q", got[0].Status)
+	}
+	if got[0].ToolCalls != nil {
+		t.Fatalf("expected dangling tool_calls to be dropped, got %s", got[0].ToolCalls)
 	}
 }

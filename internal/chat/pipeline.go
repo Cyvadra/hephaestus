@@ -6,6 +6,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -190,11 +191,24 @@ func interactionReporterFromContext(ctx context.Context) func(*interaction.Reque
 	return report
 }
 
+// withOnDeltaReporter routes ask_permission interaction requests to onDelta
+// as StreamEvents, shared by every turn entry point (Run, Regenerate,
+// Continue). A nil onDelta (non-streaming callers) leaves ctx untouched.
+func withOnDeltaReporter(ctx context.Context, onDelta func(StreamEvent)) context.Context {
+	if onDelta == nil {
+		return ctx
+	}
+	return withInteractionReporter(ctx, func(request *interaction.Request) {
+		onDelta(StreamEvent{Type: interaction.EventAskPermission, Interaction: request})
+	})
+}
+
 // Run processes one incoming user message for sessionID: it assembles
 // context (identity, impressions, compression, active-path history), calls
 // the LLM (running the tool loop as needed), and persists the resulting
-// user/assistant/tool messages as a single transaction. On any error, or if
-// ctx is cancelled (e.g. /stop), nothing is persisted. With
+// user/assistant/tool messages as a single transaction. On an error or
+// cancellation, the latest records that were obtained are persisted, with
+// an incomplete assistant response marked accordingly. With
 // opts.ExpectedLeaf set, persistence is skipped when that leaf is no longer
 // active; with opts.OnDelta set, assistant content deltas are streamed as
 // they arrive while persistence still only happens once the turn completes.
@@ -203,11 +217,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 }
 
 func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, expectedLeaf *uint, onDelta func(StreamEvent)) (*TurnResult, error) {
-	if onDelta != nil {
-		ctx = withInteractionReporter(ctx, func(request *interaction.Request) {
-			onDelta(StreamEvent{Type: interaction.EventAskPermission, Interaction: request})
-		})
-	}
+	ctx = withOnDeltaReporter(ctx, onDelta)
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -307,12 +317,81 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	return p.regenerate(ctx, sessionID, opts.OnDelta)
 }
 
-func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
-	if onDelta != nil {
-		ctx = withInteractionReporter(ctx, func(request *interaction.Request) {
-			onDelta(StreamEvent{Type: interaction.EventAskPermission, Interaction: request})
-		})
+// Continue resumes an incomplete assistant response at the active session
+// leaf. The prefix remains in history and the generated suffix is persisted
+// as its child, so the complete reply can be reconstructed without copying
+// the already-generated content.
+func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts TurnOptions) (*TurnResult, error) {
+	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
+	prep, err := p.prepare(sessionID)
+	if err != nil {
+		return nil, err
 	}
+	if prep.workspace != "" {
+		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
+	}
+	if prep.sess.ActiveLeafMessageID == nil || *prep.sess.ActiveLeafMessageID != messageID {
+		return nil, session.ErrStaleActiveLeaf
+	}
+	if len(prep.activePath) == 0 {
+		return nil, fmt.Errorf("chat: session %d has no message to continue", sessionID)
+	}
+	prefix := prep.activePath[len(prep.activePath)-1]
+	if prefix.ID != messageID || prefix.Role != ds4.RoleAssistant || prefix.Status != store.MessageStatusIncomplete || prefix.Content == "" {
+		return nil, fmt.Errorf("chat: message %d is not a continuable incomplete assistant response", messageID)
+	}
+
+	contextMessages, err := p.buildContext(prep.settings, prep.activePath[:len(prep.activePath)-1], prep.compRow)
+	if err != nil {
+		return nil, err
+	}
+	response, err := p.continueResponse(ctx, prep.identity, contextMessages, prefix, opts.OnDelta)
+	if err != nil {
+		if response.Content == "" && response.ReasoningContent == "" && len(response.ToolCalls) == 0 {
+			return nil, err
+		}
+		if _, saveErr := p.sessions.AppendMessagesAtLeaf(sessionID, &messageID, &messageID, []store.ChatMessage{response}); saveErr != nil {
+			return nil, saveErr
+		}
+		return nil, err
+	}
+	response.Status = store.MessageStatusComplete
+	saved, err := p.sessions.AppendMessagesAtLeaf(sessionID, &messageID, &messageID, []store.ChatMessage{response})
+	if err != nil {
+		return nil, err
+	}
+	final := saved[0]
+	return &TurnResult{Message: &final, Metadata: map[string]any{}}, nil
+}
+
+func (p *Pipeline) continueResponse(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, prefix store.ChatMessage, onDelta func(StreamEvent)) (store.ChatMessage, error) {
+	response, err := p.llm.ContinueStream(ctx, identity, messages, prefix, func(delta llm.StreamDelta) {
+		if onDelta == nil {
+			return
+		}
+		if delta.Content != "" {
+			onDelta(StreamEvent{Type: "delta", Text: delta.Content})
+		}
+		if delta.ReasoningContent != "" {
+			onDelta(StreamEvent{Type: "reasoning", Text: delta.ReasoningContent})
+		}
+	})
+	if err != nil {
+		var incomplete *llm.IncompleteResponseError
+		if errors.As(err, &incomplete) && hasMessageContent(incomplete.Message) {
+			partial, convertErr := ds4MessageToStore(incomplete.Message)
+			if convertErr == nil {
+				partial.Status = store.MessageStatusIncomplete
+				return partial, err
+			}
+		}
+		return store.ChatMessage{}, err
+	}
+	return ds4MessageToStore(*response.FirstMessage())
+}
+
+func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
+	ctx = withOnDeltaReporter(ctx, onDelta)
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -368,19 +447,25 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 // parented directly onto an already-persisted user message (Regenerate's
 // case) and no new user message is created.
 func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
-	toPersist, turn, err := p.converse(ctx, settings, identity, toolset, turn, onDelta)
-	if err != nil {
-		return nil, err
+	toPersist, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
+	if converseErr != nil {
+		toPersist = incompleteMessages(toPersist, converseErr)
 	}
 
 	persistMessages := toPersist
 	if newUserMessage != nil {
 		persistMessages = append([]store.ChatMessage{*newUserMessage}, toPersist...)
 	}
+	if len(persistMessages) == 0 {
+		return nil, converseErr
+	}
 
 	saved, err := p.sessions.AppendMessagesAtLeaf(sessionID, parentID, expectedLeaf, persistMessages)
 	if err != nil {
 		return nil, err
+	}
+	if converseErr != nil {
+		return nil, converseErr
 	}
 	final := saved[len(saved)-1]
 
@@ -388,6 +473,30 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.S
 	go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
 
 	return &TurnResult{Message: &final, Metadata: turn.Metadata}, nil
+}
+
+func incompleteMessages(messages []store.ChatMessage, cause error) []store.ChatMessage {
+	var streamErr *llm.IncompleteResponseError
+	if errors.As(cause, &streamErr) && hasMessageContent(streamErr.Message) {
+		if partial, err := ds4MessageToStore(streamErr.Message); err == nil {
+			messages = append(messages, partial)
+		}
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == ds4.RoleAssistant {
+			messages[index].Status = store.MessageStatusIncomplete
+			// A tool_calls message with no matching tool result would make
+			// the next request to the provider fail outright, so an
+			// interrupted turn can only keep the assistant's visible text.
+			messages[index].ToolCalls = nil
+			break
+		}
+	}
+	return messages
+}
+
+func hasMessageContent(message ds4.Message) bool {
+	return message.Content != "" || message.ReasoningContent != "" || len(message.ToolCalls) > 0
 }
 
 func newTurnContext(sessionID uint, messages []store.ChatMessage, isFirstTurn bool, firstUserMessage string) plugin.TurnContext {
@@ -557,7 +666,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	messages = turn.Messages
 	resp, err := callLLM()
 	if err != nil {
-		return nil, turn, err
+		return toPersist, turn, err
 	}
 	turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookAssistantFirstCallLLM, plugin.PhaseAfter, turn)
 	messages = turn.Messages
@@ -568,7 +677,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 
 		assistantMsg, err := ds4MessageToStore(*resp.FirstMessage())
 		if err != nil {
-			return nil, turn, err
+			return toPersist, turn, err
 		}
 		messages = append(messages, assistantMsg)
 		toPersist = append(toPersist, assistantMsg)
@@ -577,7 +686,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		toolCalls := resp.ToolCalls()
 		for _, tc := range toolCalls {
 			if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
-				return nil, turn, err
+				return toPersist, turn, err
 			}
 			turn.Metadata["tool_call"] = tc
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseBefore, turn)
@@ -592,7 +701,18 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 			wg.Add(1)
 			go func(idx int, tc ds4.ToolCall) {
 				defer wg.Done()
-				results[idx] = p.executeTool(ctx, turn.SessionID, allowedTools, tc)
+				results[idx] = p.executeTool(ctx, turn.SessionID, allowedTools, tc, func(chunk string) {
+					if onDelta != nil {
+						onDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
+							CallIndex: callIndex,
+							Index:     idx,
+							ID:        tc.ID,
+							Name:      tc.Function.Name,
+							Result:    chunk,
+							Status:    "calling",
+						}})
+					}
+				})
 			}(i, tc)
 		}
 		wg.Wait()
@@ -628,7 +748,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		messages = turn.Messages
 		resp, err = callLLM()
 		if err != nil {
-			return nil, turn, err
+			return toPersist, turn, err
 		}
 		turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseAfter, turn)
 		messages = turn.Messages
@@ -636,7 +756,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 
 	final, err := ds4MessageToStore(*resp.FirstMessage())
 	if err != nil {
-		return nil, turn, err
+		return toPersist, turn, err
 	}
 	toPersist = append(toPersist, final)
 
@@ -653,7 +773,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	return toPersist, turn, nil
 }
 
-func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall) *toolkit.ToolResult {
+func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall, reportOutput func(string)) *toolkit.ToolResult {
 	t, ok := allowedTools[tc.Function.Name]
 	if !ok {
 		return toolkit.ErrorResult(fmt.Sprintf("chat: tool %q is not enabled for this session", tc.Function.Name))
@@ -668,6 +788,9 @@ func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools
 
 	auditID := p.beginToolAudit(sessionID, tc, args)
 	toolCtx := toolkit.WithSessionID(ctx, sessionID)
+	if reportOutput != nil {
+		toolCtx = toolkit.WithOutputReporter(toolCtx, reportOutput)
+	}
 	if p.interactions != nil {
 		toolCtx = interaction.WithReporter(toolCtx, func(event interaction.Event) {
 			if event.Type == interaction.EventAskPermission {
@@ -735,6 +858,7 @@ func ds4MessageToStore(m ds4.Message) (store.ChatMessage, error) {
 		Content:          m.Content,
 		ReasoningContent: m.ReasoningContent,
 		ToolCallID:       m.ToolCallID,
+		Status:           store.MessageStatusComplete,
 		Timestamp:        time.Now(),
 	}
 	if len(m.ToolCalls) > 0 {

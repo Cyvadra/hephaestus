@@ -13,6 +13,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"gorm.io/datatypes"
 )
 
 // exampleTool exercises the toolkit.Example capability: buildChat must append
@@ -58,6 +59,54 @@ func TestCallAttachesToolExampleToDescription(t *testing.T) {
 	}
 	if !strings.Contains(found.Description, "Example:") || !strings.Contains(found.Description, "uname -a") || !strings.Contains(found.Description, "Linux test") {
 		t.Errorf("expected example attached to description, got %q", found.Description)
+	}
+}
+
+func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
+	var request ds4.ChatRequest
+	var requestPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" continued\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n"))
+	}))
+	defer server.Close()
+
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+	response, err := client.ContinueStream(
+		context.Background(),
+		registry.Identity{},
+		[]store.ChatMessage{
+			{Role: ds4.RoleUser, Content: "Tell a story"},
+			{Role: ds4.RoleAssistant, Content: "", ToolCalls: datatypes.JSON(`[{"id":"call-1","type":"function","function":{"name":"shell","arguments":"{}"}}]`)},
+			{Role: ds4.RoleTool, Content: "tool output", ToolCallID: "call-1"},
+		},
+		store.ChatMessage{Role: ds4.RoleAssistant, Content: "Once upon"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ContinueStream() error = %v", err)
+	}
+	if requestPath != "/beta/chat/completions" {
+		t.Fatalf("request path = %q, want beta prefix endpoint", requestPath)
+	}
+	last := request.Messages[len(request.Messages)-1]
+	if last.Role != ds4.RoleAssistant || last.Content != "Once upon" || !last.Prefix {
+		t.Fatalf("expected final assistant prefix, got %+v", last)
+	}
+	if len(request.Tools) != 0 {
+		t.Fatalf("expected continuation request to disable tools, got %+v", request.Tools)
+	}
+	for _, message := range request.Messages {
+		if message.Role == ds4.RoleTool || len(message.ToolCalls) > 0 {
+			t.Fatalf("expected continuation request to exclude tool-call history, got %+v", message)
+		}
+	}
+	if response.Content() != " continued" {
+		t.Fatalf("response content = %q", response.Content())
 	}
 }
 
