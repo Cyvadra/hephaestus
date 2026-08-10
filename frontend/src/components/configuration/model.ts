@@ -32,7 +32,7 @@ export function createEmptyConfiguration<K extends ConfigurationKind>(kind: K): 
     },
     impressions: { name: '', description: '', enabled: true, messages: [] },
     'tool-groups': { name: '', tools: [] },
-    concierges: { name: '', description: '', identity: '', impressions: [], tool_groups: [], plugins: [] },
+    concierges: { name: '', nickname: '', description: '', identity: '', impressions: [], tool_groups: [], plugins: [] },
     workflows: { name: '', description: '', concierge: '', input_schema: {}, output_schema: {}, steps: [] },
     jobs: { name: '', title: '', description: '', goal: '', workflows: [], trigger: 'false', max_executions_per_day: 1 },
   }
@@ -67,5 +67,7 @@ export function configurationSummary(kind: ConfigurationKind, value: Configurati
 export function validateConfiguration(value: Configuration): Record<string, string> {
   const errors: Record<string, string> = {}
   if (!value.name.trim()) errors.name = '名称不能为空'
+
+  if ('nickname' in value && Array.from(value.nickname).length > 20) errors.nickname = '昵称不能超过 20 字'
   return errors
 }

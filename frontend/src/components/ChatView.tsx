@@ -91,6 +91,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const [activeSession, setActiveSession] = useState<Session | null>(null)
+  const [headerTitleDraft, setHeaderTitleDraft] = useState('')
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'none', webSearch: true })
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -98,6 +99,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const shouldAutoScrollRef = useRef(true)
   const initializedOptionsSessionRef = useRef<number | null>(null)
   const createdSessionRef = useRef<number | null>(null)
+  const cancelledTitleEditRef = useRef(false)
 
   useEffect(() => {
     setResolvedSessionId(sessionId)
@@ -140,10 +142,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   }, [resolvedSessionId, loadHistory])
 
   useEffect(() => {
-    if (!isChoosingConcierge) return
     void listConcierges().then(items => {
       setConcierges(items)
-      if (!items.some(concierge => concierge.name === defaultConciergeId)) {
+      if (isChoosingConcierge && !items.some(concierge => concierge.name === defaultConciergeId)) {
         const fallback = items[0]
         if (fallback) onDefaultConciergeResolved?.(fallback.name)
       }
@@ -169,6 +170,25 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (!pane) return
     shouldAutoScrollRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40
   }
+
+  const handleHeaderTitleSubmit = useCallback(async () => {
+    if (resolvedSessionId == null) return
+    const currentTitle = activeSession?.Title || `Session #${resolvedSessionId}`
+    const title = headerTitleDraft.trim()
+    if (!title || title === currentTitle) {
+      setHeaderTitleDraft(currentTitle)
+      return
+    }
+    try {
+      const updated = await updateSession(resolvedSessionId, { title })
+      setActiveSession(updated)
+      setHeaderTitleDraft(updated.Title)
+      onSessionUpdated?.(updated)
+    } catch (cause) {
+      setHeaderTitleDraft(currentTitle)
+      setError(String(cause))
+    }
+  }, [activeSession, headerTitleDraft, onSessionUpdated, resolvedSessionId])
 
   const handleFilesChange = useCallback((next: File[]) => {
     if (next.length > 5 || next.some(file => file.size > 50 * 1024 * 1024) || next.reduce((total, file) => total + file.size, 0) > 250 * 1024 * 1024) return
@@ -422,7 +442,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
   const headerTitle = activeSession?.Title || (resolvedSessionId == null ? '新会话' : `Session #${resolvedSessionId}`)
-  const identityName = activeSession?.Settings?.identity || selectedConcierge?.identity || '未选择身份'
+  const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
+  const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || '未选择 Concierge'
+
+  useEffect(() => {
+    setHeaderTitleDraft(headerTitle)
+  }, [headerTitle])
 
   return (
     <div
@@ -441,10 +466,38 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       )}
       <header className="chat-header">
         <div className="chat-header-content">
-          <h2 className="chat-header-title">{headerTitle}</h2>
+          {resolvedSessionId == null ? <h2 className="chat-header-title">{headerTitle}</h2> : (
+            <label className="chat-header-title-editor">
+              <input
+                value={headerTitleDraft}
+                maxLength={64}
+                aria-label="会话标题"
+                onChange={event => setHeaderTitleDraft(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.currentTarget.blur()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelledTitleEditRef.current = true
+                    setHeaderTitleDraft(headerTitle)
+                    event.currentTarget.blur()
+                  }
+                }}
+                onBlur={() => {
+                  if (cancelledTitleEditRef.current) {
+                    cancelledTitleEditRef.current = false
+                    return
+                  }
+                  void handleHeaderTitleSubmit()
+                }}
+              />
+              <span aria-hidden="true">{headerTitleDraft || ' '}</span>
+            </label>
+          )}
           <div className="chat-header-identity">
             <Zap aria-hidden="true" size={12} strokeWidth={1.8} fill="currentColor" />
-            <span>{identityName}</span>
+            <span>{conciergeNickname}</span>
           </div>
         </div>
       </header>

@@ -20,8 +20,8 @@ export function Field({ label, htmlFor, hint, error, wide, children }: FieldProp
   )
 }
 
-export function TextInput({ id, value, onChange, disabled, placeholder }: { id: string; value: string; onChange: (value: string) => void; disabled?: boolean; placeholder?: string }) {
-  return <input id={id} value={value} disabled={disabled} placeholder={placeholder} onChange={event => onChange(event.target.value)} />
+export function TextInput({ id, value, onChange, disabled, placeholder, maxLength }: { id: string; value: string; onChange: (value: string) => void; disabled?: boolean; placeholder?: string; maxLength?: number }) {
+  return <input id={id} value={value} disabled={disabled} placeholder={placeholder} maxLength={maxLength} onChange={event => onChange(event.target.value)} />
 }
 
 export function TextArea({ id, value, onChange, rows = 4, placeholder }: { id: string; value: string; onChange: (value: string) => void; rows?: number; placeholder?: string }) {
