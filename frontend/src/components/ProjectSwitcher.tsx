@@ -1,4 +1,4 @@
-import { Check, ChevronDown, FolderPlus, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronUp, FolderPlus, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createProject, deleteProject, listProjects } from '../api/client'
 import type { Project } from '../api/types'
@@ -66,7 +66,7 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
         onFocus={menu.pinOpen}
       >
         <span className="project-switcher-name">{current?.Name ?? activeProject ?? 'Loading projects'}</span>
-        <ChevronDown aria-hidden="true" size={15} strokeWidth={1.8} />
+        <ChevronUp aria-hidden="true" size={15} strokeWidth={1.8} />
       </button>
       {menu.open && (
         <div className="project-switcher-menu" role="menu">

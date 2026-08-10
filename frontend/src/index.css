@@ -6167,10 +6167,23 @@ body {
 }
 
 .composer-panel {
+    position: relative;
     box-sizing: border-box;
     width: 100%;
     align-self: center;
-    padding: 10px var(--message-list-padding-horizontal) 20px
+    background: var(--dsw-alias-bg-base);
+    padding: 10px var(--message-list-padding-horizontal) 1.5em
+}
+
+.composer-panel:before {
+    content: "";
+    pointer-events: none;
+    background: linear-gradient(to bottom,transparent,var(--dsw-alias-bg-base));
+    height: 1.5em;
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0
 }
 
 .file-drop-overlay {
@@ -6356,7 +6369,7 @@ body {
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 2px
+    gap: 6px
 }
 
 .composer-reasoning-control {
@@ -6364,15 +6377,15 @@ body {
 }
 
 .composer-option-btn {
-    height: 34px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 9px;
+    gap: 5px;
+    padding: 0 7px;
     color: var(--dsw-alias-label-secondary);
     background: transparent;
     border: 0;
-    border-radius: 8px;
+    border-radius: 6px;
     font: inherit;
     font-size: 14px;
     white-space: nowrap
@@ -6389,12 +6402,12 @@ body {
 
 .composer-option-btn.active {
     color: var(--dsw-alias-button-primary-fill);
-    background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 10%,transparent)
+    background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 7%,transparent)
 }
 
 .composer-option-btn.active:hover:not(:disabled),.composer-option-btn.active:focus-visible {
     color: var(--dsw-alias-button-primary-fill);
-    background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 14%,transparent)
+    background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 10%,transparent)
 }
 
 .composer-option-btn:disabled {
@@ -6530,7 +6543,7 @@ body {
     }
 
     .composer-option-btn {
-        padding: 0 7px
+        padding: 0 6px
     }
 }
 
