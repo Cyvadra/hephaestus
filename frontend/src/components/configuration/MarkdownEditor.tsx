@@ -2,7 +2,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Bold, Code2, Eye, Italic, Maximize2, PanelsTopLeft, Type } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Markdown from '../Markdown'
 
 type Mode = 'edit' | 'split' | 'preview'
@@ -10,7 +10,43 @@ type Mode = 'edit' | 'split' | 'preview'
 export default function MarkdownEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [mode, setMode] = useState<Mode>('split')
   const [fullscreen, setFullscreen] = useState(false)
+  const editorRef = useRef<HTMLDivElement>(null)
   const isDark = document.body.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches
+
+  useEffect(() => {
+    if (mode !== 'split') return
+
+    let syncing = false
+    let editorScroller: HTMLElement | null = null
+    let previewScroller: HTMLElement | null = null
+    let syncPreview: (() => void) | null = null
+    let syncEditor: (() => void) | null = null
+    const frame = requestAnimationFrame(() => {
+      const root = editorRef.current
+      editorScroller = root?.querySelector<HTMLElement>('.cm-scroller') ?? null
+      previewScroller = root?.querySelector<HTMLElement>('.configuration-markdown-preview') ?? null
+      if (!editorScroller || !previewScroller) return
+
+      const syncScroll = (source: HTMLElement, target: HTMLElement) => {
+        if (syncing) return
+        syncing = true
+        const sourceRange = source.scrollHeight - source.clientHeight
+        const targetRange = target.scrollHeight - target.clientHeight
+        target.scrollTop = sourceRange > 0 ? source.scrollTop / sourceRange * targetRange : 0
+        syncing = false
+      }
+      syncPreview = () => syncScroll(editorScroller!, previewScroller!)
+      syncEditor = () => syncScroll(previewScroller!, editorScroller!)
+      editorScroller.addEventListener('scroll', syncPreview)
+      previewScroller.addEventListener('scroll', syncEditor)
+    })
+
+    return () => {
+      cancelAnimationFrame(frame)
+      if (editorScroller && syncPreview) editorScroller.removeEventListener('scroll', syncPreview)
+      if (previewScroller && syncEditor) previewScroller.removeEventListener('scroll', syncEditor)
+    }
+  }, [mode, fullscreen])
 
   const wrap = (before: string, after = before) => {
     const addition = `${before}文本${after}`
@@ -18,7 +54,7 @@ export default function MarkdownEditor({ value, onChange }: { value: string; onC
   }
 
   return (
-    <div className={`configuration-markdown-editor${fullscreen ? ' fullscreen' : ''}`}>
+    <div ref={editorRef} className={`configuration-markdown-editor${fullscreen ? ' fullscreen' : ''}`}>
       <div className="configuration-editor-toolbar">
         <div className="configuration-editor-tools">
           <button type="button" title="加粗" onClick={() => wrap('**')}><Bold size={15} /></button>
