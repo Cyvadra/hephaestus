@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -686,6 +687,10 @@ type createProjectRequest struct {
 	Description string `json:"description"`
 }
 
+type deleteProjectRequest struct {
+	DeleteDirectory bool `json:"delete_directory"`
+}
+
 func (s *Server) listProjects(c *gin.Context) {
 	projects, err := s.projects.List()
 	if err != nil {
@@ -711,6 +716,37 @@ func (s *Server) createProject(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, projectResponse{Project: *created, IsDefault: created.Name == project.DefaultName})
+}
+
+// deleteProject godoc
+//
+//	@Summary		Delete an empty project
+//	@Description	Deletes a non-default project only when it has no sessions. Its project directory is deleted only when requested.
+//	@Tags			projects
+//	@Accept			json
+//	@Param			name	path	string	true	"Project name"
+//	@Param			request	body	deleteProjectRequest	false	"Deletion options"
+//	@Success		204
+//	@Failure		400	{object}	errorResponse
+//	@Failure		404	{object}	errorResponse
+//	@Router			/projects/{name} [delete]
+func (s *Server) deleteProject(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	var req deleteProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if err := s.projects.Delete(name, req.DeleteDirectory); err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + name})
+		default:
+			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 type updateSessionRequest struct {
@@ -865,6 +901,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 // conciergeItem is the JSON shape returned by listConcierges.
 type conciergeItem struct {
 	Name            string   `json:"name"`
+	Description     string   `json:"description"`
 	Identity        string   `json:"identity"`
 	ReasoningEffort string   `json:"reasoning_effort"`
 	Impressions     []string `json:"impressions"`
@@ -886,6 +923,7 @@ func (s *Server) listConcierges(c *gin.Context) {
 		identity := s.reg.Identities[cg.Identity]
 		items = append(items, conciergeItem{
 			Name:            cg.Name,
+			Description:     cg.Description,
 			Identity:        cg.Identity,
 			ReasoningEffort: identity.ReasoningEffort,
 			Impressions:     nullSafe(cg.Impressions),

@@ -120,6 +120,35 @@ func (s *Service) List() ([]store.Project, error) {
 	return projects, nil
 }
 
+// Delete removes an empty non-default Project. Its on-disk directory is
+// preserved unless deleteDirectory is true.
+func (s *Service) Delete(name string, deleteDirectory bool) error {
+	if name == DefaultName {
+		return errors.New("project: the default project cannot be deleted")
+	}
+	p, err := s.GetByName(name)
+	if err != nil {
+		return err
+	}
+
+	var sessionCount int64
+	if err := s.db.Model(&store.Session{}).Where("project_id = ?", p.ID).Count(&sessionCount).Error; err != nil {
+		return fmt.Errorf("project: count sessions for %q: %w", name, err)
+	}
+	if sessionCount > 0 {
+		return fmt.Errorf("project: %q has sessions and cannot be deleted", name)
+	}
+	if err := s.db.Delete(p).Error; err != nil {
+		return fmt.Errorf("project: delete %q: %w", name, err)
+	}
+	if deleteDirectory {
+		if err := os.RemoveAll(s.Path(*p)); err != nil {
+			return fmt.Errorf("project: remove directory for %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (s *Service) ensureDirectory(p store.Project) error {
 	dir := s.Path(p)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -5,6 +5,7 @@
 package project_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,6 +90,66 @@ func TestCreate_RejectsInvalidName(t *testing.T) {
 
 	if _, err := svc.Create("Not A Slug!", ""); err == nil {
 		t.Fatal("expected invalid name to be rejected")
+	}
+}
+
+func TestDelete_PreservesDirectoryByDefault(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatalf("project.New: %v", err)
+	}
+	t.Cleanup(func() { db.Where("name = ?", "test-delete").Delete(&store.Project{}) })
+
+	if _, err := svc.Create("test-delete", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Delete("test-delete", false); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.GetByName("test-delete"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected deleted project to be absent, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "test-delete")); err != nil {
+		t.Fatalf("expected project directory to be preserved, got %v", err)
+	}
+}
+
+func TestDelete_RemovesDirectoryWhenRequested(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatalf("project.New: %v", err)
+	}
+	t.Cleanup(func() { db.Where("name = ?", "test-delete-directory").Delete(&store.Project{}) })
+
+	if _, err := svc.Create("test-delete-directory", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Delete("test-delete-directory", true); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "test-delete-directory")); !os.IsNotExist(err) {
+		t.Fatalf("expected project directory to be removed, got %v", err)
+	}
+}
+
+func TestDelete_RejectsDefaultProject(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatalf("project.New: %v", err)
+	}
+	t.Cleanup(func() { db.Where("name = ?", project.DefaultName).Delete(&store.Project{}) })
+	if _, err := svc.EnsureDefault(); err != nil {
+		t.Fatalf("EnsureDefault: %v", err)
+	}
+
+	if err := svc.Delete(project.DefaultName, false); err == nil {
+		t.Fatal("expected default project deletion to be rejected")
 	}
 }
 
