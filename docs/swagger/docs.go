@@ -279,7 +279,7 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages/stream": {
             "post": {
-                "description": "Like sendMessage, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
+                "description": "Like sendMessage, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_output\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
                 "consumes": [
                     "application/json"
                 ],
@@ -306,6 +306,45 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_server.sendMessageRequest"
                         }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sessions/{id}/messages/{messageID}/continue/stream": {
+            "post": {
+                "description": "Resumes generation at messageID, an incomplete assistant message on the session's active path, using its persisted content as the model's prefix. Streams only the newly generated suffix as Server-Sent Events, finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Resume an incomplete assistant reply with streaming",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Incomplete assistant message ID",
+                        "name": "messageID",
+                        "in": "path",
+                        "required": true
                     }
                 ],
                 "responses": {
@@ -494,6 +533,10 @@ const docTemplate = `{
                 "sessionID": {
                     "type": "integer"
                 },
+                "status": {
+                    "description": "Status is complete unless generation ended before the Agent finished.",
+                    "type": "string"
+                },
                 "timestamp": {
                     "type": "string"
                 },
@@ -507,6 +550,23 @@ const docTemplate = `{
                     "items": {
                         "type": "integer"
                     }
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.Project": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -535,6 +595,12 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "id": {
+                    "type": "integer"
+                },
+                "project": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Project"
+                },
+                "projectID": {
                     "type": "integer"
                 },
                 "settings": {
@@ -597,6 +663,9 @@ const docTemplate = `{
             ],
             "properties": {
                 "concierge": {
+                    "type": "string"
+                },
+                "project": {
                     "type": "string"
                 }
             }

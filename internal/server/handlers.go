@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"sort"
@@ -243,7 +242,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 // streamMessage godoc
 //
 //	@Summary		Send a message with streaming
-//	@Description	Like sendMessage, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
+//	@Description	Like sendMessage, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_output", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		text/event-stream
@@ -351,6 +350,34 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 	})
 }
 
+// streamContinue godoc
+//
+//	@Summary		Resume an incomplete assistant reply with streaming
+//	@Description	Resumes generation at messageID, an incomplete assistant message on the session's active path, using its persisted content as the model's prefix. Streams only the newly generated suffix as Server-Sent Events, finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
+//	@Tags			sessions
+//	@Produce		text/event-stream
+//	@Param			id			path	int	true	"Session ID"
+//	@Param			messageID	path	int	true	"Incomplete assistant message ID"
+//	@Success		200
+//	@Failure		400	{object}	errorResponse
+//	@Router			/sessions/{id}/messages/{messageID}/continue/stream [post]
+func (s *Server) streamContinue(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	messageID, err := parseUintParam(c, "messageID", "message id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
+		return s.pipeline.Continue(ctx, sessionID, messageID, chat.TurnOptions{OnDelta: onDelta})
+	})
+}
+
 // streamTurn runs a turn-producing closure and streams its progress events
 // as Server-Sent Events, finishing with a "done" event carrying the same
 // body sendMessage would return (or an "error" event). It owns the cancel
@@ -358,8 +385,16 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 // every streaming endpoint.
 func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error)) {
 	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
 	registrationID := s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID, registrationID)
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache, no-transform")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	c.Writer.Flush()
 
 	deltas := make(chan chat.StreamEvent, 16)
 	resultCh := make(chan *chat.TurnResult, 1)
@@ -384,12 +419,9 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 	streamEvent := func(event string, data any) {
 		sequence++
 		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
+		c.Writer.Flush()
 	}
-	c.Stream(func(w io.Writer) bool {
-		delta, ok := <-deltas
-		if !ok {
-			return false
-		}
+	for delta := range deltas {
 		if delta.Interaction != nil {
 			streamEvent(delta.Type, delta.Interaction)
 		} else if delta.Session != nil {
@@ -399,8 +431,7 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 		} else {
 			streamEvent(delta.Type, delta.Text)
 		}
-		return true
-	})
+	}
 
 	select {
 	case err := <-errCh:
@@ -542,9 +573,9 @@ func (s *Server) updateSession(c *gin.Context) {
 		return
 	}
 
-	changes := map[string]any{}
+	var title string
 	if req.Title != nil {
-		title := strings.TrimSpace(*req.Title)
+		title = strings.TrimSpace(*req.Title)
 		if title == "" {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: "session title cannot be empty"})
 			return
@@ -553,28 +584,44 @@ func (s *Server) updateSession(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: "session title must be 64 characters or fewer"})
 			return
 		}
-		changes["title"] = title
-	}
-	if req.Archived != nil {
-		changes["flag_archived"] = *req.Archived
 	}
 	var sess store.Session
 	if err := s.db.First(&sess, sessionID).Error; err != nil {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
-	if len(changes) > 0 {
-		if err := s.db.Model(&sess).Updates(changes).Error; err != nil {
+	willBeArchived := sess.FlagArchived
+	if req.Archived != nil {
+		willBeArchived = *req.Archived
+	}
+	if req.Pinned != nil && *req.Pinned && willBeArchived {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "an archived session cannot be pinned"})
+		return
+	}
+	if req.Title != nil {
+		if err := s.db.Model(&sess).Update("title", title).Error; err != nil {
 			internalError(c, err)
 			return
 		}
 	}
+	metadataChanges := map[string]any{}
+	if req.Archived != nil {
+		metadataChanges["flag_archived"] = *req.Archived
+		if *req.Archived {
+			metadataChanges["flag_pinned"] = uint8(0)
+		}
+	}
+	// The willBeArchived check above already rejects pinning an archived
+	// session, so a pin request here always wins over the zeroing above.
 	if req.Pinned != nil {
 		pinned := uint8(0)
 		if *req.Pinned {
 			pinned = 1
 		}
-		if err := s.db.Model(&sess).UpdateColumn("flag_pinned", pinned).Error; err != nil {
+		metadataChanges["flag_pinned"] = pinned
+	}
+	if len(metadataChanges) > 0 {
+		if err := s.db.Model(&sess).UpdateColumns(metadataChanges).Error; err != nil {
 			internalError(c, err)
 			return
 		}

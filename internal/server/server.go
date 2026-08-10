@@ -54,6 +54,7 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	api.POST("/sessions/:id/messages/stream", s.streamMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)
 	api.POST("/sessions/:id/regenerate/stream", s.streamRegenerate)
+	api.POST("/sessions/:id/messages/:messageID/continue/stream", s.streamContinue)
 	api.GET("/concierges", s.listConcierges)
 	api.GET("/projects", s.listProjects)
 	api.POST("/projects", s.createProject)
