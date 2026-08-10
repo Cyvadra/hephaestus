@@ -31,10 +31,11 @@ type Server struct {
 	commands *command.Service
 	projects *project.Service
 	uploads  *upload.Processor
+	configs  *registry.Service
 }
 
 // New builds the Gin engine and registers every route.
-func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor) *Server {
+func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service) *Server {
 	s := &Server{
 		engine:   gin.Default(),
 		db:       db,
@@ -44,6 +45,7 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 		commands: commands,
 		projects: projects,
 		uploads:  uploads,
+		configs:  configs,
 	}
 
 	api := s.engine.Group("/api/v1")
@@ -61,6 +63,11 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	api.GET("/concierges", s.listConcierges)
 	api.GET("/projects", s.listProjects)
 	api.POST("/projects", s.createProject)
+	api.GET("/configurations/:kind", s.listConfigurations)
+	api.POST("/configurations/:kind", s.createConfiguration)
+	api.GET("/configurations/:kind/:name", s.getConfiguration)
+	api.PUT("/configurations/:kind/:name", s.replaceConfiguration)
+	api.DELETE("/configurations/:kind/:name", s.deleteConfiguration)
 
 	s.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

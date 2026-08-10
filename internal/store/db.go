@@ -8,9 +8,12 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/Cyvadra/hephaestus/internal/registry"
 )
 
-// Open connects to Postgres and migrates every runtime model.
+// Open connects to Postgres and migrates runtime and persisted configuration
+// models.
 func Open(dsn string) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
@@ -19,7 +22,11 @@ func Open(dsn string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("store: connect postgres: %w", err)
 	}
 
-	if err := db.AutoMigrate(&Project{}, &ChatMessage{}, &Compression{}, &PluginState{}, &ToolAudit{}); err != nil {
+	if err := db.AutoMigrate(
+		&Project{}, &ChatMessage{}, &Compression{}, &PluginState{}, &ToolAudit{},
+		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
+		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
+	); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
 	}
 	defaultProject, err := ensureDefaultProject(db)

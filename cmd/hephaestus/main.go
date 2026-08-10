@@ -98,12 +98,20 @@ func main() {
 		log.Fatalf("plugin: configure fixed plugins: %v", err)
 	}
 
-	reg, err := registry.Load(cfg.ConfigDir)
+	staticRegistry, err := registry.Load(cfg.ConfigDir)
+	if err != nil {
+		log.Fatalf("registry: %v", err)
+	}
+	reg, err := registry.LoadDatabase(db, staticRegistry)
 	if err != nil {
 		log.Fatalf("registry: %v", err)
 	}
 	if err := reg.Validate(toolReg.KnownNames(), pluginReg.KnownNames()); err != nil {
 		log.Fatalf("registry: validation failed: %v", err)
+	}
+	configs, err := registry.NewService(db, staticRegistry, toolReg.KnownNames(), pluginReg.KnownNames())
+	if err != nil {
+		log.Fatalf("registry: configuration service: %v", err)
 	}
 	if len(reg.Workflows) > 0 || len(reg.Jobs) > 0 {
 		log.Printf("registry: loaded %d workflow(s) and %d job(s); no scheduler is implemented yet, so they will not run", len(reg.Workflows), len(reg.Jobs))
@@ -125,7 +133,7 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(db, reg, sessions, pipeline, commands, projects, uploads)
+	srv := server.New(db, reg, sessions, pipeline, commands, projects, uploads, configs)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {

@@ -18,6 +18,32 @@ Run the backend with:
 go run ./cmd/hephaestus
 ```
 
+## Registry configuration
+
+Identity, impression, tool group, concierge, workflow, and job definitions
+load from `HEPHAESTUS_CONFIG_DIR` (default `./config`) first. Persisted
+Postgres records then replace a same-named record of the same type as a
+complete configuration, rather than a field-by-field overlay. The final merged
+registry must pass all reference checks before the process starts.
+
+Database-only management endpoints are available under
+`/api/v1/configurations/:kind`, where `:kind` is one of `identities`,
+`impressions`, `tool-groups`, `concierges`, `workflows`, or `jobs`:
+
+| Method | Path | Meaning |
+| --- | --- | --- |
+| `GET` | `/configurations/:kind` | List persisted records only. |
+| `POST` | `/configurations/:kind` | Create a persisted record, including a same-named static override. |
+| `GET` | `/configurations/:kind/:name` | Get a persisted record. |
+| `PUT` | `/configurations/:kind/:name` | Replace a persisted record; path and payload names must match. |
+| `DELETE` | `/configurations/:kind/:name` | Delete a persisted record. |
+
+Each write validates the static-plus-database registry that will be used after
+a restart. A deleted database override falls back to the static definition on
+the next restart. Configuration writes are visible to these management APIs
+immediately, but the running chat pipeline retains its startup snapshot until
+the process restarts.
+
 ## File uploads and OCR
 
 Chat messages support up to five attachments. Files are stored below the

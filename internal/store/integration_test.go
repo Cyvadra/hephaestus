@@ -34,7 +34,12 @@ func openTestDB(t *testing.T) *gorm.DB {
 // it (and everything chained under it) can be identified and cleaned up.
 func newTestSession(t *testing.T, db *gorm.DB, marker string) *store.Session {
 	t.Helper()
+	var project store.Project
+	if err := db.Where("name = ?", store.DefaultProjectName).First(&project).Error; err != nil {
+		t.Fatalf("load default project: %v", err)
+	}
 	sess := &store.Session{
+		ProjectID:       project.ID,
 		SourceConcierge: marker,
 		Settings: datatypes.NewJSONType(store.SessionSettings{
 			Identity: "test-identity",

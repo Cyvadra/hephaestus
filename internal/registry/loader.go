@@ -81,18 +81,7 @@ var loaders = []kindLoader{
 		decode: decodeTOML,
 		dest:   func(r *Registry) map[string]Identity { return r.Identities },
 		name:   func(v Identity) string { return v.Name },
-		extra: func(filename string, v *Identity) error {
-			if v.SystemPrompt == "" {
-				v.SystemPrompt = DefaultSystemPrompt
-			}
-			if err := validateReasoningEffort(v.Name, v.ReasoningEffort); err != nil {
-				return err
-			}
-			if v.ContextWindowTokens <= 0 {
-				return fmt.Errorf("registry: identity %q: context_window_tokens must be positive", v.Name)
-			}
-			return nil
-		},
+		extra:  func(_ string, v *Identity) error { return normalizeIdentity(v) },
 	}),
 	loadInto(loader[Impression]{
 		kind:   fileKind{prefix: "impression-", ext: "toml"},
@@ -117,12 +106,7 @@ var loaders = []kindLoader{
 		decode: decodeYAML,
 		dest:   func(r *Registry) map[string]Workflow { return r.Workflows },
 		name:   func(v Workflow) string { return v.Name },
-		extra: func(filename string, v *Workflow) error {
-			if len(v.Name) < 10 || strings.ContainsAny(v.Name, " \t") {
-				return fmt.Errorf("registry: workflow name %q must be a slug of at least 10 chars with no spaces (file %s)", v.Name, filename)
-			}
-			return nil
-		},
+		extra:  func(_ string, v *Workflow) error { return normalizeWorkflow(v) },
 	}),
 	loadInto(loader[Job]{
 		kind:   fileKind{prefix: "job-", ext: "yaml"},
@@ -188,6 +172,26 @@ func validateReasoningEffort(identityName, effort string) error {
 	default:
 		return fmt.Errorf("registry: identity %q: invalid reasoning_effort %q", identityName, effort)
 	}
+}
+
+func normalizeIdentity(v *Identity) error {
+	if v.SystemPrompt == "" {
+		v.SystemPrompt = DefaultSystemPrompt
+	}
+	if err := validateReasoningEffort(v.Name, v.ReasoningEffort); err != nil {
+		return err
+	}
+	if v.ContextWindowTokens <= 0 {
+		return fmt.Errorf("registry: identity %q: context_window_tokens must be positive", v.Name)
+	}
+	return nil
+}
+
+func normalizeWorkflow(v *Workflow) error {
+	if len(v.Name) < 10 || strings.ContainsAny(v.Name, " \t") {
+		return fmt.Errorf("registry: workflow name %q must be a slug of at least 10 chars with no spaces", v.Name)
+	}
+	return nil
 }
 
 func decodeTOML(path string, v any) error {
