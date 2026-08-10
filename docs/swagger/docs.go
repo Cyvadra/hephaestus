@@ -38,6 +38,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/configurations/catalog": {
+            "get": {
+                "description": "Returns names from the merged static-plus-database registry and registered tools/plugins.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "configurations"
+                ],
+                "summary": "List available configuration references",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Catalog"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/configurations/{kind}": {
             "get": {
                 "description": "Returns database-only configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.",
@@ -472,7 +498,7 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages": {
             "post": {
-                "description": "Sends a JSON user message or multipart form with text and repeated files into a session, then returns the assistant's reply.",
+                "description": "Sends a JSON user message or multipart form with text and repeated files into a session. Optional reasoning_effort overrides the identity for this turn; disabled_tools removes named tools from this turn only.",
                 "consumes": [
                     "application/json",
                     "multipart/form-data"
@@ -526,7 +552,7 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages/stream": {
             "post": {
-                "description": "Like sendMessage, including multipart file uploads, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_output\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
+                "description": "Like sendMessage, including per-turn reasoning_effort and disabled_tools overrides, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_output\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
                 "consumes": [
                     "application/json",
                     "multipart/form-data"
@@ -683,6 +709,9 @@ const docTemplate = `{
         "/sessions/{id}/regenerate": {
             "post": {
                 "description": "Re-answers the nearest ancestor user message on the session's active path, creating a sibling assistant branch rather than a new user message.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -697,6 +726,14 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Per-turn generation overrides",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.sendMessageRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -724,6 +761,9 @@ const docTemplate = `{
         "/sessions/{id}/regenerate/stream": {
             "post": {
                 "description": "Like regenerate, but streams typed assistant progress as Server-Sent Events, finishing with a \"done\" event.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "text/event-stream"
                 ],
@@ -738,6 +778,14 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Per-turn generation overrides",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.sendMessageRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -757,6 +805,59 @@ const docTemplate = `{
     "definitions": {
         "datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_store_SessionSettings": {
             "type": "object"
+        },
+        "github_com_Cyvadra_hephaestus_internal_registry.Catalog": {
+            "type": "object",
+            "properties": {
+                "concierges": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "identities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "impressions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "jobs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "plugins": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tool_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "workflows": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
         },
         "github_com_Cyvadra_hephaestus_internal_store.ChatMessage": {
             "type": "object",
@@ -836,6 +937,10 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
+                "enableWebSearch": {
+                    "description": "EnableWebSearch persists whether the web_search/web_fetch tools stay\nenabled for this session. Nil means \"not yet set\" and is treated as\nenabled by clients, keeping legacy sessions backward compatible.",
+                    "type": "boolean"
+                },
                 "flagArchived": {
                     "type": "boolean"
                 },
@@ -850,6 +955,10 @@ const docTemplate = `{
                 },
                 "projectID": {
                     "type": "integer"
+                },
+                "reasoningEffort": {
+                    "description": "ReasoningEffort is this session's persisted thinking mode\n(none/low/high/max), initialized from the identity at creation and\nupdated whenever the user changes the composer control. Empty is\nbackward compatible with legacy sessions, treated as the identity\ndefault by clients.",
+                    "type": "string"
                 },
                 "settings": {
                     "description": "Settings is the live, mutable configuration for this session.",
@@ -895,6 +1004,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "reasoning_effort": {
+                    "type": "string"
                 },
                 "tool_groups": {
                     "type": "array",
@@ -953,6 +1065,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.ChatMessage"
                     }
                 },
+                "reasoning_effort": {
+                    "type": "string"
+                },
                 "session": {
                     "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Session"
                 }
@@ -967,6 +1082,15 @@ const docTemplate = `{
                 "active_leaf_message_id": {
                     "description": "ActiveLeafMessageID, when set, switches the session onto this\nbranch before the message is processed (see design doc's session\nbranching semantics). Required for every continuation, per doc.",
                     "type": "integer"
+                },
+                "disabled_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reasoning_effort": {
+                    "type": "string"
                 },
                 "text": {
                     "type": "string"
@@ -1001,8 +1125,14 @@ const docTemplate = `{
                 "archived": {
                     "type": "boolean"
                 },
+                "enable_web_search": {
+                    "type": "boolean"
+                },
                 "pinned": {
                     "type": "boolean"
+                },
+                "reasoning_effort": {
+                    "type": "string"
                 },
                 "title": {
                     "type": "string"
