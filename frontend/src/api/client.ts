@@ -26,6 +26,18 @@ export const createProject = (name: string, description: string) =>
     body: JSON.stringify({ name, description }),
   })
 
+export const deleteProject = async (name: string, deleteDirectory = false) => {
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delete_directory: deleteDirectory }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(body.error ?? res.statusText)
+  }
+}
+
 export const listConcierges = () =>
   fetchJSON<ConciergeItem[]>(`${BASE}/concierges`)
 

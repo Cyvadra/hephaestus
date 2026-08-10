@@ -1,7 +1,8 @@
-import { Check, ChevronDown, FolderPlus, Plus } from 'lucide-react'
+import { Check, ChevronDown, FolderPlus, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { createProject, listProjects } from '../api/client'
+import { createProject, deleteProject, listProjects } from '../api/client'
 import type { Project } from '../api/types'
+import { useHoverMenu } from '../lib/useHoverMenu'
 
 interface Props {
   activeProject: string | null
@@ -11,23 +12,16 @@ interface Props {
 
 export default function ProjectSwitcher({ activeProject, onProjectChange, onProjectsLoaded }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
-  const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<Project | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const menu = useHoverMenu(rootRef)
 
   useEffect(() => {
     void reload()
-  }, [])
-
-  useEffect(() => {
-    const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
   }, [])
 
   async function reload() {
@@ -53,42 +47,41 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
       setName('')
       setDescription('')
       setCreating(false)
-      setOpen(false)
+      menu.close()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
   }
 
   const current = projects.find(project => project.Name === activeProject)
+  const defaultProject = projects.find(project => project.is_default)?.Name
   return (
-    <div className="project-switcher" ref={rootRef}>
+    <div className="project-switcher" ref={rootRef} onMouseEnter={menu.openOnHover} onMouseLeave={menu.scheduleClose}>
       <button
         className="project-switcher-trigger"
         type="button"
-        aria-expanded={open}
+        aria-expanded={menu.open}
         aria-haspopup="menu"
-        onClick={() => setOpen(current => !current)}
+        onClick={menu.togglePinned}
+        onFocus={menu.pinOpen}
       >
         <span className="project-switcher-name">{current?.Name ?? activeProject ?? 'Loading projects'}</span>
         <ChevronDown aria-hidden="true" size={15} strokeWidth={1.8} />
       </button>
-      {open && (
+      {menu.open && (
         <div className="project-switcher-menu" role="menu">
           <div className="project-switcher-list">
             {projects.map(project => (
-              <button
-                key={project.ID}
-                className="project-switcher-option"
-                type="button"
-                role="menuitem"
-                onClick={() => { onProjectChange(project.Name); setOpen(false) }}
-              >
-                <span>
-                  <strong>{project.Name}</strong>
-                  {project.Description && <small>{project.Description}</small>}
-                </span>
-                {project.Name === activeProject && <Check aria-label="当前项目" size={15} />}
-              </button>
+              <div className="project-switcher-option" key={project.ID} role="menuitem">
+                <button className="project-switcher-select" type="button" onClick={() => { onProjectChange(project.Name); menu.close() }}>
+                  <span>
+                    <strong>{project.Name}</strong>
+                    {project.Description && <small>{project.Description}</small>}
+                  </span>
+                  {project.Name === activeProject && <Check aria-label="当前项目" size={15} />}
+                </button>
+                {!project.is_default && <button className="project-switcher-delete" type="button" aria-label={`删除项目 ${project.Name}`} onClick={() => setDeleteCandidate(project)}><Trash2 aria-hidden="true" size={14} /></button>}
+              </div>
             ))}
           </div>
           <button className="project-switcher-create" type="button" onClick={() => setCreating(current => !current)}>
@@ -105,6 +98,29 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
           {error && <p className="project-switcher-error">{error}</p>}
         </div>
       )}
+      {deleteCandidate && <DeleteProjectDialog project={deleteCandidate} onClose={() => setDeleteCandidate(null)} onConfirm={async deleteDirectory => {
+        await deleteProject(deleteCandidate.Name, deleteDirectory)
+        setProjects(current => current.filter(project => project.ID !== deleteCandidate.ID))
+        if (deleteCandidate.Name === activeProject && defaultProject) onProjectChange(defaultProject)
+        setDeleteCandidate(null)
+      }} />}
     </div>
   )
+}
+
+function DeleteProjectDialog({ project, onClose, onConfirm }: { project: Project; onClose: () => void; onConfirm: (deleteDirectory: boolean) => Promise<void> }) {
+  const [confirmation, setConfirmation] = useState('')
+  const [deleteDirectory, setDeleteDirectory] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !deleting) onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [deleting, onClose])
+
+  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={() => { if (!deleting) onClose() }}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-project-title">删除项目？</h2><p>项目必须没有对话才能删除。请输入「{project.Name}」确认。</p>{error && <p className="project-switcher-error">{error}</p>}<input autoFocus value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder={project.Name} aria-label="输入项目名称确认" /><label className="project-delete-directory"><input type="checkbox" checked={deleteDirectory} onChange={event => setDeleteDirectory(event.target.checked)} disabled={deleting} />同时删除项目目录</label><div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>取消</button><button className="danger-button" type="button" disabled={confirmation !== project.Name || deleting} onClick={async () => { setDeleting(true); setError(null); try { await onConfirm(deleteDirectory) } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setDeleting(false) } }}>{deleting ? '删除中...' : '删除'}</button></div></div></div>
 }

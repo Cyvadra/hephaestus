@@ -110,6 +110,7 @@ export interface UploadResult {
 
 export interface ConciergeItem {
   name: string
+  description: string
   identity: string
   reasoning_effort: string
   impressions: string[]
@@ -160,6 +161,7 @@ export interface ToolGroupConfiguration {
 
 export interface ConciergeConfiguration {
   name: string
+  description: string
   identity: string
   impressions: string[]
   tool_groups: string[]

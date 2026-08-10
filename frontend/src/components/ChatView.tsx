@@ -457,8 +457,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
                     onClick={() => onChooseConcierge?.(concierge)}
                     aria-pressed={concierge.name === selectedConcierge?.name}
                   >
-                    <strong>{concierge.name}</strong>
-                    <p>{concierge.identity}</p>
+                    <strong>{concierge.identity}</strong>
+                    <p>{concierge.description}</p>
                     <CardTags label="工具组" values={concierge.tool_groups} />
                     <CardTags label="印象" values={concierge.impressions} />
                   </button>

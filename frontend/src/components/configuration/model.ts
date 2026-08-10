@@ -32,7 +32,7 @@ export function createEmptyConfiguration<K extends ConfigurationKind>(kind: K): 
     },
     impressions: { name: '', description: '', enabled: true, messages: [] },
     'tool-groups': { name: '', tools: [] },
-    concierges: { name: '', identity: '', impressions: [], tool_groups: [], plugins: [] },
+    concierges: { name: '', description: '', identity: '', impressions: [], tool_groups: [], plugins: [] },
     workflows: { name: '', description: '', concierge: '', input_schema: {}, output_schema: {}, steps: [] },
     jobs: { name: '', title: '', description: '', goal: '', workflows: [], trigger: 'false', max_executions_per_day: 1 },
   }
