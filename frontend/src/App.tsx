@@ -27,14 +27,18 @@ export default function App() {
     localStorage.setItem(LAST_SESSION_ID_KEY, String(id))
   }, [])
 
+  const handleConciergeResolved = useCallback((conciergeId: string) => {
+    setLastConciergeId(conciergeId)
+    localStorage.setItem(LAST_CONCIERGE_ID_KEY, conciergeId)
+  }, [])
+
   const handleStartDraft = useCallback((concierge: ConciergeItem) => {
     setSessionId(null)
     setDraftConcierge(concierge)
     setIsChoosingConcierge(false)
-    setLastConciergeId(concierge.name)
     localStorage.removeItem(LAST_SESSION_ID_KEY)
-    localStorage.setItem(LAST_CONCIERGE_ID_KEY, concierge.name)
-  }, [])
+    handleConciergeResolved(concierge.name)
+  }, [handleConciergeResolved])
 
   const handleOpenNewSession = useCallback(() => {
     setSessionId(null)
@@ -92,6 +96,7 @@ export default function App() {
           isChoosingConcierge={isChoosingConcierge}
           defaultConciergeId={lastConciergeId}
           onChooseConcierge={handleStartDraft}
+          onDefaultConciergeResolved={handleConciergeResolved}
           onSessionCreated={handleSessionCreated}
           onSessionUpdated={handleSessionUpdated}
           project={project}

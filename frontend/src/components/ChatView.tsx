@@ -14,11 +14,12 @@ interface Props {
   isChoosingConcierge?: boolean
   defaultConciergeId?: string | null
   onChooseConcierge?: (concierge: ConciergeItem) => void
+  onDefaultConciergeResolved?: (conciergeId: string) => void
   onSessionCreated?: (id: number) => void
   onSessionUpdated?: (session: Session) => void
 }
 
-export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, onChooseConcierge, onSessionCreated, onSessionUpdated }: Props) {
+export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -66,8 +67,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   useEffect(() => {
     if (!isChoosingConcierge) return
-    void listConcierges().then(setConcierges).catch((cause: unknown) => setError(String(cause)))
-  }, [isChoosingConcierge])
+    void listConcierges().then(items => {
+      setConcierges(items)
+      if (defaultConciergeId != null && !items.some(concierge => concierge.name === defaultConciergeId)) {
+        const fallback = items[0]
+        if (fallback) onDefaultConciergeResolved?.(fallback.name)
+      }
+    }).catch((cause: unknown) => setError(String(cause)))
+  }, [isChoosingConcierge, defaultConciergeId, onDefaultConciergeResolved])
 
   // 历史加载 / 切换会话 / 编辑完成：整段内容被替换，直接瞬间跳到最新位置，
   // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。
@@ -93,7 +100,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const childrenMap = buildChildrenMap(messages)
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
-  const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? null
+  const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? (defaultConciergeId != null ? concierges[0] ?? null : null)
 
   const handleSend = useCallback(async (text: string, leafOverride?: number) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
