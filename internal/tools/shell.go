@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/interaction"
@@ -16,7 +18,47 @@ const (
 	// defaultCommandTimeout is used when NewShellTool receives a zero timeout.
 	defaultCommandTimeout = 30 * time.Second
 	defaultWaitDelay      = 2 * time.Second
+	maxRetainedOutput     = 1024 * 1024
 )
+
+type streamingOutputWriter struct {
+	ctx       context.Context
+	mu        sync.Mutex
+	retained  []byte
+	truncated bool
+}
+
+func (w *streamingOutputWriter) Write(chunk []byte) (int, error) {
+	w.mu.Lock()
+	if len(chunk) >= maxRetainedOutput {
+		w.retained = append(w.retained[:0], chunk[len(chunk)-maxRetainedOutput:]...)
+		w.truncated = true
+	} else {
+		overflow := len(w.retained) + len(chunk) - maxRetainedOutput
+		if overflow > 0 {
+			copy(w.retained, w.retained[overflow:])
+			w.retained = w.retained[:len(w.retained)-overflow]
+			w.truncated = true
+		}
+		w.retained = append(w.retained, chunk...)
+	}
+	w.mu.Unlock()
+	// Reported outside the lock: the caller may be a slow SSE consumer, and
+	// this must not back-pressure into the command's stdout/stderr drain.
+	toolkit.ReportOutput(w.ctx, string(chunk))
+	return len(chunk), nil
+}
+
+func (w *streamingOutputWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.truncated {
+		return "[earlier output omitted]\n" + string(w.retained)
+	}
+	return string(w.retained)
+}
+
+var _ io.Writer = (*streamingOutputWriter)(nil)
 
 // ShellTool runs one shell command in the current Project. It intentionally
 // exposes ordinary shell semantics only: use standard shell commands for
@@ -140,14 +182,17 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 		return killProcessGroup(cmd.Process)
 	}
 	cmd.WaitDelay = defaultWaitDelay
-	output, err := cmd.CombinedOutput()
+	output := &streamingOutputWriter{ctx: execCtx}
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
 	if execCtx.Err() == context.DeadlineExceeded {
-		return toolkit.ErrorResult(fmt.Sprintf("shell: command timed out after %s\n%s", timeout, output))
+		return toolkit.ErrorResult(fmt.Sprintf("shell: command timed out after %s\n%s", timeout, output.String()))
 	}
 	if err != nil {
-		return toolkit.ErrorResult(fmt.Sprintf("shell: %v\n%s", err, output))
+		return toolkit.ErrorResult(fmt.Sprintf("shell: %v\n%s", err, output.String()))
 	}
-	return toolkit.SilentResult(string(output))
+	return toolkit.SilentResult(output.String())
 }
 
 func commandFor(ctx context.Context, command, dir string) *exec.Cmd {

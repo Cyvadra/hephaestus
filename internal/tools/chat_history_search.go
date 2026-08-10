@@ -34,7 +34,7 @@ func NewChatHistorySearchTool(db *gorm.DB, sessions *session.Service) *ChatHisto
 
 func (ChatHistorySearchTool) Name() string { return "chat_history_search" }
 func (ChatHistorySearchTool) Description() string {
-	return "Searches this session's (or, if scope=all, every session in the same Project's) active chat history " +
+	return "Searches every session in the same Project's chat history " +
 		"by keyword and/or regex, returning matched messages with surrounding context."
 }
 
@@ -55,10 +55,9 @@ func (ChatHistorySearchTool) Parameters() map[string]any {
 				"type":        "integer",
 				"description": "How many messages before/after each match to include for context. Default 2, max 5.",
 			},
-			"scope": map[string]any{
-				"type":        "string",
-				"enum":        []string{"session", "all"},
-				"description": "'session' (default) searches only the calling session; 'all' searches every non-archived session in the same Project, most recently active first.",
+			"include_archived": map[string]any{
+				"type":        "boolean",
+				"description": "Whether to include archived sessions. Defaults to true.",
 			},
 		},
 	}
@@ -68,7 +67,7 @@ type chatHistorySearchArgs struct {
 	Keywords             []string `json:"keywords"`
 	Regex                string   `json:"regex"`
 	NumNeighbourMessages int      `json:"num_neighbour_messages"`
-	Scope                string   `json:"scope"`
+	IncludeArchived      *bool    `json:"include_archived"`
 }
 
 const (
@@ -102,7 +101,7 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 		return toolkit.ErrorResult("chat_history_search: at least one of keywords or regex is required")
 	}
 
-	sessions, err := t.targetSessions(ctx, args.Scope)
+	sessions, err := t.targetSessions(ctx, args.IncludeArchived == nil || *args.IncludeArchived)
 	if err != nil {
 		return toolkit.ErrorResult(fmt.Sprintf("chat_history_search: %s", err))
 	}
@@ -169,7 +168,7 @@ func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, erro
 	return args, nil
 }
 
-func (t ChatHistorySearchTool) targetSessions(ctx context.Context, scope string) ([]store.Session, error) {
+func (t ChatHistorySearchTool) targetSessions(ctx context.Context, includeArchived bool) ([]store.Session, error) {
 	sessionID, ok := toolkit.SessionIDFromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("no session in context")
@@ -178,16 +177,15 @@ func (t ChatHistorySearchTool) targetSessions(ctx context.Context, scope string)
 	if err := t.db.First(&caller, sessionID).Error; err != nil {
 		return nil, fmt.Errorf("load session %d: %w", sessionID, err)
 	}
-	if scope == "all" {
-		var sessions []store.Session
-		if err := t.db.Where("flag_archived = ? AND project_id = ?", false, caller.ProjectID).
-			Order("updated_at DESC").
-			Find(&sessions).Error; err != nil {
-			return nil, fmt.Errorf("list sessions: %w", err)
-		}
-		return sessions, nil
+	query := t.db.Where("project_id = ?", caller.ProjectID)
+	if !includeArchived {
+		query = query.Where("flag_archived = ?", false)
 	}
-	return []store.Session{caller}, nil
+	var sessions []store.Session
+	if err := query.Order("updated_at DESC").Find(&sessions).Error; err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	return sessions, nil
 }
 
 // matchedIndices returns the indices of messages in path that match the
