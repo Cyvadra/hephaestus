@@ -63,6 +63,7 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 	api.GET("/concierges", s.listConcierges)
 	api.GET("/projects", s.listProjects)
 	api.POST("/projects", s.createProject)
+	api.GET("/configurations/catalog", s.configurationCatalog)
 	api.GET("/configurations/:kind", s.listConfigurations)
 	api.POST("/configurations/:kind", s.createConfiguration)
 	api.GET("/configurations/:kind/:name", s.getConfiguration)

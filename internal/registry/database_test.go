@@ -42,3 +42,22 @@ func TestValidatePersistedName(t *testing.T) {
 		t.Fatalf("validate non-empty persisted name: %v", err)
 	}
 }
+
+func TestCatalogNameHelpers_SortAndFilter(t *testing.T) {
+	mapNames := sortedMapKeys(map[string]Identity{
+		"zeta":  {Name: "zeta"},
+		"alpha": {Name: "alpha"},
+	})
+	if len(mapNames) != 2 || mapNames[0] != "alpha" || mapNames[1] != "zeta" {
+		t.Fatalf("unexpected sorted map names: %v", mapNames)
+	}
+
+	boolNames := sortedBoolKeys(map[string]bool{
+		"web_search": true,
+		"disabled":   false,
+		"shell":      true,
+	})
+	if len(boolNames) != 2 || boolNames[0] != "shell" || boolNames[1] != "web_search" {
+		t.Fatalf("unexpected sorted boolean names: %v", boolNames)
+	}
+}

@@ -12,6 +12,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// configurationCatalog godoc
+//
+//	@Summary		List available configuration references
+//	@Description	Returns names from the merged static-plus-database registry and registered tools/plugins.
+//	@Tags			configurations
+//	@Produce		json
+//	@Success		200	{object}	registry.Catalog
+//	@Failure		500	{object}	errorResponse
+//	@Router			/configurations/catalog [get]
+func (s *Server) configurationCatalog(c *gin.Context) {
+	catalog, err := s.configs.Catalog()
+	if err != nil {
+		configurationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, catalog)
+}
+
 // listConfigurations godoc
 //
 //	@Summary		List persisted configurations

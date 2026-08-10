@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"gorm.io/gorm"
@@ -37,6 +38,19 @@ type Service struct {
 	mu           sync.Mutex
 }
 
+// Catalog is the complete set of names available for configuration references.
+// It includes the static baseline, database overlays, and registered tools/plugins.
+type Catalog struct {
+	Identities  []string `json:"identities"`
+	Impressions []string `json:"impressions"`
+	ToolGroups  []string `json:"tool_groups"`
+	Concierges  []string `json:"concierges"`
+	Workflows   []string `json:"workflows"`
+	Jobs        []string `json:"jobs"`
+	Tools       []string `json:"tools"`
+	Plugins     []string `json:"plugins"`
+}
+
 func NewService(db *gorm.DB, static *Registry, knownTools, knownPlugins map[string]bool) (*Service, error) {
 	if db == nil {
 		return nil, fmt.Errorf("registry: database is required")
@@ -50,6 +64,48 @@ func NewService(db *gorm.DB, static *Registry, knownTools, knownPlugins map[stri
 		knownTools:   cloneMap(knownTools),
 		knownPlugins: cloneMap(knownPlugins),
 	}, nil
+}
+
+// Catalog returns names from the registry that would become active after a
+// restart, plus names registered directly by the host application.
+func (s *Service) Catalog() (Catalog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	reg, err := LoadDatabase(s.db, s.static)
+	if err != nil {
+		return Catalog{}, err
+	}
+	return Catalog{
+		Identities:  sortedMapKeys(reg.Identities),
+		Impressions: sortedMapKeys(reg.Impressions),
+		ToolGroups:  sortedMapKeys(reg.ToolGroups),
+		Concierges:  sortedMapKeys(reg.Concierges),
+		Workflows:   sortedMapKeys(reg.Workflows),
+		Jobs:        sortedMapKeys(reg.Jobs),
+		Tools:       sortedBoolKeys(s.knownTools),
+		Plugins:     sortedBoolKeys(s.knownPlugins),
+	}, nil
+}
+
+func sortedMapKeys[T any](values map[string]T) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedBoolKeys(values map[string]bool) []string {
+	names := make([]string, 0, len(values))
+	for name, known := range values {
+		if known {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (s *Service) List(kind Kind) (any, error) {
