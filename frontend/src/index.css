@@ -5554,6 +5554,11 @@ body {
     transform: translateY(-1px)
 }
 
+.concierge-card.selected {
+    border-color: var(--dsw-alias-brand-primary);
+    box-shadow: 0 0 0 1px var(--dsw-alias-brand-primary)
+}
+
 .concierge-card > strong {
     display: block;
     font-size: 16px;

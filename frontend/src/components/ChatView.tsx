@@ -12,12 +12,13 @@ interface Props {
 	project: string | null
   draftConcierge?: ConciergeItem | null
   isChoosingConcierge?: boolean
+  defaultConciergeId?: string | null
   onChooseConcierge?: (concierge: ConciergeItem) => void
   onSessionCreated?: (id: number) => void
   onSessionUpdated?: (session: Session) => void
 }
 
-export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, onChooseConcierge, onSessionCreated, onSessionUpdated }: Props) {
+export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, onChooseConcierge, onSessionCreated, onSessionUpdated }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -92,6 +93,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const childrenMap = buildChildrenMap(messages)
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
+  const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? null
 
   const handleSend = useCallback(async (text: string, leafOverride?: number) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
@@ -122,11 +124,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     try {
       let targetSessionId = resolvedSessionId
       if (targetSessionId == null) {
-        if (!draftConcierge) {
+        if (!selectedConcierge) {
           throw new Error('请先选择顾问再开始新会话')
         }
         if (project == null) throw new Error('No project selected')
-        const created = await createSession(draftConcierge.name, project)
+        const created = await createSession(selectedConcierge.name, project)
         targetSessionId = created.ID
         setResolvedSessionId(created.ID)
         onSessionCreated?.(created.ID)
@@ -163,7 +165,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       setStreamingActivities([])
       setOptimisticUserMessage(null)
     }
-  }, [resolvedSessionId, draftConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated])
+  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -266,7 +268,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       <header className="chat-header">
         <div>
           <h2 className="chat-header-title">
-            {resolvedSessionId == null ? `新会话${draftConcierge ? ` · ${draftConcierge.name}` : ''}` : '对话内容'}
+            {resolvedSessionId == null ? `新会话${selectedConcierge ? ` · ${selectedConcierge.name}` : ''}` : '对话内容'}
           </h2>
         </div>
         <div className="chat-badge">
@@ -282,9 +284,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               <div className="concierge-card-grid">
                 {concierges.map(concierge => (
                   <button
-                    className="concierge-card"
+                    className={'concierge-card' + (concierge.name === selectedConcierge?.name ? ' selected' : '')}
                     key={concierge.name}
                     onClick={() => onChooseConcierge?.(concierge)}
+                    aria-pressed={concierge.name === selectedConcierge?.name}
                   >
                     <strong>{concierge.name}</strong>
                     <p>{concierge.identity}</p>
@@ -293,19 +296,19 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
                   </button>
                 ))}
               </div>
-            ) : draftConcierge && (
+            ) : selectedConcierge && (
               <div className="concierge-details">
                 <div className="concierge-detail">
                   <span>顾问</span>
-                  <strong>{draftConcierge.name}</strong>
+                  <strong>{selectedConcierge.name}</strong>
                 </div>
                 <div className="concierge-detail">
                   <span>身份</span>
-                  <p>{draftConcierge.identity}</p>
+                  <p>{selectedConcierge.identity}</p>
                 </div>
-                <DetailList label="印象" values={draftConcierge.impressions} />
-                <DetailList label="工具组" values={draftConcierge.tool_groups} />
-                <DetailList label="插件" values={draftConcierge.plugins} />
+                <DetailList label="印象" values={selectedConcierge.impressions} />
+                <DetailList label="工具组" values={selectedConcierge.tool_groups} />
+                <DetailList label="插件" values={selectedConcierge.plugins} />
               </div>
             )}
           </div>

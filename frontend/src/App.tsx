@@ -3,11 +3,20 @@ import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
 import type { ConciergeItem, Session } from './api/types'
 
+const LAST_SESSION_ID_KEY = 'hephaestus.lastSessionId'
+const LAST_CONCIERGE_ID_KEY = 'hephaestus.lastConciergeId'
+
+function readStoredSessionId(): number | null {
+  const value = Number(localStorage.getItem(LAST_SESSION_ID_KEY))
+  return Number.isInteger(value) && value > 0 ? value : null
+}
+
 export default function App() {
   const [project, setProject] = useState<string | null>(() => localStorage.getItem('hephaestus.activeProject'))
-  const [sessionId, setSessionId] = useState<number | null>(null)
+  const [sessionId, setSessionId] = useState<number | null>(readStoredSessionId)
   const [draftConcierge, setDraftConcierge] = useState<ConciergeItem | null>(null)
-  const [isChoosingConcierge, setIsChoosingConcierge] = useState(false)
+  const [lastConciergeId, setLastConciergeId] = useState<string | null>(() => localStorage.getItem(LAST_CONCIERGE_ID_KEY))
+  const [isChoosingConcierge, setIsChoosingConcierge] = useState(() => readStoredSessionId() == null)
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0)
   const [sidebarSessionUpdate, setSidebarSessionUpdate] = useState<Session | null>(null)
 
@@ -15,18 +24,23 @@ export default function App() {
     setDraftConcierge(null)
     setIsChoosingConcierge(false)
     setSessionId(id)
+    localStorage.setItem(LAST_SESSION_ID_KEY, String(id))
   }, [])
 
   const handleStartDraft = useCallback((concierge: ConciergeItem) => {
     setSessionId(null)
     setDraftConcierge(concierge)
     setIsChoosingConcierge(false)
+    setLastConciergeId(concierge.name)
+    localStorage.removeItem(LAST_SESSION_ID_KEY)
+    localStorage.setItem(LAST_CONCIERGE_ID_KEY, concierge.name)
   }, [])
 
   const handleOpenNewSession = useCallback(() => {
     setSessionId(null)
     setDraftConcierge(null)
     setIsChoosingConcierge(true)
+    localStorage.removeItem(LAST_SESSION_ID_KEY)
   }, [])
 
   const handleProjectChange = useCallback((nextProject: string) => {
@@ -34,7 +48,8 @@ export default function App() {
     setProject(nextProject)
     setSessionId(null)
     setDraftConcierge(null)
-    setIsChoosingConcierge(false)
+    setIsChoosingConcierge(true)
+    localStorage.removeItem(LAST_SESSION_ID_KEY)
   }, [])
 
   const handleProjectsLoaded = useCallback((defaultProject: string) => {
@@ -50,6 +65,7 @@ export default function App() {
     setDraftConcierge(null)
     setIsChoosingConcierge(false)
     setSidebarRefreshKey(v => v + 1)
+    localStorage.setItem(LAST_SESSION_ID_KEY, String(id))
   }, [])
 
   const handleSessionUpdated = useCallback((session: Session) => {
@@ -70,42 +86,16 @@ export default function App() {
         onOpenNewSession={handleOpenNewSession}
       />
       <main className="main-panel">
-        {sessionId != null || draftConcierge != null || isChoosingConcierge ? (
-          <ChatView
-            sessionId={sessionId}
-            draftConcierge={draftConcierge}
-            isChoosingConcierge={isChoosingConcierge}
-            onChooseConcierge={handleStartDraft}
-            onSessionCreated={handleSessionCreated}
-            onSessionUpdated={handleSessionUpdated}
-            project={project}
-          />
-        ) : (
-          <section className="chat-surface">
-            <header className="chat-header">
-              <div>
-                <p className="chat-header-eyebrow">Workspace</p>
-                <h2 className="chat-header-title">选择一段对话</h2>
-              </div>
-              <div className="chat-badge">
-                <span className="chat-dot" />
-                就绪
-              </div>
-            </header>
-            <div className="messages-pane">
-              <div className="welcome-card">
-                <span className="welcome-badge">轻量 AI 工作台</span>
-                <h1>从侧边栏开始新的对话</h1>
-                <p>在这里可以整理提示词、查看代码、继续上下文，界面会更像一个专注的智能助手工作区。</p>
-                <div className="quick-pill-row">
-                  <span className="quick-pill">代码评审</span>
-                  <span className="quick-pill">调试助手</span>
-                  <span className="quick-pill">产品方案</span>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+        <ChatView
+          sessionId={sessionId}
+          draftConcierge={draftConcierge}
+          isChoosingConcierge={isChoosingConcierge}
+          defaultConciergeId={lastConciergeId}
+          onChooseConcierge={handleStartDraft}
+          onSessionCreated={handleSessionCreated}
+          onSessionUpdated={handleSessionUpdated}
+          project={project}
+        />
       </main>
     </div>
   )
