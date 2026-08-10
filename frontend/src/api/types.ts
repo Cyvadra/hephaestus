@@ -39,6 +39,7 @@ export interface ChatMessage {
   Timestamp: string
   Role: 'user' | 'assistant' | 'tool' | 'system'
   Content: string
+  Status: 'complete' | 'incomplete' | ''
   ReasoningContent: string
   ToolCalls: ToolCall[] | null
   ToolCallID: string
@@ -60,7 +61,10 @@ export interface StreamToolCall {
   name?: string
   arguments?: string
   result?: string
-  status: 'calling' | 'complete'
+  status: 'calling' | 'complete' | 'error'
+  output_cursor?: number
+  output_pending_control?: string
+  output_carriage_return?: boolean
 }
 
 export interface InteractionRequest {

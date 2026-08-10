@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { Archive, ChevronRight, MoreHorizontal, Pencil, Pin, Plus, Settings, Trash2 } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react'
+import { Check, ChevronRight, Pencil, Pin, Plus, Settings, Trash2, Undo2 } from 'lucide-react'
 import { deleteSession, listSessions, updateSession } from '../api/client'
 import type { Session, ConciergeItem } from '../api/types'
 import ProjectSwitcher from './ProjectSwitcher'
@@ -44,7 +44,7 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
   useEffect(() => {
     if (menuSessionId == null) return
     const handlePointerDown = (event: MouseEvent) => {
-      if (!(event.target as HTMLElement | null)?.closest('.session-menu, .session-menu-trigger')) setMenuSessionId(null)
+      if (!(event.target as HTMLElement | null)?.closest('.session-menu')) setMenuSessionId(null)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMenuSessionId(null)
@@ -75,7 +75,7 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
         pinned={isPinned(s)}
         renaming={s.ID === renamingId}
         onSelect={onSelect}
-        onMenuToggle={() => setMenuSessionId(current => current === s.ID ? null : s.ID)}
+        onMenuOpen={() => setMenuSessionId(s.ID)}
         onRenameStart={() => { setRenamingId(s.ID); setMenuSessionId(null) }}
         onRenameSubmit={title => void handleRenameSubmit(s, title)}
         onRenameCancel={() => setRenamingId(null)}
@@ -168,24 +168,52 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
   }
 }
 
-function SessionItem({ session, active, menuOpen, pinned, renaming, onSelect, onMenuToggle, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menuOpen: boolean; pinned: boolean; renaming: boolean; onSelect: (id: number) => void; onMenuToggle: () => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
+function SessionItem({ session, active, menuOpen, pinned, renaming, onSelect, onMenuOpen, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menuOpen: boolean; pinned: boolean; renaming: boolean; onSelect: (id: number) => void; onMenuOpen: () => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
   const label = session.Title || `Session #${session.ID}`
+  const titleRef = useRef<HTMLSpanElement>(null)
+  const [titleScroll, setTitleScroll] = useState({ distance: 0, duration: 0 })
+
+  useEffect(() => {
+    const title = titleRef.current
+    if (!title) return
+
+    const updateTitleScroll = () => {
+      const distance = Math.max(0, title.scrollWidth - title.clientWidth)
+      setTitleScroll(current => {
+        const duration = distance > 0 ? Math.max(0.5, distance / 100) : 0
+        return current.distance === distance && current.duration === duration ? current : { distance, duration }
+      })
+    }
+    const observer = new ResizeObserver(updateTitleScroll)
+    observer.observe(title)
+    updateTitleScroll()
+    return () => observer.disconnect()
+  }, [label])
+
+  const titleStyle = {
+    '--session-title-scroll-distance': `${titleScroll.distance}px`,
+    '--session-title-scroll-duration': `${titleScroll.duration}s`,
+  } as CSSProperties
+
   return (
-    <div className={'session-item-wrap' + (active ? ' active' : '') + (menuOpen ? ' menu-open' : '')}>
+    <div className={'session-item-wrap' + (active ? ' active' : '') + (menuOpen ? ' menu-open' : '')} onContextMenu={event => { event.preventDefault(); onMenuOpen() }}>
       {renaming ? (
         <RenameInput defaultValue={label} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
       ) : (
         <>
           <button onClick={() => onSelect(session.ID)} className="session-item">
-            <span className="session-item-title">{label}</span>
+            <span ref={titleRef} className={'session-item-title' + (titleScroll.distance > 0 ? ' overflowing' : '')} style={titleStyle}>
+              <span className="session-item-title-text">{label}</span>
+            </span>
+          </button>
+          <button className="session-item-archive" type="button" aria-label={`${session.FlagArchived ? '取消归档' : '归档'} ${label}`} onClick={event => { event.stopPropagation(); onArchive() }}>
+            {session.FlagArchived ? <Undo2 aria-hidden="true" size={13} /> : <Check aria-hidden="true" size={14} />}
           </button>
           <button className={'session-item-pin' + (pinned ? ' pinned' : '')} type="button" aria-label={`${pinned ? '取消置顶' : '置顶'} ${label}`} onClick={event => { event.stopPropagation(); onPin() }}><Pin aria-hidden="true" size={12} /></button>
-          <button className="session-menu-trigger" type="button" aria-label={`${label} 的操作菜单`} aria-expanded={menuOpen} onClick={event => { event.stopPropagation(); onMenuToggle() }}><MoreHorizontal aria-hidden="true" size={16} /></button>
         </>
       )}
       {menuOpen && !renaming && <div className="session-menu" role="menu">
         <button type="button" role="menuitem" onClick={onRenameStart}><Pencil aria-hidden="true" size={16} />重命名</button>
-        <button type="button" role="menuitem" onClick={onArchive}><Archive aria-hidden="true" size={16} />{session.FlagArchived ? '取消归档' : '归档'}</button>
         <button className="danger" type="button" role="menuitem" onClick={onDelete}><Trash2 aria-hidden="true" size={16} />删除</button>
       </div>}
     </div>

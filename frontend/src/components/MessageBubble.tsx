@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy, Pencil, RefreshCw } from 'lucide-react'
+import { Check, Copy, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
 import { siblings, descendToLeaf } from '../lib/tree'
@@ -15,9 +15,10 @@ interface Props {
   editSaving?: boolean
   editDisabled?: boolean
   onRegenerate?: () => void
+  onContinue?: () => void
 }
 
-export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, onRegenerate }: Props) {
+export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, onRegenerate, onContinue }: Props) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(msg.Content)
   const [editReasoning, setEditReasoning] = useState(msg.ReasoningContent)
@@ -186,6 +187,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
               )}
               {msg.Content && (
                 <div className="message-card assistant">
+                  {msg.Status === 'incomplete' && <span className="message-status incomplete">异常终止</span>}
                   <div className="message-body">
                     <Markdown>{msg.Content}</Markdown>
                   </div>
@@ -217,6 +219,16 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                     title="重新生成"
                   >
                     <RefreshCw />
+                  </button>
+                )}
+                {onContinue && (
+                  <button
+                    onClick={onContinue}
+                    className="message-action-btn message-icon-btn"
+                    aria-label="继续生成"
+                    title="继续生成"
+                  >
+                    <StepForward />
                   </button>
                 )}
               </div>

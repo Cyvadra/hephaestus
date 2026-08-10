@@ -4,6 +4,7 @@ export type StreamEvent =
   | { sequence: number; type: 'delta'; data: string }
   | { sequence: number; type: 'reasoning'; data: string }
   | { sequence: number; type: 'tool_call'; data: StreamToolCall }
+  | { sequence: number; type: 'tool_output'; data: StreamToolCall }
   | { sequence: number; type: 'tool_result'; data: StreamToolCall }
   | { sequence: number; type: 'session_updated'; data: Session }
   | { sequence: number; type: 'ask_permission'; data: InteractionRequest }
@@ -57,6 +58,13 @@ export async function* streamRegenerate(sessionId: number, signal?: AbortSignal)
   })
 }
 
+export async function* streamContinue(sessionId: number, messageId: number, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
+   yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/${messageId}/continue/stream`, {
+    method: 'POST',
+    signal,
+  })
+}
+
 async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {
   const res = await fetch(url, init)
 
@@ -100,7 +108,7 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
       yield { sequence: envelope.sequence, type: 'delta', data: requireString(envelope.data) }
     } else if (eventName === 'reasoning') {
       yield { sequence: envelope.sequence, type: 'reasoning', data: requireString(envelope.data) }
-    } else if (eventName === 'tool_call' || eventName === 'tool_result') {
+    } else if (eventName === 'tool_call' || eventName === 'tool_output' || eventName === 'tool_result') {
       yield { sequence: envelope.sequence, type: eventName, data: envelope.data as StreamToolCall }
     } else if (eventName === 'session_updated') {
       yield { sequence: envelope.sequence, type: 'session_updated', data: envelope.data as Session }

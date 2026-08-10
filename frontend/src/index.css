@@ -5227,12 +5227,12 @@ body {
     gap: 6px;
     width: 100%;
     padding: 8px 10px 8px 22px;
-    display: flex
+    display: flex;
+    transition: padding-right .15s ease
 }
 
-.session-item-wrap:hover .session-item-title,.session-item-wrap:focus-within .session-item-title,.session-item-wrap.menu-open .session-item-title,.session-item-wrap.active .session-item-title {
-    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 50px), transparent 100%);
-    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 50px), transparent 100%)
+.session-item-wrap:hover .session-item,.session-item-wrap:focus-within .session-item {
+    padding-right: 66px
 }
 
 .session-item-pin {
@@ -5255,24 +5255,7 @@ body {
     outline: 2px solid color-mix(in srgb, var(--dsw-alias-button-primary-fill) 20%, transparent)
 }
 
-.session-menu-trigger {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    color: var(--dsw-alias-label-tertiary);
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
-    cursor: pointer;
-    opacity: 0
-}
-
-.session-item-pin {
+.session-item-archive {
     position: absolute;
     top: 6px;
     right: 34px;
@@ -5289,21 +5272,28 @@ body {
     opacity: 0
 }
 
-.session-item-pin.pinned,.session-item-wrap:hover .session-item-pin,.session-item-wrap:focus-within .session-item-pin {
+.session-item-pin {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    color: var(--dsw-alias-label-tertiary);
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0
+}
+
+.session-item-wrap:hover .session-item-archive,.session-item-wrap:focus-within .session-item-archive,.session-item-wrap:hover .session-item-pin,.session-item-wrap:focus-within .session-item-pin,.session-item-pin.pinned {
     opacity: 1
 }
 
-.session-item-pin:hover,.session-item-pin:focus-visible {
-    color: var(--dsw-alias-label-primary);
-    background: var(--dsw-alias-interactive-bg-hover);
-    outline: none
-}
-
-.session-item-wrap:hover .session-menu-trigger,.session-menu-trigger:focus-visible,.session-menu-trigger[aria-expanded="true"] {
-    opacity: 1
-}
-
-.session-menu-trigger:hover,.session-menu-trigger:focus-visible {
+.session-item-archive:hover,.session-item-archive:focus-visible,.session-item-pin:hover,.session-item-pin:focus-visible {
     color: var(--dsw-alias-label-primary);
     background: var(--dsw-alias-interactive-bg-hover);
     outline: none
@@ -5377,13 +5367,32 @@ body {
 .session-dialog-actions button:disabled { cursor: not-allowed; opacity: .55 }
 
 .session-item-title {
-    text-overflow: ellipsis;
     white-space: nowrap;
     overflow: hidden;
     flex: 1;
     min-width: 0;
     font-size: 13px;
     line-height: 20px
+}
+
+.session-item-title-text {
+    display: inline-block;
+    min-width: max-content
+}
+
+.session-item-wrap:hover .session-item-title.overflowing .session-item-title-text,.session-item-wrap:focus-within .session-item-title.overflowing .session-item-title-text {
+    animation: session-title-scroll calc(var(--session-title-scroll-duration) + 1s) ease-in-out .3s infinite alternate
+}
+
+@keyframes session-title-scroll {
+    0%,12% { transform: translateX(0) }
+    88%,100% { transform: translateX(calc(-1 * var(--session-title-scroll-distance))) }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .session-item-wrap:hover .session-item-title.overflowing .session-item-title-text,.session-item-wrap:focus-within .session-item-title.overflowing .session-item-title-text {
+        animation: none
+    }
 }
 
 .sidebar-footer {
@@ -5673,6 +5682,14 @@ body {
     background: var(--dsw-alias-bg-layer-1)
 }
 
+.message-status.incomplete {
+    display: inline-block;
+    margin: 0 0 8px;
+    color: #b42318;
+    font-size: .78rem;
+    font-weight: 600;
+}
+
 .message-card.system,.command-block {
     color: var(--dsw-alias-label-secondary);
     background: var(--dsw-alias-bg-module-platform)
@@ -5840,6 +5857,10 @@ body {
     background: var(--dsw-alias-state-success-primary)
 }
 
+.tool-status-dot[data-status="error"] {
+    background: var(--dsw-alias-state-error-primary)
+}
+
 @keyframes tool-status-pulse {
     50% { opacity: .35 }
 }
@@ -5884,38 +5905,6 @@ body {
 
 .generation-progress .message-card {
     margin-top: 8px
-}
-
-.permission-activity {
-    border: 1px solid var(--dsw-alias-border-l2);
-    background: var(--dsw-alias-bg-module-platform);
-    border-radius: 7px;
-    margin-top: 8px;
-    padding: 10px
-}
-
-.permission-activity pre {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    margin: 8px 0;
-    color: var(--dsw-alias-label-secondary)
-}
-
-.permission-actions {
-    display: flex;
-    gap: 8px
-}
-
-.permission-actions button {
-    border-radius: 6px;
-    padding: 5px 10px;
-    background: var(--dsw-alias-button-primary-fill);
-    color: var(--dsw-alias-button-primary-label)
-}
-
-.permission-actions .permission-deny {
-    background: var(--dsw-alias-interactive-bg-hover-danger);
-    color: var(--dsw-alias-state-error-primary)
 }
 
 .streaming-cursor {
@@ -6010,6 +5999,19 @@ body {
 
 .message-editor-actions {
     justify-content: flex-end
+}
+
+.permission-response-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap
+}
+
+.permission-approve-pulse:not(:disabled) {
+    animation: permission-approve-pulse 1s ease-in-out infinite
+}
+
+@keyframes permission-approve-pulse {
+    50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-button-primary-fill) 28%, transparent) }
 }
 
 .assistant-message-editor {
