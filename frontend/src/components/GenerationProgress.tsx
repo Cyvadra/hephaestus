@@ -1,16 +1,18 @@
 import Markdown from './Markdown'
-import type { StreamToolCall } from '../api/types'
+import type { InteractionRequest, StreamToolCall } from '../api/types'
 
 export type StreamActivity =
   | { type: 'reasoning'; sequence: number; content: string }
   | { type: 'tool'; sequence: number; toolCall: StreamToolCall }
+	| { type: 'permission'; sequence: number; request: InteractionRequest }
 
 interface Props {
   content: string
   activities: StreamActivity[]
+	onRespondToPermission?: (request: InteractionRequest, approved: boolean) => void
 }
 
-export default function GenerationProgress({ content, activities }: Props) {
+export default function GenerationProgress({ content, activities, onRespondToPermission }: Props) {
   return (
     <div className="message-stack generation-progress">
       <details className="reasoning-panel" open>
@@ -21,8 +23,10 @@ export default function GenerationProgress({ content, activities }: Props) {
         <div className="reasoning-content" aria-live="polite">
           {activities.map(activity => activity.type === 'reasoning' ? (
             <div className="reasoning-text" key={activity.sequence}>{activity.content}</div>
-          ) : (
+          ) : activity.type === 'tool' ? (
             <StreamToolActivity key={activity.sequence} toolCall={activity.toolCall} />
+          ) : (
+			<PermissionActivity key={activity.sequence} request={activity.request} onRespond={onRespondToPermission} />
           ))}
           {activities.length === 0 && <span className="reasoning-pending">正在分析问题…</span>}
         </div>
@@ -37,6 +41,17 @@ export default function GenerationProgress({ content, activities }: Props) {
       )}
     </div>
   )
+}
+
+function PermissionActivity({ request, onRespond }: { request: InteractionRequest; onRespond?: (request: InteractionRequest, approved: boolean) => void }) {
+  return <div className="permission-activity">
+    <strong>{request.title}</strong>
+    <pre>{request.details}</pre>
+    <div className="permission-actions">
+      <button type="button" onClick={() => onRespond?.(request, true)}>确认</button>
+      <button type="button" className="permission-deny" onClick={() => onRespond?.(request, false)}>取消</button>
+    </div>
+  </div>
 }
 
 function StreamToolActivity({ toolCall }: { toolCall: StreamToolCall }) {

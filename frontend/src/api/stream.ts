@@ -1,4 +1,4 @@
-import type { SendMessageResponse, Session, StreamToolCall } from './types'
+import type { InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
 
 export type StreamEvent =
   | { sequence: number; type: 'delta'; data: string }
@@ -6,6 +6,7 @@ export type StreamEvent =
   | { sequence: number; type: 'tool_call'; data: StreamToolCall }
   | { sequence: number; type: 'tool_result'; data: StreamToolCall }
   | { sequence: number; type: 'session_updated'; data: Session }
+  | { sequence: number; type: 'ask_permission'; data: InteractionRequest }
   | { sequence: number; type: 'done'; data: SendMessageResponse }
   | { sequence: number; type: 'error'; data: string }
 
@@ -103,6 +104,8 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
       yield { sequence: envelope.sequence, type: eventName, data: envelope.data as StreamToolCall }
     } else if (eventName === 'session_updated') {
       yield { sequence: envelope.sequence, type: 'session_updated', data: envelope.data as Session }
+	} else if (eventName === 'ask_permission') {
+	  yield { sequence: envelope.sequence, type: 'ask_permission', data: envelope.data as InteractionRequest }
     } else if (eventName === 'done') {
       yield { sequence: envelope.sequence, type: 'done', data: envelope.data as SendMessageResponse }
     } else if (eventName === 'error') {

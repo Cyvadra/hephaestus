@@ -75,3 +75,10 @@ export const regenerate = (sessionId: number) =>
   fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/regenerate`, {
     method: 'POST',
   })
+
+export const respondToInteraction = (sessionId: number, approved: boolean) =>
+  fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: approved ? '/interact approve' : '/interact deny' }),
+  })

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
-import { createSession, editAssistantMessage, getHistory, listConcierges } from '../api/client'
+import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction } from '../api/client'
 import { streamMessage, streamRegenerate } from '../api/stream'
 import type { ChatMessage, ConciergeItem, Session, StreamToolCall } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -142,6 +142,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           setStreamingActivities(current => mergeToolActivity(current, ev.sequence, ev.data))
         } else if (ev.type === 'session_updated') {
           onSessionUpdated?.(ev.data)
+		} else if (ev.type === 'ask_permission') {
+		  setStreamingActivities(current => [...current, { type: 'permission', sequence: ev.sequence, request: ev.data }])
         } else if (ev.type === 'done') {
           if (ev.data.command_response) {
             setCommandResponse(ev.data.command_response)
@@ -245,6 +247,16 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
   }, [resolvedSessionId])
 
+  const handlePermissionResponse = useCallback(async (_request: import('../api/types').InteractionRequest, approved: boolean) => {
+  if (resolvedSessionId == null) return
+  try {
+    await respondToInteraction(resolvedSessionId, approved)
+    setStreamingActivities(current => current.filter(activity => activity.type !== 'permission'))
+  } catch (cause) {
+    setError(String(cause))
+  }
+  }, [resolvedSessionId])
+
   const lastAssistantIdx = displayMessages.map(item => item.message.Role).lastIndexOf('assistant')
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
@@ -300,7 +312,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         ) : (
           displayMessages.map((item, idx) => regeneratingMessageId === item.message.ID ? (
             <div className="message-row assistant" key={item.message.ID}>
-              <GenerationProgress content={streamingText} activities={streamingActivities} />
+  			<GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} />
             </div>
           ) : (
             <MessageBubble
@@ -329,7 +341,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         )}
         {streaming && regeneratingMessageId == null && (
           <div className="message-row assistant">
-            <GenerationProgress content={streamingText} activities={streamingActivities} />
+			<GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} />
           </div>
         )}
         {commandResponse && (

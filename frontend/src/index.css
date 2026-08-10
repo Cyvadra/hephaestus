@@ -5881,6 +5881,38 @@ body {
     margin-top: 8px
 }
 
+.permission-activity {
+    border: 1px solid var(--dsw-alias-border-l2);
+    background: var(--dsw-alias-bg-module-platform);
+    border-radius: 7px;
+    margin-top: 8px;
+    padding: 10px
+}
+
+.permission-activity pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 8px 0;
+    color: var(--dsw-alias-label-secondary)
+}
+
+.permission-actions {
+    display: flex;
+    gap: 8px
+}
+
+.permission-actions button {
+    border-radius: 6px;
+    padding: 5px 10px;
+    background: var(--dsw-alias-button-primary-fill);
+    color: var(--dsw-alias-button-primary-label)
+}
+
+.permission-actions .permission-deny {
+    background: var(--dsw-alias-interactive-bg-hover-danger);
+    color: var(--dsw-alias-state-error-primary)
+}
+
 .streaming-cursor {
     color: var(--dsw-alias-button-primary-fill);
     animation: streaming-cursor-blink 1s step-end infinite

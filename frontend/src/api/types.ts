@@ -63,6 +63,15 @@ export interface StreamToolCall {
   status: 'calling' | 'complete'
 }
 
+export interface InteractionRequest {
+  id: number
+  session_id: number
+  kind: 'permission'
+  title: string
+  details: string
+  created_at: string
+}
+
 export interface HistoryResponse {
   session: Session
   messages: ChatMessage[]
