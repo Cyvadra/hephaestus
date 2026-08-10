@@ -69,7 +69,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (!isChoosingConcierge) return
     void listConcierges().then(items => {
       setConcierges(items)
-      if (defaultConciergeId != null && !items.some(concierge => concierge.name === defaultConciergeId)) {
+      if (!items.some(concierge => concierge.name === defaultConciergeId)) {
         const fallback = items[0]
         if (fallback) onDefaultConciergeResolved?.(fallback.name)
       }
@@ -100,7 +100,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const childrenMap = buildChildrenMap(messages)
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
-  const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? (defaultConciergeId != null ? concierges[0] ?? null : null)
+  const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
 
   const handleSend = useCallback(async (text: string, leafOverride?: number) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
