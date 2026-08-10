@@ -42,6 +42,18 @@ type Session struct {
 	// Settings is the live, mutable configuration for this session.
 	Settings datatypes.JSONType[SessionSettings] `gorm:"type:jsonb"`
 
+	// ReasoningEffort is this session's persisted thinking mode
+	// (none/low/high/max), initialized from the identity at creation and
+	// updated whenever the user changes the composer control. Empty is
+	// backward compatible with legacy sessions, treated as the identity
+	// default by clients.
+	ReasoningEffort string `gorm:"size:32"`
+
+	// EnableWebSearch persists whether the web_search/web_fetch tools stay
+	// enabled for this session. Nil means "not yet set" and is treated as
+	// enabled by clients, keeping legacy sessions backward compatible.
+	EnableWebSearch *bool
+
 	// Title and Summary are maintained by the session-summary Plugin
 	// (title <=20 chars, summary <=300 chars per design doc); both are
 	// empty until that plugin has run at least once.

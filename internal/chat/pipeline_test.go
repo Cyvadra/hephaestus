@@ -8,6 +8,7 @@ import (
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/llm"
+	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
@@ -50,6 +51,50 @@ func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	if !result.IsError {
 		t.Fatal("expected disabled tool to be rejected")
 	}
+}
+
+func TestApplyTurnOptionsOverridesReasoningAndFiltersOnlyDisabledTools(t *testing.T) {
+	identity := registry.Identity{ReasoningEffort: registry.ReasoningLow}
+	webSearch := namedTool{name: "web_search"}
+	webFetch := namedTool{name: "web_fetch"}
+	shell := namedTool{name: "shell"}
+
+	gotIdentity, gotTools := applyTurnOptions(identity, []toolkit.Tool{webSearch, webFetch, shell}, TurnOptions{
+		ReasoningEffort: registry.ReasoningMax,
+		DisabledTools:   []string{"web_search", "web_fetch"},
+	})
+
+	if gotIdentity.ReasoningEffort != registry.ReasoningMax {
+		t.Fatalf("expected max reasoning effort, got %q", gotIdentity.ReasoningEffort)
+	}
+	if identity.ReasoningEffort != registry.ReasoningLow {
+		t.Fatalf("expected original identity to stay unchanged, got %q", identity.ReasoningEffort)
+	}
+	if len(gotTools) != 1 || gotTools[0].Name() != "shell" {
+		t.Fatalf("expected only shell to remain, got %+v", gotTools)
+	}
+}
+
+func TestApplyTurnOptionsWithoutOverridesPreservesDefaults(t *testing.T) {
+	identity := registry.Identity{ReasoningEffort: registry.ReasoningHigh}
+	tools := []toolkit.Tool{namedTool{name: "web_search"}}
+
+	gotIdentity, gotTools := applyTurnOptions(identity, tools, TurnOptions{})
+
+	if gotIdentity.ReasoningEffort != registry.ReasoningHigh || len(gotTools) != 1 || gotTools[0].Name() != "web_search" {
+		t.Fatalf("expected defaults to remain unchanged, got identity=%+v tools=%+v", gotIdentity, gotTools)
+	}
+}
+
+type namedTool struct {
+	name string
+}
+
+func (tool namedTool) Name() string          { return tool.name }
+func (namedTool) Description() string        { return "" }
+func (namedTool) Parameters() map[string]any { return nil }
+func (namedTool) Execute(context.Context, map[string]any) *toolkit.ToolResult {
+	return &toolkit.ToolResult{}
 }
 
 func TestNewTurnContextPreservesFirstTurnMetadata(t *testing.T) {

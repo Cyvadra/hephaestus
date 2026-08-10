@@ -13,6 +13,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/project"
+	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/upload"
@@ -69,12 +70,29 @@ func (s *Server) createSession(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	// Persist the session's initial generation runtime state: thinking mode
+	// follows the identity, and web search starts enabled.
+	enableWebSearch := true
+	reasoningEffort := ""
+	if identity, ok := s.reg.Identities[concierge.Identity]; ok {
+		reasoningEffort = identity.ReasoningEffort
+	}
+	if err := s.db.Model(sess).UpdateColumns(map[string]any{
+		"reasoning_effort":  reasoningEffort,
+		"enable_web_search": enableWebSearch,
+	}).Error; err != nil {
+		internalError(c, err)
+		return
+	}
+	sess.ReasoningEffort = reasoningEffort
+	sess.EnableWebSearch = &enableWebSearch
 	c.JSON(http.StatusCreated, sess)
 }
 
 type historyResponse struct {
-	Session  store.Session       `json:"session"`
-	Messages []store.ChatMessage `json:"messages"`
+	Session         store.Session       `json:"session"`
+	Messages        []store.ChatMessage `json:"messages"`
+	ReasoningEffort string              `json:"reasoning_effort"`
 }
 
 // getHistory godoc
@@ -106,15 +124,55 @@ func (s *Server) getHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, historyResponse{Session: sess, Messages: messages})
+	settings := sess.Settings.Data()
+	identity, ok := s.reg.Identities[settings.Identity]
+	if !ok {
+		c.JSON(http.StatusInternalServerError, errorResponse{Error: "session identity not found"})
+		return
+	}
+	c.JSON(http.StatusOK, historyResponse{Session: sess, Messages: messages, ReasoningEffort: identity.ReasoningEffort})
 }
 
 type sendMessageRequest struct {
 	// ActiveLeafMessageID, when set, switches the session onto this
 	// branch before the message is processed (see design doc's session
 	// branching semantics). Required for every continuation, per doc.
-	ActiveLeafMessageID *uint  `json:"active_leaf_message_id"`
-	Text                string `json:"text" binding:"required"`
+	ActiveLeafMessageID *uint    `json:"active_leaf_message_id"`
+	Text                string   `json:"text" binding:"required"`
+	ReasoningEffort     string   `json:"reasoning_effort"`
+	DisabledTools       []string `json:"disabled_tools"`
+}
+
+func (r sendMessageRequest) turnOptions(onDelta func(chat.StreamEvent)) chat.TurnOptions {
+	return chat.TurnOptions{
+		ExpectedLeaf:    r.ActiveLeafMessageID,
+		OnDelta:         onDelta,
+		ReasoningEffort: r.ReasoningEffort,
+		DisabledTools:   r.DisabledTools,
+	}
+}
+
+func validateGenerationOptions(req *sendMessageRequest) error {
+	switch req.ReasoningEffort {
+	case "", registry.ReasoningNone, registry.ReasoningHigh, registry.ReasoningMax:
+	default:
+		return errValidation("reasoning_effort must be none, high, or max")
+	}
+	seen := make(map[string]struct{}, len(req.DisabledTools))
+	tools := req.DisabledTools[:0]
+	for _, name := range req.DisabledTools {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		tools = append(tools, name)
+	}
+	req.DisabledTools = tools
+	return nil
 }
 
 type sendMessageResponse struct {
@@ -204,7 +262,7 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 // sendMessage godoc
 //
 //	@Summary		Send a message
-//	@Description	Sends a JSON user message or multipart form with text and repeated files into a session, then returns the assistant's reply.
+//	@Description	Sends a JSON user message or multipart form with text and repeated files into a session. Optional reasoning_effort overrides the identity for this turn; disabled_tools removes named tools from this turn only.
 //	@Tags			sessions
 //	@Accept			json
 //	@Accept			mpfd
@@ -225,7 +283,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 	registrationID := s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
-	result, err := s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID})
+	result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(nil))
 	if err != nil {
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
 			c.JSON(http.StatusConflict, errorResponse{Error: "session changed; refresh and retry"})
@@ -245,7 +303,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 // streamMessage godoc
 //
 //	@Summary		Send a message with streaming
-//	@Description	Like sendMessage, including multipart file uploads, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_output", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
+//	@Description	Like sendMessage, including per-turn reasoning_effort and disabled_tools overrides, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_output", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
 //	@Tags			sessions
 //	@Accept			json
 //	@Accept			mpfd
@@ -262,7 +320,7 @@ func (s *Server) streamMessage(c *gin.Context) {
 	}
 
 	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-		result, err := s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID, OnDelta: onDelta})
+		result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(onDelta))
 		if result != nil {
 			result.Metadata = mergeMetadata(result.Metadata, uploadResult)
 		}
@@ -287,6 +345,10 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 			status = http.StatusRequestEntityTooLarge
 		}
 		c.JSON(status, errorResponse{Error: err.Error()})
+		return 0, sendMessageRequest{}, nil, false
+	}
+	if err := validateGenerationOptions(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return 0, sendMessageRequest{}, nil, false
 	}
 	if strings.TrimSpace(req.Text) == "" {
@@ -361,6 +423,8 @@ func (s *Server) bindMessageRequest(c *gin.Context, req *sendMessageRequest) ([]
 		value := uint(parsed)
 		req.ActiveLeafMessageID = &value
 	}
+	req.ReasoningEffort = c.PostForm("reasoning_effort")
+	req.DisabledTools = c.PostFormArray("disabled_tools")
 	return c.Request.MultipartForm.File["files"], nil
 }
 
@@ -381,8 +445,10 @@ func mergeMetadata(metadata map[string]any, result *upload.Result) map[string]an
 //	@Summary		Regenerate the last reply
 //	@Description	Re-answers the nearest ancestor user message on the session's active path, creating a sibling assistant branch rather than a new user message.
 //	@Tags			sessions
+//	@Accept			json
 //	@Produce		json
 //	@Param			id	path		int	true	"Session ID"
+//	@Param			request	body		sendMessageRequest	false	"Per-turn generation overrides"
 //	@Success		200	{object}	sendMessageResponse
 //	@Failure		400	{object}	errorResponse
 //	@Failure		500	{object}	errorResponse
@@ -394,11 +460,23 @@ func (s *Server) regenerate(c *gin.Context) {
 		return
 	}
 
+	var req sendMessageRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			return
+		}
+	}
+	if err := validateGenerationOptions(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	registrationID := s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
-	result, err := s.pipeline.Regenerate(ctx, sessionID, chat.TurnOptions{})
+	result, err := s.pipeline.Regenerate(ctx, sessionID, req.turnOptions(nil))
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
@@ -416,8 +494,10 @@ func (s *Server) regenerate(c *gin.Context) {
 //	@Summary		Regenerate the last reply with streaming
 //	@Description	Like regenerate, but streams typed assistant progress as Server-Sent Events, finishing with a "done" event.
 //	@Tags			sessions
+//	@Accept			json
 //	@Produce		text/event-stream
 //	@Param			id	path	int	true	"Session ID"
+//	@Param			request	body	sendMessageRequest	false	"Per-turn generation overrides"
 //	@Success		200
 //	@Failure		400	{object}	errorResponse
 //	@Router			/sessions/{id}/regenerate/stream [post]
@@ -428,8 +508,20 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 		return
 	}
 
+	var req sendMessageRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			return
+		}
+	}
+	if err := validateGenerationOptions(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
 	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-		return s.pipeline.Regenerate(ctx, sessionID, chat.TurnOptions{OnDelta: onDelta})
+		return s.pipeline.Regenerate(ctx, sessionID, req.turnOptions(onDelta))
 	})
 }
 
@@ -622,9 +714,11 @@ func (s *Server) createProject(c *gin.Context) {
 }
 
 type updateSessionRequest struct {
-	Title    *string `json:"title"`
-	Archived *bool   `json:"archived"`
-	Pinned   *bool   `json:"pinned"`
+	Title           *string `json:"title"`
+	Archived        *bool   `json:"archived"`
+	Pinned          *bool   `json:"pinned"`
+	ReasoningEffort *string `json:"reasoning_effort"`
+	EnableWebSearch *bool   `json:"enable_web_search"`
 }
 
 // updateSession godoc
@@ -651,9 +745,17 @@ func (s *Server) updateSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
-	if req.Title == nil && req.Archived == nil && req.Pinned == nil {
+	if req.Title == nil && req.Archived == nil && req.Pinned == nil && req.ReasoningEffort == nil && req.EnableWebSearch == nil {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: "no session changes provided"})
 		return
+	}
+	if req.ReasoningEffort != nil {
+		switch *req.ReasoningEffort {
+		case registry.ReasoningNone, registry.ReasoningLow, registry.ReasoningHigh, registry.ReasoningMax:
+		default:
+			c.JSON(http.StatusBadRequest, errorResponse{Error: "reasoning_effort must be none, low, high, or max"})
+			return
+		}
 	}
 
 	var title string
@@ -702,6 +804,12 @@ func (s *Server) updateSession(c *gin.Context) {
 			pinned = 1
 		}
 		metadataChanges["flag_pinned"] = pinned
+	}
+	if req.ReasoningEffort != nil {
+		metadataChanges["reasoning_effort"] = *req.ReasoningEffort
+	}
+	if req.EnableWebSearch != nil {
+		metadataChanges["enable_web_search"] = *req.EnableWebSearch
 	}
 	if len(metadataChanges) > 0 {
 		if err := s.db.Model(&sess).UpdateColumns(metadataChanges).Error; err != nil {
@@ -756,11 +864,12 @@ func (s *Server) deleteSession(c *gin.Context) {
 
 // conciergeItem is the JSON shape returned by listConcierges.
 type conciergeItem struct {
-	Name        string   `json:"name"`
-	Identity    string   `json:"identity"`
-	Impressions []string `json:"impressions"`
-	ToolGroups  []string `json:"tool_groups"`
-	Plugins     []string `json:"plugins"`
+	Name            string   `json:"name"`
+	Identity        string   `json:"identity"`
+	ReasoningEffort string   `json:"reasoning_effort"`
+	Impressions     []string `json:"impressions"`
+	ToolGroups      []string `json:"tool_groups"`
+	Plugins         []string `json:"plugins"`
 }
 
 // listConcierges godoc
@@ -774,12 +883,14 @@ type conciergeItem struct {
 func (s *Server) listConcierges(c *gin.Context) {
 	items := make([]conciergeItem, 0, len(s.reg.Concierges))
 	for _, cg := range s.reg.Concierges {
+		identity := s.reg.Identities[cg.Identity]
 		items = append(items, conciergeItem{
-			Name:        cg.Name,
-			Identity:    cg.Identity,
-			Impressions: nullSafe(cg.Impressions),
-			ToolGroups:  nullSafe(cg.ToolGroups),
-			Plugins:     nullSafe(cg.Plugins),
+			Name:            cg.Name,
+			Identity:        cg.Identity,
+			ReasoningEffort: identity.ReasoningEffort,
+			Impressions:     nullSafe(cg.Impressions),
+			ToolGroups:      nullSafe(cg.ToolGroups),
+			Plugins:         nullSafe(cg.Plugins),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })

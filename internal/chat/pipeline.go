@@ -176,8 +176,31 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 // that leaf is still active); OnDelta enables streaming of assistant
 // progress events. Either may be nil.
 type TurnOptions struct {
-	ExpectedLeaf *uint
-	OnDelta      func(StreamEvent)
+	ExpectedLeaf    *uint
+	OnDelta         func(StreamEvent)
+	ReasoningEffort string
+	DisabledTools   []string
+}
+
+func applyTurnOptions(identity registry.Identity, toolset []toolkit.Tool, opts TurnOptions) (registry.Identity, []toolkit.Tool) {
+	if opts.ReasoningEffort != "" {
+		identity.ReasoningEffort = opts.ReasoningEffort
+	}
+	if len(opts.DisabledTools) == 0 {
+		return identity, toolset
+	}
+
+	disabled := make(map[string]struct{}, len(opts.DisabledTools))
+	for _, name := range opts.DisabledTools {
+		disabled[name] = struct{}{}
+	}
+	filtered := make([]toolkit.Tool, 0, len(toolset))
+	for _, tool := range toolset {
+		if _, blocked := disabled[tool.Name()]; !blocked {
+			filtered = append(filtered, tool)
+		}
+	}
+	return identity, filtered
 }
 
 type interactionReporterKey struct{}
@@ -213,11 +236,11 @@ func withOnDeltaReporter(ctx context.Context, onDelta func(StreamEvent)) context
 // active; with opts.OnDelta set, assistant content deltas are streamed as
 // they arrive while persistence still only happens once the turn completes.
 func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
-	return p.runTurn(ctx, sessionID, userText, opts.ExpectedLeaf, opts.OnDelta)
+	return p.runTurn(ctx, sessionID, userText, opts)
 }
 
-func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, expectedLeaf *uint, onDelta func(StreamEvent)) (*TurnResult, error) {
-	ctx = withOnDeltaReporter(ctx, onDelta)
+func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
+	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -225,9 +248,10 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	if prep.workspace != "" {
 		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
 	}
-	if !sameMessageID(prep.sess.ActiveLeafMessageID, expectedLeaf) {
+	if !sameMessageID(prep.sess.ActiveLeafMessageID, opts.ExpectedLeaf) {
 		return nil, session.ErrStaleActiveLeaf
 	}
+	prep.identity, prep.toolset = applyTurnOptions(prep.identity, prep.toolset, opts)
 
 	llmContext, err := p.buildContext(prep.settings, prep.activePath, prep.compRow)
 	if err != nil {
@@ -243,11 +267,11 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 			turn.FirstUserMessage = firstUser.Content
 		}
 	}
-	summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, onDelta)
+	summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
 
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, staticMessageCount, turn)
 	if err != nil {
-		p.awaitSessionSummary(ctx, summaryDone, onDelta)
+		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 		return nil, err
 	}
 
@@ -265,8 +289,8 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 		turn.FirstUserMessage = editedUser.Content
 	}
 
-	result, err := p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, &editedUser, onDelta)
-	p.awaitSessionSummary(ctx, summaryDone, onDelta)
+	result, err := p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
+	p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 	return result, err
 }
 
@@ -314,7 +338,7 @@ func (p *Pipeline) awaitSessionSummary(ctx context.Context, done <-chan struct{}
 // unanswered user message, this is equivalent to answering it fresh. With
 // opts.OnDelta set, assistant content deltas are streamed as they arrive.
 func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
-	return p.regenerate(ctx, sessionID, opts.OnDelta)
+	return p.regenerate(ctx, sessionID, opts)
 }
 
 // Continue resumes an incomplete assistant response at the active session
@@ -390,8 +414,8 @@ func (p *Pipeline) continueResponse(ctx context.Context, identity registry.Ident
 	return ds4MessageToStore(*response.FirstMessage())
 }
 
-func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(StreamEvent)) (*TurnResult, error) {
-	ctx = withOnDeltaReporter(ctx, onDelta)
+func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
+	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return nil, err
@@ -402,6 +426,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 	if len(prep.activePath) == 0 {
 		return nil, fmt.Errorf("chat: session %d has no messages to regenerate", sessionID)
 	}
+	prep.identity, prep.toolset = applyTurnOptions(prep.identity, prep.toolset, opts)
 
 	userIdx := -1
 	for i := len(prep.activePath) - 1; i >= 0; i-- {
@@ -438,7 +463,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, onDelta func(
 		return nil, err
 	}
 
-	return p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, onDelta)
+	return p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, opts.OnDelta)
 }
 
 // runFrom runs converse and persists its output as a single chain parented

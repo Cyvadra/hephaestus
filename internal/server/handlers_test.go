@@ -2,7 +2,9 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,64 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/gin-gonic/gin"
 )
+
+func TestValidateGenerationOptions(t *testing.T) {
+	req := sendMessageRequest{
+		ReasoningEffort: "max",
+		DisabledTools:   []string{"web_search", " web_fetch ", "web_search", ""},
+	}
+	if err := validateGenerationOptions(&req); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if len(req.DisabledTools) != 2 || req.DisabledTools[0] != "web_search" || req.DisabledTools[1] != "web_fetch" {
+		t.Fatalf("expected normalized disabled tools, got %#v", req.DisabledTools)
+	}
+
+	req.ReasoningEffort = "low"
+	if err := validateGenerationOptions(&req); err == nil {
+		t.Fatal("expected low request override to be rejected")
+	}
+}
+
+func TestBindMessageRequestParsesMultipartGenerationOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, value := range map[string]string{
+		"text":             "hello",
+		"reasoning_effort": "high",
+	} {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.WriteField("disabled_tools", "web_search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("disabled_tools", "web_fetch"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+	server := &Server{}
+	var req sendMessageRequest
+
+	if _, err := server.bindMessageRequest(context, &req); err != nil {
+		t.Fatalf("bind multipart request: %v", err)
+	}
+	if req.Text != "hello" || req.ReasoningEffort != "high" {
+		t.Fatalf("unexpected request fields: %+v", req)
+	}
+	if len(req.DisabledTools) != 2 || req.DisabledTools[0] != "web_search" || req.DisabledTools[1] != "web_fetch" {
+		t.Fatalf("unexpected disabled tools: %#v", req.DisabledTools)
+	}
+}
 
 func TestStreamTurnFlushesProgressBeforeCompletion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
