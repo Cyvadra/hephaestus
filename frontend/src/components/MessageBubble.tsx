@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Check, Copy, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
@@ -185,13 +185,11 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                     {reasoningPinned && <StoredThinkingProcess messages={thinkingMessages} />}
                   </details>
                   {!reasoningPinned && reasoningHovered && (
-                    <div
-                      className="reasoning-preview"
+                    <ReasoningPreview
+                      messages={thinkingMessages}
                       onMouseEnter={() => setReasoningHovered(true)}
                       onMouseLeave={() => setReasoningHovered(false)}
-                    >
-                      <StoredThinkingProcess messages={thinkingMessages} />
-                    </div>
+                    />
                   )}
                 </div>
               )}
@@ -277,6 +275,37 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
     >
       {children}
     </button>
+  )
+}
+
+function ReasoningPreview({ messages, onMouseEnter, onMouseLeave }: {
+  messages: ChatMessage[]
+  onMouseEnter: () => void
+  onMouseLeave: () => void
+}) {
+  const previewRef = useRef<HTMLDivElement>(null)
+  const [isOverflowing, setIsOverflowing] = useState(false)
+
+  useLayoutEffect(() => {
+    const preview = previewRef.current
+    if (!preview) return
+
+    const updateOverflow = () => setIsOverflowing(preview.scrollHeight > preview.clientHeight)
+    updateOverflow()
+    const observer = new ResizeObserver(updateOverflow)
+    observer.observe(preview)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={previewRef}
+      className={`reasoning-preview${isOverflowing ? ' is-overflowing' : ''}`}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <StoredThinkingProcess messages={messages} />
+    </div>
   )
 }
 

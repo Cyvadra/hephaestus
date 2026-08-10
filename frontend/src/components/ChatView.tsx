@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
-import { UploadCloud } from 'lucide-react'
+import { UploadCloud, Zap } from 'lucide-react'
 import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, StreamToolCall, UploadResult } from '../api/types'
@@ -90,6 +90,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [dragDepth, setDragDepth] = useState(0)
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
+  const [activeSession, setActiveSession] = useState<Session | null>(null)
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'none', webSearch: true })
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -100,6 +101,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   useEffect(() => {
     setResolvedSessionId(sessionId)
+    setActiveSession(null)
     initializedOptionsSessionRef.current = null
     createdSessionRef.current = null
     shouldAutoScrollRef.current = true
@@ -108,6 +110,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal) => {
     const h = await getHistory(targetSessionId, signal)
     if (signal?.aborted) return
+    setActiveSession(h.session)
     setMessages(h.messages)
     setLocalLeafId(h.session.ActiveLeafMessageID)
     if (initializedOptionsSessionRef.current !== targetSessionId) {
@@ -254,6 +257,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         if (project == null) throw new Error('No project selected')
         const created = await createSession(selectedConcierge.name, project)
         targetSessionId = created.ID
+        setActiveSession(created)
         initializedOptionsSessionRef.current = created.ID
         createdSessionRef.current = created.ID
         setResolvedSessionId(created.ID)
@@ -417,6 +421,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const lastAssistantIdx = displayMessages.map(item => item.message.Role).lastIndexOf('assistant')
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
+  const headerTitle = activeSession?.Title || (resolvedSessionId == null ? '新会话' : `Session #${resolvedSessionId}`)
+  const identityName = activeSession?.Settings?.identity || selectedConcierge?.identity || '未选择身份'
 
   return (
     <div
@@ -434,14 +440,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         </div>
       )}
       <header className="chat-header">
-        <div>
-          <h2 className="chat-header-title">
-            {resolvedSessionId == null ? `新会话${selectedConcierge ? ` · ${selectedConcierge.name}` : ''}` : '对话内容'}
-          </h2>
-        </div>
-        <div className="chat-badge">
-          <span className="chat-dot" />
-          实时
+        <div className="chat-header-content">
+          <h2 className="chat-header-title">{headerTitle}</h2>
+          <div className="chat-header-identity">
+            <Zap aria-hidden="true" size={12} strokeWidth={1.8} fill="currentColor" />
+            <span>{identityName}</span>
+          </div>
         </div>
       </header>
       <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>

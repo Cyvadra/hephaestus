@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, type CSSProperties } from 're
 import { createPortal } from 'react-dom'
 import { Check, ChevronRight, Pencil, Pin, Plus, Settings, Trash2, Undo2 } from 'lucide-react'
 import { deleteSession, listSessions, updateSession } from '../api/client'
-import type { Session, ConciergeItem } from '../api/types'
+import type { Session } from '../api/types'
 import type { ConfigurationKind } from '../api/types'
 import ProjectSwitcher from './ProjectSwitcher'
 import ConfigurationSidebar, { type ConfigurationLists } from './ConfigurationSidebar'
@@ -12,7 +12,6 @@ interface Props {
   configurationSidebarOpen: boolean
   activeSessionId: number | null
   refreshKey: number
-  draftConcierge: ConciergeItem | null
   sessionUpdate: Session | null
   project: string | null
   onProjectChange: (project: string) => void
@@ -29,7 +28,7 @@ interface Props {
   onConfigurationListsChange: (lists: ConfigurationLists) => void
 }
 
-export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, draftConcierge, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationListsChange }: Props) {
+export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationListsChange }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [menu, setMenu] = useState<{ sessionID: number; left: number; top: number } | null>(null)
   const [renamingId, setRenamingId] = useState<number | null>(null)
@@ -75,8 +74,6 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   const pinnedSessions = active.filter(isPinned)
   const groups = groupSessions(active.filter(s => !isPinned(s)))
   const archived = sessions.filter(s => s.FlagArchived)
-  const activeSession = sessions.find(s => s.ID === activeSessionId) ?? null
-  const currentConcierge = activeSession?.SourceConcierge || draftConcierge?.name || '未选择'
 
   function renderSession(s: Session) {
     return (
@@ -132,8 +129,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
         onSelect={onConfigurationSelect}
         onCreate={onConfigurationCreate}
         onListsChange={onConfigurationListsChange}
-      /> : <><ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />
-      <button
+      /> : <><button
         className="sidebar-new-btn"
         onClick={onOpenNewSession}
       >
@@ -176,7 +172,9 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
       </>}
 
       <div className="sidebar-footer">
-        <div className="sidebar-footer-label" title={mode === 'configurations' ? '数据库配置' : currentConcierge}>{mode === 'configurations' ? 'Registry console' : currentConcierge}</div>
+        {mode === 'configurations'
+          ? <div className="sidebar-footer-label" title="数据库配置">Registry console</div>
+          : <ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />}
         <div className="settings-tooltip">
           <button className={`sidebar-settings-btn${mode === 'configurations' ? ' active' : ''}`} aria-label={mode === 'configurations' ? '返回聊天' : '配置管理'} type="button" onClick={mode === 'configurations' ? onCloseConfigurations : onOpenConfigurations}>
             <Settings aria-hidden="true" size={16} strokeWidth={1.7} />

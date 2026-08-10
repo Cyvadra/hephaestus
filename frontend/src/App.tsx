@@ -125,7 +125,6 @@ export default function App() {
         configurationSidebarOpen={configurationSidebarOpen}
         activeSessionId={sessionId}
         refreshKey={sidebarRefreshKey}
-        draftConcierge={draftConcierge}
         sessionUpdate={sidebarSessionUpdate}
         project={project}
         onProjectChange={handleProjectChange}

@@ -12,7 +12,7 @@ export interface Session {
   ID: number
   ProjectID: number
   SourceConcierge: string
-  Settings: { Data: SessionSettings }
+  Settings: SessionSettings
   Title: string
   Summary: string
   ActiveLeafMessageID: number | null
