@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, useRef, type KeyboardEvent } from 'react'
+import { useState, useRef, type KeyboardEvent } from 'react'
 import { ArrowUp, Check, X } from 'lucide-react'
 import type { GenerationOptions, ReasoningEffort } from '../api/types'
+import { useHoverMenu } from '../lib/useHoverMenu'
 
 interface Props {
   onSend: (text: string, files: File[]) => void
@@ -20,60 +21,14 @@ const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
 
 export default function Composer({ onSend, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange }: Props) {
   const [text, setText] = useState('')
-  const [reasoningOpen, setReasoningOpen] = useState(false)
-  const [reasoningPinned, setReasoningPinned] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const reasoningRef = useRef<HTMLDivElement>(null)
-  const closeTimerRef = useRef<number | null>(null)
+  const reasoningMenu = useHoverMenu(reasoningRef)
 
   const isCommand = text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
   const reasoningLabel = reasoningChoices.find(choice => choice.value === generationOptions.reasoningEffort)?.label ?? '无'
-
-  // Delay auto-close on mouse leave so a quick trip across the gap between
-  // the trigger and the menu doesn't dismiss it before the cursor lands on
-  // an option; entering the menu cancels the pending close.
-  const cancelClose = useCallback(() => {
-    if (closeTimerRef.current != null) {
-      window.clearTimeout(closeTimerRef.current)
-      closeTimerRef.current = null
-    }
-  }, [])
-
-  const scheduleClose = useCallback(() => {
-    if (reasoningPinned) return
-    cancelClose()
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null
-      setReasoningOpen(false)
-    }, 250)
-  }, [reasoningPinned, cancelClose])
-
-  useEffect(() => {
-    if (!reasoningOpen) return
-    const close = (event: MouseEvent) => {
-      if (!reasoningRef.current?.contains(event.target as Node)) {
-        cancelClose()
-        setReasoningOpen(false)
-        setReasoningPinned(false)
-      }
-    }
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        cancelClose()
-        setReasoningOpen(false)
-        setReasoningPinned(false)
-      }
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', closeOnEscape)
-      cancelClose()
-    }
-  }, [reasoningOpen, cancelClose])
 
   const submit = () => {
     const t = text.trim()
@@ -125,32 +80,26 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
               <div
                 className="composer-reasoning-control"
                 ref={reasoningRef}
-                onMouseEnter={() => { if (!controlsDisabled) { cancelClose(); setReasoningOpen(true) } }}
-                onMouseLeave={scheduleClose}
+                onMouseEnter={() => { if (!controlsDisabled) reasoningMenu.openOnHover() }}
+                onMouseLeave={reasoningMenu.scheduleClose}
               >
                 <button
                   type="button"
                   className={'composer-option-btn' + (generationOptions.reasoningEffort !== 'none' ? ' active' : '')}
                   disabled={controlsDisabled}
                   aria-haspopup="menu"
-                  aria-expanded={reasoningOpen}
-                  onClick={() => {
-                    setReasoningPinned(true)
-                    setReasoningOpen(true)
-                  }}
+                  aria-expanded={reasoningMenu.open}
+                  onClick={reasoningMenu.pinOpen}
                   onFocus={() => {
-                    if (!controlsDisabled) {
-                      setReasoningPinned(true)
-                      setReasoningOpen(true)
-                    }
+                    if (!controlsDisabled) reasoningMenu.pinOpen()
                   }}
                   title="选择思考强度"
                 >
                   <ThinkingIcon />
                   <span>{reasoningLabel}</span>
                 </button>
-                {reasoningOpen && (
-                  <div className="composer-reasoning-menu" role="menu" aria-label="思考强度" onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
+                {reasoningMenu.open && (
+                  <div className="composer-reasoning-menu" role="menu" aria-label="思考强度" onMouseEnter={reasoningMenu.cancelClose} onMouseLeave={reasoningMenu.scheduleClose}>
                     {reasoningChoices.map(choice => (
                       <button
                         type="button"
@@ -159,9 +108,7 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
                         key={choice.value}
                         onClick={() => {
                           onGenerationOptionsChange({ ...generationOptions, reasoningEffort: choice.value })
-                          cancelClose()
-                          setReasoningOpen(false)
-                          setReasoningPinned(false)
+                          reasoningMenu.close()
                         }}
                       >
                         <span>{choice.label}</span>

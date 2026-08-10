@@ -5077,15 +5077,20 @@ body {
     cursor: pointer
 }
 
-.project-switcher-option:hover,.project-switcher-option:focus-visible,.project-switcher-create:hover,.project-switcher-create:focus-visible {
+.project-switcher-option { padding: 0 }
+.project-switcher-select { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; flex: 1; min-height: 34px; padding: 6px 8px; color: inherit; background: transparent; border: 0; border-radius: 6px; font: inherit; font-size: 12px; text-align: left; cursor: pointer }
+.project-switcher-delete { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; margin-right: 3px; color: var(--dsw-alias-label-tertiary); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
+.project-switcher-delete:hover,.project-switcher-delete:focus-visible { color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-interactive-bg-hover); outline: none }
+
+.project-switcher-option:hover,.project-switcher-option:focus-within,.project-switcher-create:hover,.project-switcher-create:focus-visible {
     background: var(--dsw-alias-interactive-bg-hover);
     outline: none
 }
 
-.project-switcher-option span { display: grid; gap: 2px; min-width: 0 }
-.project-switcher-option strong,.project-switcher-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.project-switcher-option strong { font-weight: 500 }
-.project-switcher-option small { color: var(--dsw-alias-label-tertiary); font-size: 11px }
+.project-switcher-select span { display: grid; gap: 2px; min-width: 0 }
+.project-switcher-select strong,.project-switcher-select small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.project-switcher-select strong { font-weight: 500 }
+.project-switcher-select small { color: var(--dsw-alias-label-tertiary); font-size: 11px }
 .project-switcher-create { justify-content: flex-start; border-top: 1px solid var(--dsw-alias-border-l1) }
 
 .project-create-form {
@@ -5111,6 +5116,8 @@ body {
 .project-create-form input:focus { border-color: var(--dsw-alias-button-primary-fill); outline: none }
 .project-create-form button { display: flex; align-items: center; justify-content: center; gap: 5px; height: 30px; color: var(--dsw-alias-label-primary-foreground); background: var(--dsw-alias-button-primary-fill); border: 0; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer }
 .project-switcher-error { margin: 5px 4px 2px; color: var(--dsw-alias-state-error-primary); font-size: 11px; line-height: 15px }
+.project-delete-directory { display: flex; align-items: center; gap: 7px; margin: -6px 0 20px; color: var(--dsw-alias-label-secondary); font-size: 13px; cursor: pointer }
+.session-dialog .project-delete-directory input { box-sizing: border-box; width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--dsw-alias-button-primary-fill) }
 
 .sidebar-section-title,.sidebar-footer-label,.chat-header-eyebrow {
     color: var(--dsw-alias-label-tertiary);
@@ -5162,11 +5169,23 @@ body {
 }
 
 .sidebar-section {
+    position: relative;
     flex: 1;
     min-height: 0;
     margin: 0 -12px;
     display: flex;
     flex-direction: column
+}
+
+.sidebar-section::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 36px;
+    pointer-events: none;
+    content: "";
+    background: linear-gradient(to bottom, transparent, var(--dsw-specific-sidebar-fill))
 }
 
 .sidebar-section-title {
@@ -5212,7 +5231,7 @@ body {
 
 .session-item-wrap {
     position: relative;
-    border-radius: 9px;
+    border-radius: 12px;
     margin-bottom: 2px
 }
 
@@ -5221,12 +5240,17 @@ body {
 }
 
 .session-item-wrap.active {
-    background: var(--dsw-specific-sidebar-nav-item-active)
+    color: var(--dsw-alias-button-primary-fill);
+    background: var(--dsw-specific-sidebar-nav-item-active-accent)
+}
+
+.session-item-wrap.active .session-item {
+    color: inherit
 }
 
 .session-item {
     box-sizing: border-box;
-    border-radius: 9px;
+    border-radius: 12px;
     text-align: left;
     align-items: center;
     gap: 6px;
@@ -5310,10 +5334,9 @@ body {
 
 .session-menu {
     z-index: 10;
-    position: absolute;
-    top: calc(100% - 2px);
-    right: 3px;
-    min-width: 124px;
+    box-sizing: border-box;
+    position: fixed;
+    width: 132px;
     padding: 4px;
     color: var(--dsw-alias-label-primary);
     background: var(--dsw-specific-menu);
@@ -5418,7 +5441,9 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
     overflow: hidden;
-    min-width: 0
+    min-width: 0;
+    font-size: 14px;
+    line-height: 20px
 }
 
 .settings-tooltip {
@@ -5550,7 +5575,7 @@ body {
 }
 
 .concierge-card-grid {
-    grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+    grid-template-columns: repeat(auto-fit,minmax(165px,1fr));
     gap: 12px;
     margin-top: 22px;
     display: grid

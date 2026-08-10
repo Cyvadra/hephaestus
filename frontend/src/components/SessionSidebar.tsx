@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronRight, Pencil, Pin, Plus, Settings, Trash2, Undo2 } from 'lucide-react'
 import { deleteSession, listSessions, updateSession } from '../api/client'
 import type { Session, ConciergeItem } from '../api/types'
@@ -30,7 +31,7 @@ interface Props {
 
 export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, draftConcierge, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationListsChange }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
-  const [menuSessionId, setMenuSessionId] = useState<number | null>(null)
+  const [menu, setMenu] = useState<{ sessionID: number; left: number; top: number } | null>(null)
   const [renamingId, setRenamingId] = useState<number | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<Session | null>(null)
   const [archivedExpanded, setArchivedExpanded] = useState(false)
@@ -54,12 +55,12 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   }, [sessionUpdate])
 
   useEffect(() => {
-    if (menuSessionId == null) return
+    if (menu == null) return
     const handlePointerDown = (event: MouseEvent) => {
-      if (!(event.target as HTMLElement | null)?.closest('.session-menu')) setMenuSessionId(null)
+      if (!(event.target as HTMLElement | null)?.closest('.session-menu')) setMenu(null)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenuSessionId(null)
+      if (event.key === 'Escape') setMenu(null)
     }
     document.addEventListener('mousedown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
@@ -67,7 +68,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
       document.removeEventListener('mousedown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [menuSessionId])
+  }, [menu])
 
   const isPinned = (session: Session) => session.FlagPinned === 1
   const active = sessions.filter(s => !s.FlagArchived)
@@ -83,17 +84,27 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
         key={s.ID}
         session={s}
         active={s.ID === activeSessionId}
-        menuOpen={s.ID === menuSessionId}
+        menu={s.ID === menu?.sessionID ? menu : null}
         pinned={isPinned(s)}
         renaming={s.ID === renamingId}
         onSelect={onSelect}
-        onMenuOpen={() => setMenuSessionId(s.ID)}
-        onRenameStart={() => { setRenamingId(s.ID); setMenuSessionId(null) }}
+        onMenuOpen={(target) => {
+          const rect = target.getBoundingClientRect()
+          const width = 132
+          const height = 76
+          const margin = 4
+          setMenu({
+            sessionID: s.ID,
+            left: Math.max(margin, Math.min(rect.right - width - 3, window.innerWidth - width - margin)),
+            top: Math.max(margin, rect.bottom + height + margin <= window.innerHeight ? rect.bottom - 2 : rect.top - height + 2),
+          })
+        }}
+        onRenameStart={() => { setRenamingId(s.ID); setMenu(null) }}
         onRenameSubmit={title => void handleRenameSubmit(s, title)}
         onRenameCancel={() => setRenamingId(null)}
         onPin={() => void togglePin(s)}
         onArchive={() => void handleArchive(s)}
-        onDelete={() => { setDeleteCandidate(s); setMenuSessionId(null) }}
+        onDelete={() => { setDeleteCandidate(s); setMenu(null) }}
       />
     )
   }
@@ -180,17 +191,17 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   async function togglePin(session: Session) {
     const updated = await updateSession(session.ID, { pinned: !isPinned(session) })
     setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
-    setMenuSessionId(null)
+    setMenu(null)
   }
 
   async function handleArchive(session: Session) {
     const updated = await updateSession(session.ID, { archived: !session.FlagArchived })
     setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
-    setMenuSessionId(null)
+    setMenu(null)
   }
 }
 
-function SessionItem({ session, active, menuOpen, pinned, renaming, onSelect, onMenuOpen, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menuOpen: boolean; pinned: boolean; renaming: boolean; onSelect: (id: number) => void; onMenuOpen: () => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
+function SessionItem({ session, active, menu, pinned, renaming, onSelect, onMenuOpen, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menu: { left: number; top: number } | null; pinned: boolean; renaming: boolean; onSelect: (id: number) => void; onMenuOpen: (target: HTMLElement) => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
   const label = session.Title || `Session #${session.ID}`
   const titleRef = useRef<HTMLSpanElement>(null)
   const [titleScroll, setTitleScroll] = useState({ distance: 0, duration: 0 })
@@ -218,7 +229,7 @@ function SessionItem({ session, active, menuOpen, pinned, renaming, onSelect, on
   } as CSSProperties
 
   return (
-    <div className={'session-item-wrap' + (active ? ' active' : '') + (menuOpen ? ' menu-open' : '')} onContextMenu={event => { event.preventDefault(); onMenuOpen() }}>
+    <div className={'session-item-wrap' + (active ? ' active' : '') + (menu ? ' menu-open' : '')} onContextMenu={event => { event.preventDefault(); onMenuOpen(event.currentTarget) }}>
       {renaming ? (
         <RenameInput defaultValue={label} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
       ) : (
@@ -234,10 +245,10 @@ function SessionItem({ session, active, menuOpen, pinned, renaming, onSelect, on
           <button className={'session-item-pin' + (pinned ? ' pinned' : '')} type="button" aria-label={`${pinned ? '取消置顶' : '置顶'} ${label}`} onClick={event => { event.stopPropagation(); onPin() }}><Pin aria-hidden="true" size={12} /></button>
         </>
       )}
-      {menuOpen && !renaming && <div className="session-menu" role="menu">
+      {menu && !renaming && createPortal(<div className="session-menu" role="menu" style={{ left: menu.left, top: menu.top }}>
         <button type="button" role="menuitem" onClick={onRenameStart}><Pencil aria-hidden="true" size={16} />重命名</button>
         <button className="danger" type="button" role="menuitem" onClick={onDelete}><Trash2 aria-hidden="true" size={16} />删除</button>
-      </div>}
+      </div>, document.body)}
     </div>
   )
 }
