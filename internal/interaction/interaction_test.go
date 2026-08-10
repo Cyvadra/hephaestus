@@ -47,3 +47,25 @@ func TestRequestPermissionReturnsDenied(t *testing.T) {
 		t.Fatalf("expected no pending request, got %v", err)
 	}
 }
+
+// TestRequestPermissionHonorsApprovalRacingCancellation guards against a
+// Respond that races the caller's context cancellation: the buffered
+// decision channel can hold an approval that select's pseudo-random choice
+// would otherwise discard in favor of ctx.Done().
+func TestRequestPermissionHonorsApprovalRacingCancellation(t *testing.T) {
+	manager := NewManager()
+	events := make(chan Event, 1)
+	ctx, cancel := context.WithCancel(WithReporter(context.Background(), func(event Event) { events <- event }))
+	done := make(chan error, 1)
+	go func() { done <- manager.RequestPermission(ctx, 11, "Allow command?", "sudo reboot") }()
+	<-events
+
+	if err := manager.Respond(11, true); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("expected the delivered approval to win over cancellation, got %v", err)
+	}
+}

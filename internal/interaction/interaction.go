@@ -102,6 +102,18 @@ func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, 
 				}
 				return nil
 			case <-ctx.Done():
+				// Respond and cancellation can race; prefer a decision that
+				// already landed in the buffered channel over reporting the
+				// approval lost to cancellation.
+				select {
+				case approved := <-p.decision:
+					m.finish(sessionID, p)
+					if !approved {
+						return ErrDenied
+					}
+					return nil
+				default:
+				}
 				m.finish(sessionID, p)
 				return ctx.Err()
 			}
