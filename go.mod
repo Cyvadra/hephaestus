@@ -6,9 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Cyvadra/ds4 v0.0.0-20260803104146-961761cabdd6
 	github.com/chromedp/chromedp v0.16.0
-	github.com/creack/pty v1.1.24
 	github.com/gin-gonic/gin v1.12.0
-	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/serpapi/serpapi-golang v0.0.0-20260126142127-0e41c7993cda
 	github.com/swaggo/files v1.0.1
@@ -48,6 +46,7 @@ require (
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect

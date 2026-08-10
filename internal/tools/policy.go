@@ -7,8 +7,8 @@ import "regexp"
 // for a single trusted local user, and any pattern list can be bypassed
 // (e.g. via `python -c ...` or by rephrasing the command), so the list only
 // catches the most common foot-guns and must never be relied on to protect
-// against untrusted users. The real protection for destructive commands is
-// user confirmation, which is not yet implemented.
+// against untrusted users. Matched commands require user confirmation when
+// they run through the interactive agent pipeline.
 //
 // Current patterns (case-insensitive) are intentionally few:
 //   - host-affecting commands: shutdown, reboot, poweroff, sudo

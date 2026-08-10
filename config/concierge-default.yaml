@@ -5,5 +5,5 @@ tool_groups:
   - basic
   - project
   - web
-  - exec
+  - shell
 plugins: []

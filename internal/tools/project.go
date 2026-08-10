@@ -11,7 +11,7 @@ import (
 )
 
 // CreateProjectTool lets the LLM create a new Project: an on-disk folder
-// (with a skeleton AGENTS.md) that file/exec tools can be scoped to. It is
+// (with a skeleton AGENTS.md) that file/shell tools can be scoped to. It is
 // deliberately excluded from every default ToolGroup; a session only gains
 // it once the user explicitly activates the group that includes it, which
 // is this platform's stand-in for "explicit user authorization" since it
@@ -28,7 +28,7 @@ func NewCreateProjectTool(projects *project.Service) *CreateProjectTool {
 func (CreateProjectTool) Name() string { return "create_project" }
 func (CreateProjectTool) Description() string {
 	return "Creates a new Project: a named on-disk folder (with a skeleton AGENTS.md) that file and " +
-		"exec tools can be scoped to. Only call this when the user has explicitly asked for a new project."
+		"shell tools can be scoped to. Only call this when the user has explicitly asked for a new project."
 }
 func (CreateProjectTool) Parameters() map[string]any {
 	return map[string]any{
