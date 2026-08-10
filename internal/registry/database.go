@@ -82,11 +82,14 @@ func loadDatabaseInto(db *gorm.DB, reg *Registry) error {
 	if err := db.Find(&concierges).Error; err != nil {
 		return fmt.Errorf("registry: load database concierges: %w", err)
 	}
-	for _, value := range concierges {
-		if err := validatePersistedName(KindConcierge, value.Name); err != nil {
+	for index := range concierges {
+		if err := validatePersistedName(KindConcierge, concierges[index].Name); err != nil {
 			return err
 		}
-		reg.Concierges[value.Name] = value
+		if err := normalizeConcierge(&concierges[index]); err != nil {
+			return err
+		}
+		reg.Concierges[concierges[index].Name] = concierges[index]
 	}
 
 	var workflows []Workflow

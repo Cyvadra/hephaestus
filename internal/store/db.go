@@ -29,6 +29,11 @@ func Open(dsn string) (*gorm.DB, error) {
 	); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
 	}
+	if err := db.Model(&registry.Concierge{}).
+		Where("nickname IS NULL OR nickname = ?", "").
+		Update("nickname", gorm.Expr("name")).Error; err != nil {
+		return nil, fmt.Errorf("store: backfill concierge nicknames: %w", err)
+	}
 	defaultProject, err := ensureDefaultProject(db)
 	if err != nil {
 		return nil, err

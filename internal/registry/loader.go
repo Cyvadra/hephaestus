@@ -100,6 +100,7 @@ var loaders = []kindLoader{
 		decode: decodeYAML,
 		dest:   func(r *Registry) map[string]Concierge { return r.Concierges },
 		name:   func(v Concierge) string { return v.Name },
+		extra:  func(_ string, v *Concierge) error { return normalizeConcierge(v) },
 	}),
 	loadInto(loader[Workflow]{
 		kind:   fileKind{prefix: "workflow-", ext: "yaml"},
@@ -183,6 +184,16 @@ func normalizeIdentity(v *Identity) error {
 	}
 	if v.ContextWindowTokens <= 0 {
 		return fmt.Errorf("registry: identity %q: context_window_tokens must be positive", v.Name)
+	}
+	return nil
+}
+
+func normalizeConcierge(v *Concierge) error {
+	if v.Nickname == "" {
+		v.Nickname = v.Name
+	}
+	if len([]rune(v.Nickname)) > 20 {
+		return fmt.Errorf("registry: concierge %q: nickname must not exceed 20 characters", v.Name)
 	}
 	return nil
 }

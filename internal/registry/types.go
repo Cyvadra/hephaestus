@@ -56,6 +56,7 @@ type ToolGroup struct {
 // ToolGroups and Plugins. It is a static definition with no runtime context.
 type Concierge struct {
 	Name        string   `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
+	Nickname    string   `yaml:"nickname" json:"nickname" gorm:"size:20"`
 	Description string   `yaml:"description" json:"description" gorm:"type:text"`
 	Identity    string   `yaml:"identity" json:"identity" gorm:"size:255"`
 	Impressions []string `yaml:"impressions" json:"impressions" gorm:"serializer:json;type:jsonb"`

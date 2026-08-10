@@ -1,4 +1,5 @@
 name: default
+nickname: default
 description: 默认通用助理
 identity: default
 impressions: []

@@ -901,6 +901,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 // conciergeItem is the JSON shape returned by listConcierges.
 type conciergeItem struct {
 	Name            string   `json:"name"`
+	Nickname        string   `json:"nickname"`
 	Description     string   `json:"description"`
 	Identity        string   `json:"identity"`
 	ReasoningEffort string   `json:"reasoning_effort"`
@@ -923,6 +924,7 @@ func (s *Server) listConcierges(c *gin.Context) {
 		identity := s.reg.Identities[cg.Identity]
 		items = append(items, conciergeItem{
 			Name:            cg.Name,
+			Nickname:        cg.Nickname,
 			Description:     cg.Description,
 			Identity:        cg.Identity,
 			ReasoningEffort: identity.ReasoningEffort,

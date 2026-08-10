@@ -999,6 +999,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "nickname": {
+                    "type": "string"
+                },
                 "plugins": {
                     "type": "array",
                     "items": {

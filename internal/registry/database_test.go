@@ -1,6 +1,9 @@
 package registry
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClone_MapsAreIndependent(t *testing.T) {
 	original := &Registry{
@@ -31,6 +34,28 @@ func TestNormalizeIdentity_AppliesDefaultPrompt(t *testing.T) {
 	}
 	if identity.SystemPrompt != DefaultSystemPrompt {
 		t.Fatalf("expected default prompt %q, got %q", DefaultSystemPrompt, identity.SystemPrompt)
+	}
+}
+
+func TestNormalizeConcierge_DefaultsNicknameToName(t *testing.T) {
+	concierge := Concierge{Name: "default"}
+	if err := normalizeConcierge(&concierge); err != nil {
+		t.Fatalf("normalizeConcierge: %v", err)
+	}
+	if concierge.Nickname != concierge.Name {
+		t.Fatalf("expected nickname %q, got %q", concierge.Name, concierge.Nickname)
+	}
+}
+
+func TestNormalizeConcierge_LimitsNicknameByUnicodeCharacters(t *testing.T) {
+	concierge := Concierge{Name: "default", Nickname: strings.Repeat("助", 20)}
+	if err := normalizeConcierge(&concierge); err != nil {
+		t.Fatalf("normalize 20-character nickname: %v", err)
+	}
+
+	concierge.Nickname = strings.Repeat("助", 21)
+	if err := normalizeConcierge(&concierge); err == nil {
+		t.Fatal("expected 21-character nickname to be rejected")
 	}
 }
 

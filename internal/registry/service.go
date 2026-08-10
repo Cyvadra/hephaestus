@@ -260,7 +260,7 @@ func normalizeValue(kind Kind, value any) error {
 		}
 	case *Concierge:
 		if kind == KindConcierge {
-			return nil
+			return normalizeConcierge(typed)
 		}
 	case *Workflow:
 		if kind == KindWorkflow {
