@@ -2,9 +2,13 @@ import { useEffect, useRef, useState, useCallback, type CSSProperties } from 're
 import { Check, ChevronRight, Pencil, Pin, Plus, Settings, Trash2, Undo2 } from 'lucide-react'
 import { deleteSession, listSessions, updateSession } from '../api/client'
 import type { Session, ConciergeItem } from '../api/types'
+import type { ConfigurationKind } from '../api/types'
 import ProjectSwitcher from './ProjectSwitcher'
+import ConfigurationSidebar, { type ConfigurationLists } from './ConfigurationSidebar'
 
 interface Props {
+  mode: 'chat' | 'configurations'
+  configurationSidebarOpen: boolean
   activeSessionId: number | null
   refreshKey: number
   draftConcierge: ConciergeItem | null
@@ -14,9 +18,17 @@ interface Props {
   onProjectsLoaded: (defaultProject: string) => void
   onSelect: (id: number) => void
   onOpenNewSession: () => void
+  onOpenConfigurations: () => void
+  onCloseConfigurations: () => void
+  configurationKind: ConfigurationKind | null
+  configurationName: string | null
+  configurationRefreshKey: number
+  onConfigurationSelect: (kind: ConfigurationKind, name: string) => void
+  onConfigurationCreate: (kind: ConfigurationKind) => void
+  onConfigurationListsChange: (lists: ConfigurationLists) => void
 }
 
-export default function SessionSidebar({ activeSessionId, refreshKey, draftConcierge, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession }: Props) {
+export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, draftConcierge, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationListsChange }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [menuSessionId, setMenuSessionId] = useState<number | null>(null)
   const [renamingId, setRenamingId] = useState<number | null>(null)
@@ -96,12 +108,20 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${mode === 'configurations' ? ` configuration-mode${configurationSidebarOpen ? ' mobile-open' : ''}` : ''}`}>
       <div className="sidebar-brand">
-        <img src="/deepseek-logo.svg" alt="DeepSeek" />
-        <span>DeepSeek</span>
+        <img className="sidebar-brand-icon" src="/deepseek-logo.svg" alt="" />
+        <img className="sidebar-brand-wordmark" src="/deepseek-wordmark.svg" alt="DeepSeek" />
       </div>
-      <ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />
+      {mode === 'configurations' ? <ConfigurationSidebar
+        activeKind={configurationKind}
+        activeName={configurationName}
+        refreshKey={configurationRefreshKey}
+        onBack={onCloseConfigurations}
+        onSelect={onConfigurationSelect}
+        onCreate={onConfigurationCreate}
+        onListsChange={onConfigurationListsChange}
+      /> : <><ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />
       <button
         className="sidebar-new-btn"
         onClick={onOpenNewSession}
@@ -142,13 +162,15 @@ export default function SessionSidebar({ activeSessionId, refreshKey, draftConci
         </div>
       </div>
 
+      </>}
+
       <div className="sidebar-footer">
-        <div className="sidebar-footer-label" title={currentConcierge}>{currentConcierge}</div>
+        <div className="sidebar-footer-label" title={mode === 'configurations' ? '数据库配置' : currentConcierge}>{mode === 'configurations' ? 'Registry console' : currentConcierge}</div>
         <div className="settings-tooltip">
-          <button className="sidebar-settings-btn" aria-label="设置" type="button">
+          <button className={`sidebar-settings-btn${mode === 'configurations' ? ' active' : ''}`} aria-label={mode === 'configurations' ? '返回聊天' : '配置管理'} type="button" onClick={mode === 'configurations' ? onCloseConfigurations : onOpenConfigurations}>
             <Settings aria-hidden="true" size={16} strokeWidth={1.7} />
           </button>
-          <span role="tooltip">Coming soon</span>
+          <span role="tooltip">{mode === 'configurations' ? '返回聊天' : '配置管理'}</span>
         </div>
       </div>
       {deleteCandidate && <DeleteDialog session={deleteCandidate} onClose={() => setDeleteCandidate(null)} onConfirm={async () => { await deleteSession(deleteCandidate.ID); setSessions(current => current.filter(session => session.ID !== deleteCandidate.ID)); if (deleteCandidate.ID === activeSessionId) onOpenNewSession(); setDeleteCandidate(null) }} />}

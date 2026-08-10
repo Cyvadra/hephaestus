@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
 import { UploadCloud } from 'lucide-react'
-import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction } from '../api/client'
+import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ConciergeItem, InteractionRequest, SendMessageResponse, Session, StreamToolCall, UploadResult } from '../api/types'
+import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer from './Composer'
@@ -90,13 +90,18 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [dragDepth, setDragDepth] = useState(0)
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
+  const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'none', webSearch: true })
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
   const shouldAutoScrollRef = useRef(true)
+  const initializedOptionsSessionRef = useRef<number | null>(null)
+  const createdSessionRef = useRef<number | null>(null)
 
   useEffect(() => {
     setResolvedSessionId(sessionId)
+    initializedOptionsSessionRef.current = null
+    createdSessionRef.current = null
     shouldAutoScrollRef.current = true
   }, [sessionId])
 
@@ -105,6 +110,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (signal?.aborted) return
     setMessages(h.messages)
     setLocalLeafId(h.session.ActiveLeafMessageID)
+    if (initializedOptionsSessionRef.current !== targetSessionId) {
+      setGenerationOptions({
+        reasoningEffort: composerReasoningEffort(h.session.ReasoningEffort || h.reasoning_effort),
+        webSearch: h.session.EnableWebSearch ?? true,
+      })
+      initializedOptionsSessionRef.current = targetSessionId
+    }
   }, [])
 
   useEffect(() => {
@@ -160,6 +172,15 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setPendingFiles(next)
   }, [])
 
+  const handleGenerationOptionsChange = useCallback((options: GenerationOptions) => {
+    setGenerationOptions(options)
+    if (resolvedSessionId == null) return
+    void updateSession(resolvedSessionId, {
+      reasoningEffort: options.reasoningEffort,
+      enableWebSearch: options.webSearch,
+    }).catch((cause: unknown) => setError(String(cause)))
+  }, [resolvedSessionId])
+
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
     event.preventDefault()
@@ -190,6 +211,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
+
+  useEffect(() => {
+    if (resolvedSessionId == null && createdSessionRef.current == null && selectedConcierge) {
+      setGenerationOptions({ reasoningEffort: composerReasoningEffort(selectedConcierge.reasoning_effort), webSearch: true })
+    }
+  }, [resolvedSessionId, selectedConcierge])
 
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
@@ -227,11 +254,19 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         if (project == null) throw new Error('No project selected')
         const created = await createSession(selectedConcierge.name, project)
         targetSessionId = created.ID
+        initializedOptionsSessionRef.current = created.ID
+        createdSessionRef.current = created.ID
         setResolvedSessionId(created.ID)
         onSessionCreated?.(created.ID)
+        // Persist the draft's current control values onto the new session so
+        // they survive a refresh before any further message is sent.
+        void updateSession(created.ID, {
+          reasoningEffort: generationOptions.reasoningEffort,
+          enableWebSearch: generationOptions.webSearch,
+        }).catch(() => undefined)
       }
 
-      const gen = streamMessage(targetSessionId, text, leafId ?? undefined, files, controller.signal)
+      const gen = streamMessage(targetSessionId, text, leafId ?? undefined, files, generationOptions, controller.signal)
       await consumeStream(gen, controller.signal, {
         setStreamingText,
         setStreamingActivities,
@@ -255,7 +290,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       setStreamingActivities([])
       setOptimisticUserMessage(null)
     }
-  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated])
+  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, generationOptions])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -269,7 +304,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const controller = new AbortController()
     streamAbortRef.current = controller
     try {
-      const gen = streamRegenerate(resolvedSessionId, controller.signal)
+      const gen = streamRegenerate(resolvedSessionId, generationOptions, controller.signal)
       await consumeStream(gen, controller.signal, {
         setStreamingText,
         setStreamingActivities,
@@ -290,7 +325,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       setStreamingActivities([])
       setRegeneratingMessageId(null)
     }
-  }, [resolvedSessionId, loadHistory, onSessionUpdated])
+  }, [resolvedSessionId, loadHistory, onSessionUpdated, generationOptions])
 
   const handleContinue = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -502,9 +537,16 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onStop={handleStop}
         files={pendingFiles}
         onFilesChange={handleFilesChange}
+        generationOptions={generationOptions}
+        onGenerationOptionsChange={handleGenerationOptionsChange}
       />
     </div>
   )
+}
+
+function composerReasoningEffort(effort: string): ReasoningEffort {
+  if (effort === 'high' || effort === 'max') return effort
+  return 'none'
 }
 
 function appendReasoningActivity(current: StreamActivity[], sequence: number, content: string): StreamActivity[] {

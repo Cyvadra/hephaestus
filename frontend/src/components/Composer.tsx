@@ -1,5 +1,6 @@
-import { useState, useRef, type KeyboardEvent } from 'react'
-import { ArrowUp, X } from 'lucide-react'
+import { useCallback, useEffect, useState, useRef, type KeyboardEvent } from 'react'
+import { ArrowUp, Check, X } from 'lucide-react'
+import type { GenerationOptions, ReasoningEffort } from '../api/types'
 
 interface Props {
   onSend: (text: string, files: File[]) => void
@@ -7,14 +8,72 @@ interface Props {
   disabled: boolean
   files: File[]
   onFilesChange: (files: File[]) => void
+  generationOptions: GenerationOptions
+  onGenerationOptionsChange: (options: GenerationOptions) => void
 }
 
-export default function Composer({ onSend, onStop, disabled, files, onFilesChange }: Props) {
+const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
+  { value: 'none', label: '无' },
+  { value: 'high', label: '快速' },
+  { value: 'max', label: '深度' },
+]
+
+export default function Composer({ onSend, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange }: Props) {
   const [text, setText] = useState('')
+  const [reasoningOpen, setReasoningOpen] = useState(false)
+  const [reasoningPinned, setReasoningPinned] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const reasoningRef = useRef<HTMLDivElement>(null)
+  const closeTimerRef = useRef<number | null>(null)
 
   const isCommand = text.trimStart().startsWith('/')
+  const controlsDisabled = disabled || isCommand
+  const reasoningLabel = reasoningChoices.find(choice => choice.value === generationOptions.reasoningEffort)?.label ?? '无'
+
+  // Delay auto-close on mouse leave so a quick trip across the gap between
+  // the trigger and the menu doesn't dismiss it before the cursor lands on
+  // an option; entering the menu cancels the pending close.
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current != null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleClose = useCallback(() => {
+    if (reasoningPinned) return
+    cancelClose()
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null
+      setReasoningOpen(false)
+    }, 250)
+  }, [reasoningPinned, cancelClose])
+
+  useEffect(() => {
+    if (!reasoningOpen) return
+    const close = (event: MouseEvent) => {
+      if (!reasoningRef.current?.contains(event.target as Node)) {
+        cancelClose()
+        setReasoningOpen(false)
+        setReasoningPinned(false)
+      }
+    }
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        cancelClose()
+        setReasoningOpen(false)
+        setReasoningPinned(false)
+      }
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', closeOnEscape)
+      cancelClose()
+    }
+  }, [reasoningOpen, cancelClose])
 
   const submit = () => {
     const t = text.trim()
@@ -62,12 +121,75 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
             className="composer-textarea"
           />
           <div className="composer-action-row">
-            {disabled ? (
-              <button type="button" onClick={onStop} className="composer-stop-btn">
-                停止
+            <div className="composer-generation-controls">
+              <div
+                className="composer-reasoning-control"
+                ref={reasoningRef}
+                onMouseEnter={() => { if (!controlsDisabled) { cancelClose(); setReasoningOpen(true) } }}
+                onMouseLeave={scheduleClose}
+              >
+                <button
+                  type="button"
+                  className={'composer-option-btn' + (generationOptions.reasoningEffort !== 'none' ? ' active' : '')}
+                  disabled={controlsDisabled}
+                  aria-haspopup="menu"
+                  aria-expanded={reasoningOpen}
+                  onClick={() => {
+                    setReasoningPinned(true)
+                    setReasoningOpen(true)
+                  }}
+                  onFocus={() => {
+                    if (!controlsDisabled) {
+                      setReasoningPinned(true)
+                      setReasoningOpen(true)
+                    }
+                  }}
+                  title="选择思考强度"
+                >
+                  <ThinkingIcon />
+                  <span>{reasoningLabel}</span>
+                </button>
+                {reasoningOpen && (
+                  <div className="composer-reasoning-menu" role="menu" aria-label="思考强度" onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>
+                    {reasoningChoices.map(choice => (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={generationOptions.reasoningEffort === choice.value}
+                        key={choice.value}
+                        onClick={() => {
+                          onGenerationOptionsChange({ ...generationOptions, reasoningEffort: choice.value })
+                          cancelClose()
+                          setReasoningOpen(false)
+                          setReasoningPinned(false)
+                        }}
+                      >
+                        <span>{choice.label}</span>
+                        {generationOptions.reasoningEffort === choice.value && <Check aria-hidden="true" size={14} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className={'composer-option-btn' + (generationOptions.webSearch ? ' active' : '')}
+                disabled={controlsDisabled}
+                aria-pressed={generationOptions.webSearch}
+                onClick={() => onGenerationOptionsChange({ ...generationOptions, webSearch: !generationOptions.webSearch })}
+                title={generationOptions.webSearch ? '联网已开启' : '联网已关闭'}
+              >
+                <WebIcon />
+                <span>联网</span>
               </button>
-            ) : (
-              <>
+            </div>
+            <div className="composer-submit-controls">
+              {disabled ? (
+                <button type="button" onClick={onStop} className="composer-stop-btn">
+                  停止
+                </button>
+              ) : (
+                <>
                 <input ref={fileInputRef} type="file" multiple hidden onChange={event => onFilesChange([...files, ...Array.from(event.target.files ?? [])])} />
                 <div className="composer-upload-tooltip">
                   <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isCommand} className="composer-upload-btn" aria-label="上传文件（最多 5 个，单文件最大 50 MB，总计 250 MB）" aria-describedby="upload-file-limits">
@@ -87,8 +209,9 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
                 >
                   <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
                 </button>
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -98,4 +221,27 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
 
 function formatSize(size: number) {
   return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`
+}
+
+// DeepSeek 官方思考图标（轨道圆环 + 中心点）
+function ThinkingIcon() {
+  return (
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 6.77C8.6788 6.77 9.23 7.3212 9.23 8C9.23 8.6788 8.6788 9.23 8 9.23C7.3212 9.23 6.77 8.6788 6.77 8C6.77 7.3212 7.3212 6.77 8 6.77Z" fill="currentColor" />
+      <path d="M10.5066 10.5066C7.3016 13.7116 3.5821 15.1861 2.198 13.802C0.8139 12.4179 2.2894 8.6984 5.4944 5.4934C8.6994 2.2884 12.4179 0.8139 13.802 2.198C15.1861 3.5821 13.7116 7.3016 10.5066 10.5066Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10.731 5.269C13.936 8.474 15.31 12.294 13.802 13.802C12.294 15.31 8.475 13.936 5.27 10.731C2.065 7.526 0.69 3.706 2.198 2.198C3.706 0.69 7.526 2.064 10.731 5.269Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+// DeepSeek 官方联网图标（地球）
+function WebIcon() {
+  return (
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 14.8492C9.5983 14.8492 10.8941 11.7828 10.8941 8C10.8941 4.2172 9.5983 1.1509 8 1.1509" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 14.8492C6.4009 14.8492 5.105 11.7828 5.105 8C5.105 4.2172 6.4009 1.1509 8 1.1509" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 1.1509C11.7824 1.1509 14.8487 4.2172 14.8487 8C14.8487 11.7828 11.7824 14.8492 8 14.8492C4.2168 14.8492 1.1504 11.7828 1.1504 8C1.1504 4.2172 4.2168 1.1509 8 1.1509Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M1.64 8C1.64 8 14.36 8 14.36 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
 }
