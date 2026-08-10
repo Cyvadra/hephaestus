@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/tools"
+	"github.com/Cyvadra/hephaestus/internal/upload"
+	"github.com/Cyvadra/hephaestus/pkg/baidu/ocr"
 	"github.com/joho/godotenv"
 )
 
@@ -108,12 +111,49 @@ func main() {
 
 	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects, interactions)
 	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
+	uploads, err := upload.New(upload.Config{
+		TextExtensions:     cfg.UploadTextExtensions,
+		ImageExtensions:    cfg.UploadImageExtensions,
+		InlineTextMaxBytes: cfg.UploadInlineTextMaxBytes,
+		OCRImageMaxBytes:   cfg.UploadOCRImageMaxBytes,
+		FileMaxBytes:       cfg.UploadFileMaxBytes,
+		TotalMaxBytes:      cfg.UploadTotalMaxBytes,
+		MaxFiles:           cfg.UploadMaxFiles,
+		Recognizer:         newOCRRecognizer(cfg.BaiduOCRAPIKey, cfg.BaiduOCRSecretKey),
+	})
+	if err != nil {
+		log.Fatalf("upload: %v", err)
+	}
 
-	srv := server.New(db, reg, sessions, pipeline, commands, projects)
+	srv := server.New(db, reg, sessions, pipeline, commands, projects, uploads)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {
 		log.Printf("server: %v", err)
 		return
 	}
+}
+
+type ocrRecognizer struct{}
+
+func newOCRRecognizer(apiKey, secretKey string) upload.Recognizer {
+	if apiKey == "" {
+		return nil
+	}
+	ocr.Init(apiKey, secretKey)
+	return ocrRecognizer{}
+}
+
+func (ocrRecognizer) Recognize(ctx context.Context, image []byte) (string, error) {
+	result, err := ocr.RecognizeImage(ctx, image, ocr.Options{})
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, len(result.WordsResult))
+	for _, word := range result.WordsResult {
+		if word.Words != "" {
+			lines = append(lines, word.Words)
+		}
+	}
+	return strings.Join(lines, "\n"), nil
 }

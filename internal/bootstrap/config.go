@@ -22,6 +22,9 @@ type Config struct {
 	PostgresDSN string
 	// DeepSeekAPIKey authenticates outbound calls via github.com/Cyvadra/ds4.
 	DeepSeekAPIKey string
+	// BaiduOCRAPIKey and BaiduOCRSecretKey authenticate optional image OCR.
+	BaiduOCRAPIKey    string
+	BaiduOCRSecretKey string
 	// WeComWebhookURL receives Warn/Error notifications; empty disables delivery.
 	WeComWebhookURL string
 	// ListenAddr is the address the Gin HTTP server binds to.
@@ -45,6 +48,13 @@ type Config struct {
 	WebSearchSerpAPIEngine   string
 	WebSearchSearXNGBaseURL  string
 	WebSearchSummaryMaxChars int
+	UploadTextExtensions     []string
+	UploadImageExtensions    []string
+	UploadInlineTextMaxBytes int64
+	UploadOCRImageMaxBytes   int64
+	UploadFileMaxBytes       int64
+	UploadTotalMaxBytes      int64
+	UploadMaxFiles           int
 	// FixedPlugins run for every session and cannot be disabled through
 	// mutable session settings.
 	FixedPlugins []string
@@ -61,6 +71,8 @@ func Load() (*Config, error) {
 		ConfigDir:                getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
 		PostgresDSN:              os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
 		DeepSeekAPIKey:           os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
+		BaiduOCRAPIKey:           strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_API_KEY")),
+		BaiduOCRSecretKey:        strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY")),
 		WeComWebhookURL:          os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
 		ListenAddr:               getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
 		ProjectsRoot:             projectsRoot,
@@ -77,6 +89,13 @@ func Load() (*Config, error) {
 		WebSearchSerpAPIEngine:   getenvDefault("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE", "google_light"),
 		WebSearchSearXNGBaseURL:  os.Getenv("HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL"),
 		WebSearchSummaryMaxChars: getenvInt("HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS", 4_000),
+		UploadTextExtensions:     splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS", "md,markdown,txt,csv,json,yaml,yml,toml,xml")),
+		UploadImageExtensions:    splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS", "jpg,jpeg,png,bmp")),
+		UploadInlineTextMaxBytes: getenvInt64("HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES", 10<<10),
+		UploadOCRImageMaxBytes:   getenvInt64("HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES", 4<<20),
+		UploadFileMaxBytes:       getenvInt64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
+		UploadTotalMaxBytes:      getenvInt64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
+		UploadMaxFiles:           getenvInt("HEPHAESTUS_UPLOAD_MAX_FILES", 5),
 		FixedPlugins:             splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "session_summary")),
 	}
 
@@ -86,11 +105,23 @@ func Load() (*Config, error) {
 	if cfg.DeepSeekAPIKey == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY is required")
 	}
+	if (cfg.BaiduOCRAPIKey == "") != (cfg.BaiduOCRSecretKey == "") {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_BAIDU_OCR_API_KEY and HEPHAESTUS_BAIDU_OCR_SECRET_KEY must be set together")
+	}
 	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl or local")
 	}
 	if cfg.WebFetchProvider == "firecrawl" && cfg.FirecrawlAPIKey == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_FIRECRAWL_API_KEY is required when web fetch provider is firecrawl")
+	}
+	if cfg.UploadInlineTextMaxBytes <= 0 || cfg.UploadOCRImageMaxBytes <= 0 || cfg.UploadFileMaxBytes <= 0 || cfg.UploadTotalMaxBytes <= 0 || cfg.UploadMaxFiles <= 0 {
+		return nil, fmt.Errorf("bootstrap: upload limits must be positive")
+	}
+	if cfg.UploadOCRImageMaxBytes > cfg.UploadFileMaxBytes {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES cannot exceed HEPHAESTUS_UPLOAD_FILE_MAX_BYTES")
+	}
+	if cfg.UploadFileMaxBytes > cfg.UploadTotalMaxBytes {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_UPLOAD_FILE_MAX_BYTES cannot exceed HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES")
 	}
 
 	return cfg, nil
@@ -112,6 +143,15 @@ func getenvInt(key string, fallback int) int {
 	return fallback
 }
 
+func getenvInt64(key string, fallback int64) int64 {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 func getenvDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -127,4 +167,21 @@ func splitCommaSeparated(value string) []string {
 		}
 	}
 	return values
+}
+
+func splitExtensions(value string) []string {
+	seen := make(map[string]struct{})
+	var extensions []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(item, ".")))
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		extensions = append(extensions, item)
+	}
+	return extensions
 }

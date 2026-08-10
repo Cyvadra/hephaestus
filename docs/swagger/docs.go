@@ -226,9 +226,10 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages": {
             "post": {
-                "description": "Sends a user message (or slash command) into a session and returns the assistant's reply.",
+                "description": "Sends a JSON user message or multipart form with text and repeated files into a session, then returns the assistant's reply.",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -279,9 +280,10 @@ const docTemplate = `{
         },
         "/sessions/{id}/messages/stream": {
             "post": {
-                "description": "Like sendMessage, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_output\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
+                "description": "Like sendMessage, including multipart file uploads, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_output\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "text/event-stream"

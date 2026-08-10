@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"sort"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -202,9 +204,10 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 // sendMessage godoc
 //
 //	@Summary		Send a message
-//	@Description	Sends a user message (or slash command) into a session and returns the assistant's reply.
+//	@Description	Sends a JSON user message or multipart form with text and repeated files into a session, then returns the assistant's reply.
 //	@Tags			sessions
 //	@Accept			json
+//	@Accept			mpfd
 //	@Produce		json
 //	@Param			id		path		int					true	"Session ID"
 //	@Param			request	body		sendMessageRequest	true	"Message to send"
@@ -213,7 +216,7 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 //	@Failure		500		{object}	errorResponse
 //	@Router			/sessions/{id}/messages [post]
 func (s *Server) sendMessage(c *gin.Context) {
-	sessionID, req, ok := s.prepareMessage(c)
+	sessionID, req, uploadResult, ok := s.prepareMessage(c)
 	if !ok {
 		return
 	}
@@ -236,15 +239,16 @@ func (s *Server) sendMessage(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
+	c.JSON(http.StatusOK, sendMessageResponse{Message: result.Message, Metadata: mergeMetadata(result.Metadata, uploadResult)})
 }
 
 // streamMessage godoc
 //
 //	@Summary		Send a message with streaming
-//	@Description	Like sendMessage, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_output", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
+//	@Description	Like sendMessage, including multipart file uploads, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_output", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
 //	@Tags			sessions
 //	@Accept			json
+//	@Accept			mpfd
 //	@Produce		text/event-stream
 //	@Param			id		path	int					true	"Session ID"
 //	@Param			request	body	sendMessageRequest	true	"Message to send"
@@ -252,45 +256,124 @@ func (s *Server) sendMessage(c *gin.Context) {
 //	@Failure		400	{object}	errorResponse
 //	@Router			/sessions/{id}/messages/stream [post]
 func (s *Server) streamMessage(c *gin.Context) {
-	sessionID, req, ok := s.prepareMessage(c)
+	sessionID, req, uploadResult, ok := s.prepareMessage(c)
 	if !ok {
 		return
 	}
 
 	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-		return s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID, OnDelta: onDelta})
+		result, err := s.pipeline.Run(ctx, sessionID, req.Text, chat.TurnOptions{ExpectedLeaf: req.ActiveLeafMessageID, OnDelta: onDelta})
+		if result != nil {
+			result.Metadata = mergeMetadata(result.Metadata, uploadResult)
+		}
+		return result, err
 	})
 }
 
 // prepareMessage performs the shared request parsing, active-branch switch,
 // and slash-command dispatch for streaming and non-streaming endpoints.
-func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, bool) {
+func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *upload.Result, bool) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return 0, sendMessageRequest{}, false
+		return 0, sendMessageRequest{}, nil, false
 	}
 	var req sendMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return 0, sendMessageRequest{}, false
+	files, err := s.bindMessageRequest(c, &req)
+	if err != nil {
+		status := http.StatusBadRequest
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		c.JSON(status, errorResponse{Error: err.Error()})
+		return 0, sendMessageRequest{}, nil, false
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "text is required"})
+		return 0, sendMessageRequest{}, nil, false
 	}
 	if req.ActiveLeafMessageID != nil {
 		if err := s.sessions.SelectActiveLeaf(sessionID, *req.ActiveLeafMessageID); err != nil {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return 0, sendMessageRequest{}, false
+			return 0, sendMessageRequest{}, nil, false
 		}
 	}
 	if command.IsCommand(req.Text) {
+		if len(files) > 0 {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: "attachments cannot be sent with slash commands"})
+			return 0, sendMessageRequest{}, nil, false
+		}
 		resp, err := s.commands.Execute(sessionID, req.Text)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		} else {
 			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: resp})
 		}
-		return 0, sendMessageRequest{}, false
+		return 0, sendMessageRequest{}, nil, false
 	}
-	return sessionID, req, true
+	if len(files) == 0 {
+		return sessionID, req, nil, true
+	}
+	if s.uploads == nil {
+		c.JSON(http.StatusServiceUnavailable, errorResponse{Error: "file uploads are not configured"})
+		return 0, sendMessageRequest{}, nil, false
+	}
+	var sess store.Session
+	if err := s.db.First(&sess, sessionID).Error; err != nil {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		return 0, sendMessageRequest{}, nil, false
+	}
+	boundProject, err := s.projects.Get(sess.ProjectID)
+	if err != nil {
+		internalError(c, err)
+		return 0, sendMessageRequest{}, nil, false
+	}
+	result, err := s.uploads.Process(c.Request.Context(), s.projects.Path(*boundProject), files)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, upload.ErrFileTooLarge) || errors.Is(err, upload.ErrTotalTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		c.JSON(status, errorResponse{Error: err.Error()})
+		return 0, sendMessageRequest{}, nil, false
+	}
+	req.Text = result.Prefix + req.Text
+	return sessionID, req, &result, true
+}
+
+func (s *Server) bindMessageRequest(c *gin.Context, req *sendMessageRequest) ([]*multipart.FileHeader, error) {
+	if !strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
+		return nil, c.ShouldBindJSON(req)
+	}
+	if s.uploads != nil {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.uploads.MaxRequestBytes())
+	}
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		return nil, err
+	}
+	req.Text = c.PostForm("text")
+	if leaf := c.PostForm("active_leaf_message_id"); leaf != "" {
+		parsed, err := strconv.ParseUint(leaf, 10, 64)
+		if err != nil || parsed == 0 {
+			return nil, errValidation("invalid active leaf message id")
+		}
+		value := uint(parsed)
+		req.ActiveLeafMessageID = &value
+	}
+	return c.Request.MultipartForm.File["files"], nil
+}
+
+func mergeMetadata(metadata map[string]any, result *upload.Result) map[string]any {
+	if result == nil {
+		return metadata
+	}
+	merged := make(map[string]any, len(metadata)+1)
+	for key, value := range metadata {
+		merged[key] = value
+	}
+	merged["uploads"] = result
+	return merged
 }
 
 // regenerate godoc

@@ -18,6 +18,29 @@ Run the backend with:
 go run ./cmd/hephaestus
 ```
 
+## File uploads and OCR
+
+Chat messages support up to five attachments. Files are stored below the
+session project's `uploads/YYYY-MM-DD` directory. Small, whitelisted text
+files are included in the prompt; `jpg`, `jpeg`, `png`, and `bmp` files are
+sent to Baidu OCR when both credentials are configured. Other files remain
+available to the agent by their project-relative path and size.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `HEPHAESTUS_BAIDU_OCR_API_KEY` | none | Optional Baidu OCR API key; must be set together with the secret. |
+| `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` | none | Optional Baidu OCR secret key. |
+| `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | Comma-separated extensions eligible for direct prompt inclusion. |
+| `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,bmp` | Comma-separated extensions eligible for OCR. |
+| `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | Maximum text-file size included in a prompt. |
+| `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES` | `4194304` | Maximum image size sent to OCR. |
+| `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | Maximum size of one uploaded file. |
+| `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | Maximum aggregate attachment size for one message. |
+| `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | Maximum attachment count for one message. |
+
+When OCR is unavailable or fails, the file is still stored and its path and
+size are added to the prompt. The chat view surfaces the extraction warning.
+
 ## Web fetch providers
 
 `web_fetch` uses Firecrawl by default and falls back to a local headless browser when Firecrawl fails. The available settings are:

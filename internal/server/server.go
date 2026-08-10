@@ -14,6 +14,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
+	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -29,10 +30,11 @@ type Server struct {
 	pipeline *chat.Pipeline
 	commands *command.Service
 	projects *project.Service
+	uploads  *upload.Processor
 }
 
 // New builds the Gin engine and registers every route.
-func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service) *Server {
+func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor) *Server {
 	s := &Server{
 		engine:   gin.Default(),
 		db:       db,
@@ -41,6 +43,7 @@ func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipelin
 		pipeline: pipeline,
 		commands: commands,
 		projects: projects,
+		uploads:  uploads,
 	}
 
 	api := s.engine.Group("/api/v1")

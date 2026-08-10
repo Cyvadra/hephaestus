@@ -81,3 +81,47 @@ func TestLoadRequiresFirecrawlKeyByDefault(t *testing.T) {
 		t.Fatal("expected missing Firecrawl key error")
 	}
 }
+
+func TestLoadUploadConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_BAIDU_OCR_API_KEY", "ocr-key")
+	t.Setenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY", "ocr-secret")
+	t.Setenv("HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS", ".TXT, md, txt")
+	t.Setenv("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", "100")
+	t.Setenv("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", "200")
+	t.Setenv("HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES", "50")
+	t.Setenv("HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES", "10")
+	t.Setenv("HEPHAESTUS_UPLOAD_MAX_FILES", "2")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaiduOCRAPIKey != "ocr-key" || cfg.BaiduOCRSecretKey != "ocr-secret" {
+		t.Fatalf("unexpected OCR credentials: %+v", cfg)
+	}
+	if want := []string{"txt", "md"}; !reflect.DeepEqual(cfg.UploadTextExtensions, want) {
+		t.Fatalf("text extensions = %v, want %v", cfg.UploadTextExtensions, want)
+	}
+	if cfg.UploadFileMaxBytes != 100 || cfg.UploadTotalMaxBytes != 200 || cfg.UploadOCRImageMaxBytes != 50 || cfg.UploadInlineTextMaxBytes != 10 || cfg.UploadMaxFiles != 2 {
+		t.Fatalf("unexpected upload config: %+v", cfg)
+	}
+}
+
+func TestLoadRejectsPartialOCRCredentialsAndInvalidUploadLimits(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_BAIDU_OCR_API_KEY", "ocr-key")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected partial OCR credentials to fail")
+	}
+
+	t.Setenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY", "ocr-secret")
+	t.Setenv("HEPHAESTUS_UPLOAD_MAX_FILES", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid upload limit to fail")
+	}
+}
