@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Cyvadra/ds4 v0.0.0-20260811072002-35a35d2476dd
+	github.com/Cyvadra/ds4 v0.0.0-20260811082235-00aa92ab7e24
 	github.com/chromedp/chromedp v0.16.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/joho/godotenv v1.5.1
