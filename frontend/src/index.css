@@ -6358,7 +6358,7 @@ body {
     min-height: 34px;
     display: flex;
     justify-content: space-between;
-    align-items: center
+    align-items: flex-end
 }
 
 .composer-submit-controls {
