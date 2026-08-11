@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
@@ -104,28 +105,65 @@ func TestNewTurnContextPreservesFirstTurnMetadata(t *testing.T) {
 	}
 }
 
-func TestTrackConsecutiveToolCall_RejectsNinthRepeatedCall(t *testing.T) {
+func TestTrackConsecutiveToolCall_RejectsRepeatedCallWithoutInteractiveApproval(t *testing.T) {
+	pipeline := &Pipeline{}
 	lastToolName := ""
 	consecutiveToolCalls := 0
 	for range maxConsecutiveToolCalls {
-		if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "search"); err != nil {
+		if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "search"); err != nil {
 			t.Fatalf("expected call within limit to succeed: %v", err)
 		}
 	}
-	if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "search"); err == nil {
-		t.Fatal("expected ninth consecutive call to be rejected")
+	if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "search"); err == nil {
+		t.Fatal("expected repeated call beyond the limit to be rejected")
 	}
 }
 
 func TestTrackConsecutiveToolCall_AllowsUnlimitedAlternatingTools(t *testing.T) {
+	pipeline := &Pipeline{}
 	lastToolName := ""
 	consecutiveToolCalls := 0
 	for range maxConsecutiveToolCalls * 2 {
-		if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "search"); err != nil {
+		if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "search"); err != nil {
 			t.Fatalf("expected alternating call to succeed: %v", err)
 		}
-		if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, "read"); err != nil {
+		if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "read"); err != nil {
 			t.Fatalf("expected alternating call to succeed: %v", err)
+		}
+	}
+}
+
+func TestTrackConsecutiveToolCall_ApprovalResetsCounter(t *testing.T) {
+	manager := interaction.NewManager()
+	pipeline := &Pipeline{interactions: manager}
+	events := make(chan *interaction.Request, 1)
+	ctx := withInteractionReporter(context.Background(), func(request *interaction.Request) {
+		events <- request
+	})
+	lastToolName := "shell"
+	consecutiveToolCalls := maxConsecutiveToolCalls
+	done := make(chan error, 1)
+
+	go func() {
+		done <- pipeline.trackConsecutiveToolCall(ctx, 7, &lastToolName, &consecutiveToolCalls, "shell")
+	}()
+
+	request := <-events
+	if request.SessionID != 7 || request.Title != "Continue repeated tool calls?" {
+		t.Fatalf("unexpected permission request: %+v", request)
+	}
+	if err := manager.Respond(7, true); err != nil {
+		t.Fatalf("approve repeated calls: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("expected approved call to succeed: %v", err)
+	}
+	if consecutiveToolCalls != 1 {
+		t.Fatalf("expected approval to reset counter to 1, got %d", consecutiveToolCalls)
+	}
+	for range maxConsecutiveToolCalls - 1 {
+		if err := pipeline.trackConsecutiveToolCall(ctx, 7, &lastToolName, &consecutiveToolCalls, "shell"); err != nil {
+			t.Fatalf("expected fresh limit window after approval: %v", err)
 		}
 	}
 }
@@ -180,7 +218,7 @@ func TestIncompleteMessages_StripsDanglingToolCallsFromInterruptedAssistantMessa
 	// assistant message requesting tool calls is already in toPersist, but
 	// no matching tool-result messages were appended before the error.
 	messages := []store.ChatMessage{
-		{Role: ds4.RoleAssistant, Content: "", ToolCalls: []byte(`[{"id":"call-1"}]`), Status: store.MessageStatusComplete},
+		{Role: ds4.RoleAssistant, Content: "visible reply", ReasoningContent: "reasoning", ToolCalls: []byte(`[{"id":"call-1"}]`), Status: store.MessageStatusComplete},
 	}
 
 	got := incompleteMessages(messages, errors.New("too many consecutive tool calls"))
@@ -192,5 +230,8 @@ func TestIncompleteMessages_StripsDanglingToolCallsFromInterruptedAssistantMessa
 	}
 	if got[0].ToolCalls != nil {
 		t.Fatalf("expected dangling tool_calls to be dropped, got %s", got[0].ToolCalls)
+	}
+	if got[0].Content != "visible reply" || got[0].ReasoningContent != "reasoning" {
+		t.Fatalf("expected assistant content to survive, got %+v", got[0])
 	}
 }

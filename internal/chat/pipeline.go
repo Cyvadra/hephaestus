@@ -712,7 +712,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 
 		toolCalls := resp.ToolCalls()
 		for _, tc := range toolCalls {
-			if err := trackConsecutiveToolCall(&lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
+			if err := p.trackConsecutiveToolCall(ctx, turn.SessionID, &lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
 				return toPersist, turn, err
 			}
 			turn.Metadata["tool_call"] = tc
@@ -866,16 +866,34 @@ func (p *Pipeline) finishToolAudit(auditID uint, result *toolkit.ToolResult) {
 	}
 }
 
-func trackConsecutiveToolCall(lastToolName *string, consecutiveToolCalls *int, toolName string) error {
+func (p *Pipeline) trackConsecutiveToolCall(ctx context.Context, sessionID uint, lastToolName *string, consecutiveToolCalls *int, toolName string) error {
 	if toolName == *lastToolName {
 		*consecutiveToolCalls++
 	} else {
 		*lastToolName = toolName
 		*consecutiveToolCalls = 1
 	}
-	if *consecutiveToolCalls > maxConsecutiveToolCalls {
-		return fmt.Errorf("chat: tool %q called consecutively more than %d times", toolName, maxConsecutiveToolCalls)
+	if *consecutiveToolCalls <= maxConsecutiveToolCalls {
+		return nil
 	}
+	if p.interactions == nil || interactionReporterFromContext(ctx) == nil {
+		return fmt.Errorf("chat: tool %q called consecutively more than %d times; interactive approval is unavailable", toolName, maxConsecutiveToolCalls)
+	}
+
+	permissionCtx := interaction.WithReporter(ctx, func(event interaction.Event) {
+		if event.Type == interaction.EventAskPermission {
+			interactionReporterFromContext(ctx)(&event.Request)
+		}
+	})
+	if err := p.interactions.RequestPermission(
+		permissionCtx,
+		sessionID,
+		"Continue repeated tool calls?",
+		fmt.Sprintf("Tool %q has been called more than %d times consecutively. Approve to continue and reset the counter.", toolName, maxConsecutiveToolCalls),
+	); err != nil {
+		return fmt.Errorf("chat: tool %q called consecutively more than %d times: %w", toolName, maxConsecutiveToolCalls, err)
+	}
+	*consecutiveToolCalls = 1
 	return nil
 }
 
