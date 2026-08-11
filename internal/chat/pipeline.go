@@ -264,11 +264,6 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
-	if turn.IsFirstTurn {
-		if firstUser, err := lastUserMessage(turn.Messages); err == nil {
-			turn.FirstUserMessage = firstUser.Content
-		}
-	}
 	summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
 
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, staticMessageCount, turn)
@@ -287,10 +282,6 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	if err != nil {
 		return nil, err
 	}
-	if turn.IsFirstTurn {
-		turn.FirstUserMessage = editedUser.Content
-	}
-
 	result, err := p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
 	p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 	return result, err
