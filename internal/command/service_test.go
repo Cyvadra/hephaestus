@@ -9,15 +9,16 @@ import (
 )
 
 func testService() *Service {
+	reg := &registry.Registry{
+		Identities:  map[string]registry.Identity{"default": {Name: "default"}},
+		Impressions: map[string]registry.Impression{"concise": {Name: "concise"}},
+		ToolGroups:  map[string]registry.ToolGroup{"basic": {Name: "basic"}},
+		Concierges:  map[string]registry.Concierge{"default": {Name: "default"}},
+	}
 	return &Service{
-		reg: &registry.Registry{
-			Identities:  map[string]registry.Identity{"default": {Name: "default"}},
-			Impressions: map[string]registry.Impression{"concise": {Name: "concise"}},
-			ToolGroups:  map[string]registry.ToolGroup{"basic": {Name: "basic"}},
-			Concierges:  map[string]registry.Concierge{"default": {Name: "default"}},
-		},
-		lastList: map[uint]map[Kind][]string{},
-		cancels:  map[uint]cancelRegistration{},
+		registries: registry.NewStore(reg),
+		lastList:   map[uint]map[Kind][]string{},
+		cancels:    map[uint]cancelRegistration{},
 	}
 }
 
@@ -27,6 +28,19 @@ func TestValidateKindNameRejectsUnknownConfiguredName(t *testing.T) {
 		if err := validateKindName(service, kind, "missing"); err == nil {
 			t.Fatalf("expected unknown %s to be rejected", kind)
 		}
+	}
+}
+
+func TestValidateKindNameUsesPublishedRegistry(t *testing.T) {
+	service := testService()
+	if err := validateKindName(service, KindIdentity, "updated"); err == nil {
+		t.Fatal("expected unpublished identity to be rejected")
+	}
+	service.registries.Publish(&registry.Registry{
+		Identities: map[string]registry.Identity{"updated": {Name: "updated"}},
+	})
+	if err := validateKindName(service, KindIdentity, "updated"); err != nil {
+		t.Fatalf("expected published identity to be accepted: %v", err)
 	}
 }
 

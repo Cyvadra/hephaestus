@@ -33,6 +33,7 @@ var (
 type Service struct {
 	db           *gorm.DB
 	static       *Registry
+	store        *Store
 	knownTools   map[string]bool
 	knownPlugins map[string]bool
 	mu           sync.Mutex
@@ -51,31 +52,32 @@ type Catalog struct {
 	Plugins     []string `json:"plugins"`
 }
 
-func NewService(db *gorm.DB, static *Registry, knownTools, knownPlugins map[string]bool) (*Service, error) {
+func NewService(db *gorm.DB, static *Registry, store *Store, knownTools, knownPlugins map[string]bool) (*Service, error) {
 	if db == nil {
 		return nil, fmt.Errorf("registry: database is required")
 	}
 	if static == nil {
 		return nil, fmt.Errorf("registry: static registry is required")
 	}
+	if store == nil {
+		return nil, fmt.Errorf("registry: runtime store is required")
+	}
 	return &Service{
 		db:           db,
 		static:       static.Clone(),
+		store:        store,
 		knownTools:   cloneMap(knownTools),
 		knownPlugins: cloneMap(knownPlugins),
 	}, nil
 }
 
-// Catalog returns names from the registry that would become active after a
-// restart, plus names registered directly by the host application.
+// Catalog returns names from the active registry snapshot, plus names
+// registered directly by the host application.
 func (s *Service) Catalog() (Catalog, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	reg, err := LoadDatabase(s.db, s.static)
-	if err != nil {
-		return Catalog{}, err
-	}
+	reg := s.store.Current()
 	return Catalog{
 		Identities:  sortedMapKeys(reg.Identities),
 		Impressions: sortedMapKeys(reg.Impressions),
@@ -162,7 +164,8 @@ func (s *Service) Delete(kind Kind, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	var candidate *Registry
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Where("name = ?", name).Delete(modelForKind(kind))
 		if result.Error != nil {
 			return result.Error
@@ -170,8 +173,15 @@ func (s *Service) Delete(kind Kind, name string) error {
 		if result.RowsAffected == 0 {
 			return ErrNotFound
 		}
-		return s.validateFuture(tx)
+		var err error
+		candidate, err = s.validatedRegistry(tx)
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.store.Publish(candidate)
+	return nil
 }
 
 func (s *Service) write(kind Kind, value any, replace bool) error {
@@ -185,7 +195,8 @@ func (s *Service) write(kind Kind, value any, replace bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	var candidate *Registry
+	err = s.db.Transaction(func(tx *gorm.DB) error {
 		model := modelForKind(kind)
 		var count int64
 		if err := tx.Model(model).Where("name = ?", name).Count(&count).Error; err != nil {
@@ -204,19 +215,25 @@ func (s *Service) write(kind Kind, value any, replace bool) error {
 		} else if err := tx.Create(value).Error; err != nil {
 			return err
 		}
-		return s.validateFuture(tx)
+		candidate, err = s.validatedRegistry(tx)
+		return err
 	})
-}
-
-func (s *Service) validateFuture(tx *gorm.DB) error {
-	reg, err := LoadDatabase(tx, s.static)
 	if err != nil {
 		return err
 	}
-	if err := reg.Validate(s.knownTools, s.knownPlugins); err != nil {
-		return fmt.Errorf("%w: %v", ErrConflict, err)
-	}
+	s.store.Publish(candidate)
 	return nil
+}
+
+func (s *Service) validatedRegistry(tx *gorm.DB) (*Registry, error) {
+	reg, err := LoadDatabase(tx, s.static)
+	if err != nil {
+		return nil, err
+	}
+	if err := reg.Validate(s.knownTools, s.knownPlugins); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	return reg, nil
 }
 
 func newValue(kind Kind) (any, error) {

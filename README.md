@@ -38,11 +38,11 @@ Database-only management endpoints are available under
 | `PUT` | `/configurations/:kind/:name` | Replace a persisted record; path and payload names must match. |
 | `DELETE` | `/configurations/:kind/:name` | Delete a persisted record. |
 
-Each write validates the static-plus-database registry that will be used after
-a restart. A deleted database override falls back to the static definition on
-the next restart. Configuration writes are visible to these management APIs
-immediately, but the running chat pipeline retains its startup snapshot until
-the process restarts.
+Each write validates the complete static-plus-database registry before its
+transaction commits. After commit, the validated registry is atomically made
+active for new requests and subsequent chat turns; an in-progress turn keeps
+the snapshot it started with. Deleting a database override immediately falls
+back to the static definition loaded at process startup.
 
 ## File uploads and OCR
 

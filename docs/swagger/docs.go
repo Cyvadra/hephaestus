@@ -102,7 +102,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Persists a database-only configuration. The change becomes active after restart.",
+                "description": "Persists a database-only configuration. The change becomes active for new requests and subsequent chat turns immediately.",
                 "consumes": [
                     "application/json"
                 ],
@@ -200,7 +200,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Replaces a database-only configuration. The path and payload names must match, and the change becomes active after restart.",
+                "description": "Replaces a database-only configuration. The path and payload names must match, and the change becomes active for new requests and subsequent chat turns immediately.",
                 "consumes": [
                     "application/json"
                 ],
@@ -264,7 +264,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Deletes a database-only configuration. A same-named static configuration becomes active after the next restart.",
+                "description": "Deletes a database-only configuration. A same-named startup static configuration becomes active immediately.",
                 "tags": [
                     "configurations"
                 ],

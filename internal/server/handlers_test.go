@@ -13,6 +13,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
+	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,6 +32,27 @@ func TestValidateGenerationOptions(t *testing.T) {
 	req.ReasoningEffort = "low"
 	if err := validateGenerationOptions(&req); err == nil {
 		t.Fatal("expected low request override to be rejected")
+	}
+}
+
+func TestListConciergesUsesPublishedRegistry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	registries := registry.NewStore(&registry.Registry{
+		Identities: map[string]registry.Identity{"first": {Name: "first"}},
+		Concierges: map[string]registry.Concierge{"first": {Name: "first", Identity: "first"}},
+	})
+	server := &Server{registries: registries}
+
+	registries.Publish(&registry.Registry{
+		Identities: map[string]registry.Identity{"updated": {Name: "updated", ReasoningEffort: registry.ReasoningHigh}},
+		Concierges: map[string]registry.Concierge{"updated": {Name: "updated", Identity: "updated"}},
+	})
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	server.listConcierges(context)
+
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"name":"updated"`) || strings.Contains(recorder.Body.String(), `"name":"first"`) {
+		t.Fatalf("unexpected concierge response: status %d, body %s", recorder.Code, recorder.Body.String())
 	}
 }
 

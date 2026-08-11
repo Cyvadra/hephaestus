@@ -40,13 +40,14 @@ type createSessionRequest struct {
 //	@Failure		404		{object}	errorResponse
 //	@Router			/sessions [post]
 func (s *Server) createSession(c *gin.Context) {
+	reg := s.registries.Current()
 	var req createSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
 
-	concierge, ok := s.reg.Concierges[req.Concierge]
+	concierge, ok := reg.Concierges[req.Concierge]
 	if !ok {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "concierge not found: " + req.Concierge})
 		return
@@ -75,7 +76,7 @@ func (s *Server) createSession(c *gin.Context) {
 	// follows the identity, and web search starts enabled.
 	enableWebSearch := true
 	reasoningEffort := ""
-	if identity, ok := s.reg.Identities[concierge.Identity]; ok {
+	if identity, ok := reg.Identities[concierge.Identity]; ok {
 		reasoningEffort = identity.ReasoningEffort
 	}
 	if err := s.db.Model(sess).UpdateColumns(map[string]any{
@@ -107,6 +108,7 @@ type historyResponse struct {
 //	@Failure		404	{object}	errorResponse
 //	@Router			/sessions/{id}/history [get]
 func (s *Server) getHistory(c *gin.Context) {
+	reg := s.registries.Current()
 	sessionID, err := parseSessionID(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
@@ -126,7 +128,7 @@ func (s *Server) getHistory(c *gin.Context) {
 	}
 
 	settings := sess.Settings.Data()
-	identity, ok := s.reg.Identities[settings.Identity]
+	identity, ok := reg.Identities[settings.Identity]
 	if !ok {
 		c.JSON(http.StatusInternalServerError, errorResponse{Error: "session identity not found"})
 		return
@@ -919,9 +921,10 @@ type conciergeItem struct {
 //	@Success		200	{array}	conciergeItem
 //	@Router			/concierges [get]
 func (s *Server) listConcierges(c *gin.Context) {
-	items := make([]conciergeItem, 0, len(s.reg.Concierges))
-	for _, cg := range s.reg.Concierges {
-		identity := s.reg.Identities[cg.Identity]
+	reg := s.registries.Current()
+	items := make([]conciergeItem, 0, len(reg.Concierges))
+	for _, cg := range reg.Concierges {
+		identity := reg.Identities[cg.Identity]
 		items = append(items, conciergeItem{
 			Name:            cg.Name,
 			Nickname:        cg.Nickname,

@@ -45,7 +45,7 @@ const (
 // Service dispatches slash commands against the platform's static registry
 // and runtime store.
 type Service struct {
-	reg          *registry.Registry
+	registries   *registry.Store
 	toolReg      *toolkit.Registry
 	pluginReg    *plugin.Registry
 	sessions     *session.Service
@@ -66,9 +66,9 @@ type cancelRegistration struct {
 }
 
 // NewService wires the command dispatcher to its dependencies.
-func NewService(reg *registry.Registry, toolReg *toolkit.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service, interactions *interaction.Manager) *Service {
+func NewService(registries *registry.Store, toolReg *toolkit.Registry, pluginReg *plugin.Registry, sessions *session.Service, notifier *notify.Notifier, db *gorm.DB, projects *project.Service, interactions *interaction.Manager) *Service {
 	return &Service{
-		reg:          reg,
+		registries:   registries,
 		toolReg:      toolReg,
 		pluginReg:    pluginReg,
 		sessions:     sessions,
@@ -79,6 +79,10 @@ func NewService(reg *registry.Registry, toolReg *toolkit.Registry, pluginReg *pl
 		lastList:     map[uint]map[Kind][]string{},
 		cancels:      map[uint]cancelRegistration{},
 	}
+}
+
+func (s *Service) currentRegistry() *registry.Registry {
+	return s.registries.Current()
 }
 
 // IsCommand reports whether text is a slash command rather than a chat
@@ -201,19 +205,19 @@ func knownName[T any](kind Kind, values func(*Service) map[string]T) func(*Servi
 
 var kindDescriptors = map[Kind]kindDescriptor{
 	KindIdentity: {
-		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.Identities), nil },
-		detail:   func(s *Service, name string) (any, error) { return s.reg.Identities[name], nil },
-		validate: knownName(KindIdentity, func(s *Service) map[string]registry.Identity { return s.reg.Identities }),
+		names:    func(s *Service) ([]string, error) { return keysOf(s.currentRegistry().Identities), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().Identities[name], nil },
+		validate: knownName(KindIdentity, func(s *Service) map[string]registry.Identity { return s.currentRegistry().Identities }),
 	},
 	KindImpression: {
-		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.Impressions), nil },
-		detail:   func(s *Service, name string) (any, error) { return s.reg.Impressions[name], nil },
-		validate: knownName(KindImpression, func(s *Service) map[string]registry.Impression { return s.reg.Impressions }),
+		names:    func(s *Service) ([]string, error) { return keysOf(s.currentRegistry().Impressions), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().Impressions[name], nil },
+		validate: knownName(KindImpression, func(s *Service) map[string]registry.Impression { return s.currentRegistry().Impressions }),
 	},
 	KindToolGroup: {
-		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.ToolGroups), nil },
-		detail:   func(s *Service, name string) (any, error) { return s.reg.ToolGroups[name], nil },
-		validate: knownName(KindToolGroup, func(s *Service) map[string]registry.ToolGroup { return s.reg.ToolGroups }),
+		names:    func(s *Service) ([]string, error) { return keysOf(s.currentRegistry().ToolGroups), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().ToolGroups[name], nil },
+		validate: knownName(KindToolGroup, func(s *Service) map[string]registry.ToolGroup { return s.currentRegistry().ToolGroups }),
 	},
 	KindPlugin: {
 		names: func(s *Service) ([]string, error) { return keysOf(s.pluginReg.KnownNames()), nil },
@@ -225,17 +229,17 @@ var kindDescriptors = map[Kind]kindDescriptor{
 		},
 	},
 	KindConcierge: {
-		names:    func(s *Service) ([]string, error) { return keysOf(s.reg.Concierges), nil },
-		detail:   func(s *Service, name string) (any, error) { return s.reg.Concierges[name], nil },
-		validate: knownName(KindConcierge, func(s *Service) map[string]registry.Concierge { return s.reg.Concierges }),
+		names:    func(s *Service) ([]string, error) { return keysOf(s.currentRegistry().Concierges), nil },
+		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().Concierges[name], nil },
+		validate: knownName(KindConcierge, func(s *Service) map[string]registry.Concierge { return s.currentRegistry().Concierges }),
 	},
 	KindWorkflow: {
-		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Workflows), nil },
-		detail: func(s *Service, name string) (any, error) { return s.reg.Workflows[name], nil },
+		names:  func(s *Service) ([]string, error) { return keysOf(s.currentRegistry().Workflows), nil },
+		detail: func(s *Service, name string) (any, error) { return s.currentRegistry().Workflows[name], nil },
 	},
 	KindJob: {
-		names:  func(s *Service) ([]string, error) { return keysOf(s.reg.Jobs), nil },
-		detail: func(s *Service, name string) (any, error) { return s.reg.Jobs[name], nil },
+		names:  func(s *Service) ([]string, error) { return keysOf(s.currentRegistry().Jobs), nil },
+		detail: func(s *Service, name string) (any, error) { return s.currentRegistry().Jobs[name], nil },
 	},
 	KindSession: {
 		names: func(s *Service) ([]string, error) {
@@ -422,7 +426,7 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, error) {
 		if err := validateKindName(s, KindConcierge, name); err != nil {
 			return "", err
 		}
-		c := s.reg.Concierges[name]
+		c := s.currentRegistry().Concierges[name]
 		nextSettings := session.SettingsFromConcierge(c)
 		settings = nextSettings
 		sess.SourceConcierge = c.Name
@@ -517,7 +521,7 @@ func (s *Service) new(sessionID uint) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	c, ok := s.reg.Concierges[sess.SourceConcierge]
+	c, ok := s.currentRegistry().Concierges[sess.SourceConcierge]
 	if !ok {
 		return "", fmt.Errorf("command: source concierge %q no longer exists", sess.SourceConcierge)
 	}

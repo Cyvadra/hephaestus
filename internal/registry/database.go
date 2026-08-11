@@ -2,9 +2,35 @@ package registry
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"gorm.io/gorm"
 )
+
+// Store provides lock-free access to the immutable Registry snapshot used by
+// runtime requests. Published registries must not be mutated.
+type Store struct {
+	current atomic.Pointer[Registry]
+}
+
+func NewStore(initial *Registry) *Store {
+	store := &Store{}
+	store.Publish(initial)
+	return store
+}
+
+// Current returns the currently active Registry snapshot.
+func (s *Store) Current() *Registry {
+	return s.current.Load()
+}
+
+// Publish atomically makes reg active for subsequent requests.
+func (s *Store) Publish(reg *Registry) {
+	if reg == nil {
+		panic("registry: cannot publish nil registry")
+	}
+	s.current.Store(reg)
+}
 
 // Clone returns an independent registry map set. Config records are treated
 // as immutable after loading, so their nested values do not need deep copies.

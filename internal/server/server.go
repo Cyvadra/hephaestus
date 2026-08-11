@@ -23,29 +23,29 @@ import (
 
 // Server exposes Hephaestus sessions and chat turns over HTTP.
 type Server struct {
-	engine   *gin.Engine
-	db       *gorm.DB
-	reg      *registry.Registry
-	sessions *session.Service
-	pipeline *chat.Pipeline
-	commands *command.Service
-	projects *project.Service
-	uploads  *upload.Processor
-	configs  *registry.Service
+	engine     *gin.Engine
+	db         *gorm.DB
+	registries *registry.Store
+	sessions   *session.Service
+	pipeline   *chat.Pipeline
+	commands   *command.Service
+	projects   *project.Service
+	uploads    *upload.Processor
+	configs    *registry.Service
 }
 
 // New builds the Gin engine and registers every route.
-func New(db *gorm.DB, reg *registry.Registry, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service) *Server {
+func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service) *Server {
 	s := &Server{
-		engine:   gin.Default(),
-		db:       db,
-		reg:      reg,
-		sessions: sessions,
-		pipeline: pipeline,
-		commands: commands,
-		projects: projects,
-		uploads:  uploads,
-		configs:  configs,
+		engine:     gin.Default(),
+		db:         db,
+		registries: registries,
+		sessions:   sessions,
+		pipeline:   pipeline,
+		commands:   commands,
+		projects:   projects,
+		uploads:    uploads,
+		configs:    configs,
 	}
 
 	api := s.engine.Group("/api/v1")

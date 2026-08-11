@@ -38,7 +38,7 @@ const (
 // Pipeline runs turns for sessions.
 type Pipeline struct {
 	db           *gorm.DB
-	reg          *registry.Registry
+	registries   *registry.Store
 	toolReg      *toolkit.Registry
 	plugins      *plugin.Registry
 	llm          *llm.Client
@@ -51,7 +51,7 @@ type Pipeline struct {
 // NewPipeline wires together every dependency a turn needs.
 func NewPipeline(
 	db *gorm.DB,
-	reg *registry.Registry,
+	registries *registry.Store,
 	toolReg *toolkit.Registry,
 	plugins *plugin.Registry,
 	llmClient *llm.Client,
@@ -62,7 +62,7 @@ func NewPipeline(
 ) *Pipeline {
 	return &Pipeline{
 		db:           db,
-		reg:          reg,
+		registries:   registries,
 		toolReg:      toolReg,
 		plugins:      plugins,
 		llm:          llmClient,
@@ -106,6 +106,7 @@ type StreamToolCall struct {
 type turnPrep struct {
 	sess       store.Session
 	settings   store.SessionSettings
+	registry   *registry.Registry
 	identity   registry.Identity
 	toolset    []toolkit.Tool
 	activePath []store.ChatMessage
@@ -116,19 +117,20 @@ type turnPrep struct {
 
 func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	var prep turnPrep
+	prep.registry = p.registries.Current()
 	if err := p.db.First(&prep.sess, sessionID).Error; err != nil {
 		return prep, fmt.Errorf("chat: load session %d: %w", sessionID, err)
 	}
 	prep.settings = prep.sess.Settings.Data()
 
-	identity, ok := p.reg.Identities[prep.settings.Identity]
+	identity, ok := prep.registry.Identities[prep.settings.Identity]
 	if !ok {
 		p.notify.Error("chat: session %d has missing identity %q; message not persisted", sessionID, prep.settings.Identity)
 		return prep, fmt.Errorf("chat: identity %q not found", prep.settings.Identity)
 	}
 	prep.identity = identity
 	for _, name := range prep.settings.Impressions {
-		if _, ok := p.reg.Impressions[name]; !ok {
+		if _, ok := prep.registry.Impressions[name]; !ok {
 			return prep, fmt.Errorf("chat: impression %q not found", name)
 		}
 	}
@@ -138,8 +140,8 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		}
 	}
 
-	toolGroups := make(map[string]toolkit.ToolGroupTools, len(p.reg.ToolGroups))
-	for name, tg := range p.reg.ToolGroups {
+	toolGroups := make(map[string]toolkit.ToolGroupTools, len(prep.registry.ToolGroups))
+	for name, tg := range prep.registry.ToolGroups {
 		toolGroups[name] = toolkit.ToolGroupTools{Tools: tg.Tools}
 	}
 	toolset, err := p.toolReg.Expand(prep.settings.ToolGroups, toolGroups)
@@ -253,11 +255,11 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	}
 	prep.identity, prep.toolset = applyTurnOptions(prep.identity, prep.toolset, opts)
 
-	llmContext, err := p.buildContext(prep.settings, prep.activePath, prep.compRow)
+	llmContext, err := p.buildContext(prep.registry, prep.settings, prep.activePath, prep.compRow)
 	if err != nil {
 		return nil, err
 	}
-	staticMessageCount := len(p.staticContext(prep.settings))
+	staticMessageCount := len(p.staticContext(prep.registry, prep.settings))
 
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
@@ -365,7 +367,7 @@ func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts
 		return nil, fmt.Errorf("chat: message %d is not a continuable incomplete assistant response", messageID)
 	}
 
-	contextMessages, err := p.buildContext(prep.settings, prep.activePath[:len(prep.activePath)-1], prep.compRow)
+	contextMessages, err := p.buildContext(prep.registry, prep.settings, prep.activePath[:len(prep.activePath)-1], prep.compRow)
 	if err != nil {
 		return nil, err
 	}
@@ -441,11 +443,11 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	userMsg := prep.activePath[userIdx]
 	pathUpToUser := prep.activePath[:userIdx+1]
 
-	llmContext, err := p.buildContext(prep.settings, pathUpToUser, prep.compRow)
+	llmContext, err := p.buildContext(prep.registry, prep.settings, pathUpToUser, prep.compRow)
 	if err != nil {
 		return nil, err
 	}
-	staticMessageCount := len(p.staticContext(prep.settings))
+	staticMessageCount := len(p.staticContext(prep.registry, prep.settings))
 
 	turn := newTurnContext(sessionID, llmContext, userIdx == 0, userMsg.Content)
 	// Compression on the regenerate path covers history up to (but not
@@ -537,8 +539,8 @@ func newTurnContext(sessionID uint, messages []store.ChatMessage, isFirstTurn bo
 // buildContext assembles the messages sent to the LLM ahead of the pending
 // user message: enabled impressions (in order), then either the unpacked
 // compression plus history after its coverage, or the full active path.
-func (p *Pipeline) buildContext(settings store.SessionSettings, activePath []store.ChatMessage, compRow *store.Compression) ([]store.ChatMessage, error) {
-	out := p.staticContext(settings)
+func (p *Pipeline) buildContext(reg *registry.Registry, settings store.SessionSettings, activePath []store.ChatMessage, compRow *store.Compression) ([]store.ChatMessage, error) {
+	out := p.staticContext(reg, settings)
 
 	if compRow == nil {
 		return append(out, activePath...), nil
@@ -560,10 +562,10 @@ func (p *Pipeline) buildContext(settings store.SessionSettings, activePath []sto
 	return out, nil
 }
 
-func (p *Pipeline) staticContext(settings store.SessionSettings) []store.ChatMessage {
+func (p *Pipeline) staticContext(reg *registry.Registry, settings store.SessionSettings) []store.ChatMessage {
 	var out []store.ChatMessage
 	for _, name := range settings.Impressions {
-		imp, ok := p.reg.Impressions[name]
+		imp, ok := reg.Impressions[name]
 		if !ok || !imp.Enabled {
 			continue
 		}

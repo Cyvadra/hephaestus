@@ -76,7 +76,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       setValue(saved)
       setValueSelectionKey(selectionKey)
       setBaseline(JSON.stringify(saved))
-      setNotice('已保存到数据库，重启服务后生效')
+      setNotice('已保存，新请求和下一轮对话立即生效')
       onSaved(kind, saved.name)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存失败')
@@ -105,7 +105,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       <header className="configuration-workspace-header">
         <button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />配置列表</button>
         <div><span className="configuration-eyebrow"><Database size={14} />数据库配置 · {meta.singular}</span><h1>{isNew ? `新建${meta.label}` : currentValue?.name ?? name}</h1><p>{meta.description}</p></div>
-        <div className="configuration-restart-note"><AlertCircle size={15} /><span>更改保存后需重启服务才会影响运行中的会话</span></div>
+        <div className="configuration-restart-note"><AlertCircle size={15} /><span>更改对新请求和下一轮对话立即生效</span></div>
       </header>
       <div className="configuration-workspace-scroll">
         {error && <div className="configuration-alert error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
@@ -116,7 +116,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
         <div>{!isNew && <button className="danger-quiet" type="button" onClick={() => { setDeleteName(''); setDeleteOpen(true) }}><Trash2 size={15} />删除</button>}</div>
         <div><button type="button" disabled={!dirty || submitting} onClick={() => setValue(JSON.parse(baseline) as Configuration)}><RotateCcw size={15} />撤销</button><button className="primary" form="configuration-form" type="submit" disabled={!dirty || submitting || Object.keys(errors).length > 0}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{isNew ? '创建配置' : '保存更改'}</button></div>
       </footer>}
-      {deleteOpen && <div className="configuration-dialog-backdrop" role="presentation"><div className="configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-configuration-title"><h2 id="delete-configuration-title">删除数据库配置？</h2><p>删除 <strong>{name}</strong> 后，同名静态配置可能在下次重启时重新生效。请输入名称确认。</p>{error && <div className="configuration-dialog-error">{error}</div>}<input autoFocus value={deleteName} onChange={event => setDeleteName(event.target.value)} placeholder={name ?? ''} /><div><button type="button" onClick={() => setDeleteOpen(false)}>取消</button><button className="danger" type="button" disabled={deleteName !== name || submitting} onClick={() => void remove()}>确认删除</button></div></div></div>}
+      {deleteOpen && <div className="configuration-dialog-backdrop" role="presentation"><div className="configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-configuration-title"><h2 id="delete-configuration-title">删除数据库配置？</h2><p>删除 <strong>{name}</strong> 后，同名启动时静态配置可能立即恢复。请输入名称确认。</p>{error && <div className="configuration-dialog-error">{error}</div>}<input autoFocus value={deleteName} onChange={event => setDeleteName(event.target.value)} placeholder={name ?? ''} /><div><button type="button" onClick={() => setDeleteOpen(false)}>取消</button><button className="danger" type="button" disabled={deleteName !== name || submitting} onClick={() => void remove()}>确认删除</button></div></div></div>}
     </div>
   )
 }

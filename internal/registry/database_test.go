@@ -2,8 +2,48 @@ package registry
 
 import (
 	"strings"
+	"sync"
 	"testing"
 )
+
+func TestStorePublishesCompleteSnapshots(t *testing.T) {
+	first := &Registry{Identities: map[string]Identity{"first": {Name: "first"}}}
+	second := &Registry{Identities: map[string]Identity{"second": {Name: "second"}}}
+	store := NewStore(first)
+
+	if store.Current() != first {
+		t.Fatal("expected initial registry snapshot")
+	}
+	store.Publish(second)
+	if store.Current() != second {
+		t.Fatal("expected published registry snapshot")
+	}
+}
+
+func TestStoreConcurrentReadAndPublish(t *testing.T) {
+	first := &Registry{Identities: map[string]Identity{"first": {Name: "first"}}}
+	second := &Registry{Identities: map[string]Identity{"second": {Name: "second"}}}
+	store := NewStore(first)
+
+	var wait sync.WaitGroup
+	for range 10 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for range 100 {
+				current := store.Current()
+				if current != first && current != second {
+					t.Errorf("read partial or unknown snapshot: %p", current)
+				}
+			}
+		}()
+	}
+	for range 100 {
+		store.Publish(second)
+		store.Publish(first)
+	}
+	wait.Wait()
+}
 
 func TestClone_MapsAreIndependent(t *testing.T) {
 	original := &Registry{

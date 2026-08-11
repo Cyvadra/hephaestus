@@ -109,7 +109,8 @@ func main() {
 	if err := reg.Validate(toolReg.KnownNames(), pluginReg.KnownNames()); err != nil {
 		log.Fatalf("registry: validation failed: %v", err)
 	}
-	configs, err := registry.NewService(db, staticRegistry, toolReg.KnownNames(), pluginReg.KnownNames())
+	registryStore := registry.NewStore(reg)
+	configs, err := registry.NewService(db, staticRegistry, registryStore, toolReg.KnownNames(), pluginReg.KnownNames())
 	if err != nil {
 		log.Fatalf("registry: configuration service: %v", err)
 	}
@@ -117,8 +118,8 @@ func main() {
 		log.Printf("registry: loaded %d workflow(s) and %d job(s); no scheduler is implemented yet, so they will not run", len(reg.Workflows), len(reg.Jobs))
 	}
 
-	pipeline := chat.NewPipeline(db, reg, toolReg, pluginReg, llmClient, sessions, notifier, projects, interactions)
-	commands := command.NewService(reg, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
+	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, sessions, notifier, projects, interactions)
+	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
 	uploads, err := upload.New(upload.Config{
 		TextExtensions:     cfg.UploadTextExtensions,
 		ImageExtensions:    cfg.UploadImageExtensions,
@@ -133,7 +134,7 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(db, reg, sessions, pipeline, commands, projects, uploads, configs)
+	srv := server.New(db, registryStore, sessions, pipeline, commands, projects, uploads, configs)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {

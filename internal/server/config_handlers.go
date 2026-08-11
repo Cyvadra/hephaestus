@@ -72,7 +72,7 @@ func (s *Server) getConfiguration(c *gin.Context) {
 // createConfiguration godoc
 //
 //	@Summary		Create a persisted configuration
-//	@Description	Persists a database-only configuration. The change becomes active after restart.
+//	@Description	Persists a database-only configuration. The change becomes active for new requests and subsequent chat turns immediately.
 //	@Tags			configurations
 //	@Accept			json
 //	@Produce		json
@@ -99,7 +99,7 @@ func (s *Server) createConfiguration(c *gin.Context) {
 // replaceConfiguration godoc
 //
 //	@Summary		Replace a persisted configuration
-//	@Description	Replaces a database-only configuration. The path and payload names must match, and the change becomes active after restart.
+//	@Description	Replaces a database-only configuration. The path and payload names must match, and the change becomes active for new requests and subsequent chat turns immediately.
 //	@Tags			configurations
 //	@Accept			json
 //	@Produce		json
@@ -137,7 +137,7 @@ func (s *Server) replaceConfiguration(c *gin.Context) {
 // deleteConfiguration godoc
 //
 //	@Summary		Delete a persisted configuration
-//	@Description	Deletes a database-only configuration. A same-named static configuration becomes active after the next restart.
+//	@Description	Deletes a database-only configuration. A same-named startup static configuration becomes active immediately.
 //	@Tags			configurations
 //	@Param			kind	path	string	true	"Configuration kind"
 //	@Param			name	path	string	true	"Configuration name"
