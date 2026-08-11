@@ -10,6 +10,9 @@ import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
 import { pendingAttachmentPrefix } from '../lib/attachments'
 
+const COMMAND_HELP_CACHE_KEY = 'hephaestus.commandHelp'
+const COMMAND_HELP_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
 interface Props {
   sessionId: number | null
 	project: string | null
@@ -36,6 +39,31 @@ function notifyPermissionRequest(request: InteractionRequest) {
   if (Notification.permission === 'granted') {
     new Notification(request.title, { body: '20 秒后将自动允许，请返回 Hephaestus 确认。' })
   }
+}
+
+function readCommandHelpCache(): string | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(COMMAND_HELP_CACHE_KEY) ?? 'null')
+    if (
+      typeof value === 'object' && value !== null &&
+      typeof (value as { response?: unknown }).response === 'string' &&
+      typeof (value as { expiresAt?: unknown }).expiresAt === 'number' &&
+      (value as { expiresAt: number }).expiresAt > Date.now()
+    ) {
+      return (value as { response: string }).response
+    }
+  } catch {
+    // A malformed cache should not prevent command entry.
+  }
+  localStorage.removeItem(COMMAND_HELP_CACHE_KEY)
+  return null
+}
+
+function cacheCommandHelp(response: string) {
+  localStorage.setItem(COMMAND_HELP_CACHE_KEY, JSON.stringify({
+    response,
+    expiresAt: Date.now() + COMMAND_HELP_CACHE_TTL_MS,
+  }))
 }
 
 // consumeStream centralizes the event switch shared by send/regenerate/
@@ -84,6 +112,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [continuingMessageId, setContinuingMessageId] = useState<number | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
+  const [commandHelp, setCommandHelp] = useState<string | null>(readCommandHelpCache)
+  const [commandHelpLoading, setCommandHelpLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([])
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
@@ -203,6 +233,31 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       enableWebSearch: options.webSearch,
     }).catch((cause: unknown) => setError(String(cause)))
   }, [resolvedSessionId])
+
+  const handleCommandHelpRequest = useCallback(async () => {
+    if (commandHelp || commandHelpLoading || resolvedSessionId == null || streaming) return
+    setCommandHelpLoading(true)
+    try {
+      const response = await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: '/help' }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: response.statusText }))
+        throw new Error(body.error ?? response.statusText)
+      }
+      const data = await response.json() as SendMessageResponse
+      if (data.command_response) {
+        cacheCommandHelp(data.command_response)
+        setCommandHelp(data.command_response)
+      }
+    } catch (cause) {
+      setError(String(cause))
+    } finally {
+      setCommandHelpLoading(false)
+    }
+  }, [commandHelp, commandHelpLoading, resolvedSessionId, streaming])
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
@@ -590,6 +645,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       </div>
       <Composer
         onSend={(text, files) => handleSend(text, files)}
+        commandHelp={commandHelp}
+        commandHelpLoading={commandHelpLoading}
+        onCommandHelpRequest={handleCommandHelpRequest}
         disabled={streaming}
         onStop={handleStop}
         files={pendingFiles}

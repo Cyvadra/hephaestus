@@ -6219,6 +6219,7 @@ body {
 }
 
 .composer-card {
+    position: relative;
     width: 100%;
     max-width: 684px;
     margin: 0 auto;
@@ -6474,6 +6475,64 @@ body {
 
 .composer-textarea::placeholder {
     color: var(--dsw-alias-label-tertiary)
+}
+
+.command-suggestions {
+    z-index: 9;
+    box-sizing: border-box;
+    width: 100%;
+    max-height: 216px;
+    margin: 0;
+    overflow-y: auto;
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-specific-menu);
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 6px;
+    box-shadow: var(--dsw-shadow-lv2);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0
+}
+
+.command-suggestions button {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 34px;
+    padding: 7px 9px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    text-align: left;
+    display: flex;
+    gap: 10px;
+    align-items: baseline
+}
+
+.command-suggestions button:hover,.command-suggestions button:focus-visible {
+    background: var(--dsw-alias-interactive-bg-hover);
+    outline: 0
+}
+
+.command-suggestions code {
+    color: var(--dsw-alias-button-primary-fill);
+    font-family: var(--ds-font-family-code);
+    white-space: nowrap
+}
+
+.command-suggestions span {
+    min-width: 0;
+    color: var(--dsw-alias-label-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.command-suggestions-status {
+    min-height: 34px;
+    padding: 7px 9px;
+    display: block;
+    font-size: 12px
 }
 
 .composer-send-btn:disabled {

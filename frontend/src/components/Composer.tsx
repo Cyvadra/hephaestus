@@ -5,6 +5,9 @@ import { useHoverMenu } from '../lib/useHoverMenu'
 
 interface Props {
   onSend: (text: string, files: File[]) => void
+  commandHelp: string | null
+  commandHelpLoading: boolean
+  onCommandHelpRequest: () => void
   onStop: () => void
   disabled: boolean
   files: File[]
@@ -19,7 +22,7 @@ const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
   { value: 'none', label: '即答' },
 ]
 
-export default function Composer({ onSend, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange }: Props) {
+export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange }: Props) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -29,6 +32,16 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
   const isCommand = text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
   const reasoningLabel = reasoningChoices.find(choice => choice.value === generationOptions.reasoningEffort)?.label ?? '无'
+  const commandQuery = text.trimStart().toLowerCase()
+  const commandSuggestions = commandHelp
+    ?.split('\n')
+    .filter(line => line.trimStart().startsWith('/'))
+    .filter(line => commandQuery === '/' || line.toLowerCase().startsWith(commandQuery)) ?? []
+
+  const handleTextChange = (value: string) => {
+    setText(value)
+    if (value.trimStart().startsWith('/')) onCommandHelpRequest()
+  }
 
   const submit = () => {
     const t = text.trim()
@@ -64,11 +77,34 @@ export default function Composer({ onSend, onStop, disabled, files, onFilesChang
             ))}
           </div>
         )}
+        {isCommand && (
+          <div className="command-suggestions" role="listbox" aria-label="斜杠命令建议">
+            {commandHelpLoading ? <span className="command-suggestions-status">正在加载命令…</span> : commandSuggestions.length > 0 ? (
+              commandSuggestions.map(command => {
+                const [name, ...description] = command.split(' - ')
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    key={command}
+                    onClick={() => {
+                      setText(name)
+                      textareaRef.current?.focus()
+                    }}
+                  >
+                    <code>{name}</code>
+                    {description.length > 0 && <span>{description.join(' - ')}</span>}
+                  </button>
+                )
+              })
+            ) : commandHelp ? <span className="command-suggestions-status">没有匹配的命令</span> : <span className="command-suggestions-status">当前会话创建后将加载命令</span>}
+          </div>
+        )}
         <div className="composer-input-row">
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}
             disabled={disabled && !text.startsWith('/')}
             placeholder={disabled ? '生成中…' : '请输入你的问题…'}
