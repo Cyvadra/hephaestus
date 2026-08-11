@@ -5841,6 +5841,19 @@ body {
     margin-bottom: 0
 }
 
+/* 对齐 DeepSeek 官网的 markdown 排版：
+   - .ds-markdown 由 Markdown 组件套用（16px/28px 字体行距、标题/列表/表格间距均来自官网样式表）
+   - 关闭父级 .message-body 的 pre-wrap，避免 markdown 源码中的空行被渲染成连续空行；
+     垂直间距改由段落 margin 控制，与官网 white-space: normal 行为一致 */
+.message-body .ds-markdown {
+    white-space: normal
+}
+
+/* react-markdown 输出的是裸 <p>，这里对应官网 .ds-markdown-paragraph 的 margin */
+.ds-markdown p {
+    margin: 16px 0
+}
+
 .message-body pre,.reasoning-content pre,.stored-tool-result pre {
     box-sizing: border-box;
     white-space: pre-wrap;

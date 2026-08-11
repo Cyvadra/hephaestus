@@ -15,11 +15,13 @@ interface Props {
  */
 export default function Markdown({ children }: Props) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-    >
-      {normalizeLatexDelimiters(children)}
-    </ReactMarkdown>
+    <div className="ds-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+      >
+        {normalizeLatexDelimiters(children)}
+      </ReactMarkdown>
+    </div>
   )
 }
