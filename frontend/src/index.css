@@ -5829,7 +5829,8 @@ body {
 
 .message-body {
     min-width: 0;
-    overflow-wrap: anywhere
+    overflow-wrap: anywhere;
+    white-space: pre-wrap
 }
 
 .message-body > :first-child {
