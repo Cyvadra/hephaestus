@@ -1,0 +1,101 @@
+package builtin
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Cyvadra/hephaestus/internal/plugin"
+	"github.com/Cyvadra/hephaestus/pkg/lunar"
+	"github.com/Cyvadra/hephaestus/pkg/weather"
+)
+
+// WeatherClient retrieves the current weather for environment context.
+type WeatherClient interface {
+	Current(context.Context, weather.Location) (weather.Observation, error)
+}
+
+// EnvironmentContextConfig configures first-turn environment context.
+type EnvironmentContextConfig struct {
+	Location    string
+	Coordinates weather.Location
+	Timezone    string
+	Weather     WeatherClient
+	Now         func() time.Time
+}
+
+// EnvironmentContextPlugin persists time, lunar calendar, and weather before
+// the first user message of each session.
+type EnvironmentContextPlugin struct {
+	config EnvironmentContextConfig
+}
+
+func NewEnvironmentContextPlugin(config EnvironmentContextConfig) *EnvironmentContextPlugin {
+	if config.Now == nil {
+		config.Now = time.Now
+	}
+	return &EnvironmentContextPlugin{config: config}
+}
+
+func (p *EnvironmentContextPlugin) Name() string { return "environment_context" }
+
+func (p *EnvironmentContextPlugin) Timeout() time.Duration { return 10 * time.Second }
+
+func (p *EnvironmentContextPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plugin.Phase, turn plugin.TurnContext) (plugin.TurnContext, error) {
+	if hook != plugin.HookUserMessageIncoming || phase != plugin.PhaseAfter || !turn.IsFirstTurn || len(turn.Messages) == 0 {
+		return turn, nil
+	}
+	location, err := time.LoadLocation(p.config.Timezone)
+	if err != nil {
+		return turn, fmt.Errorf("environment_context: load timezone: %w", err)
+	}
+	now := p.config.Now().In(location)
+	content := renderEnvironmentContext(ctx, p.config, now)
+	last := len(turn.Messages) - 1
+	prefix, body := splitAttachmentPrefix(turn.Messages[last].Content)
+	turn.Messages[last].Content = prefix + content + "\n\n" + body
+	return turn, nil
+}
+
+func renderEnvironmentContext(ctx context.Context, config EnvironmentContextConfig, now time.Time) string {
+	lunarDate := lunar.FromTime(now)
+	lines := []string{
+		"[meta info begin]",
+		fmt.Sprintf("Time: %s (%s)", now.Format("2006-01-02 15:04:05"), config.Timezone),
+		fmt.Sprintf("Location: %s", config.Location),
+	}
+	if config.Weather != nil {
+		if observation, err := config.Weather.Current(ctx, config.Coordinates); err == nil {
+			lines = append(lines, fmt.Sprintf("Weather: %s, %.1fC, Humidity %d%%, Wind %.1f km/h", observation.Condition, observation.TemperatureC, observation.Humidity, observation.WindKPH))
+		}
+	}
+	lines = append(lines,
+		fmt.Sprintf("农历: %s", lunarDate.Date),
+		fmt.Sprintf("四柱: %s %s %s %s", lunarDate.Year, lunarDate.Month, lunarDate.Day, lunarDate.Hour),
+		"[meta info end]",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func splitAttachmentPrefix(content string) (string, string) {
+	rest := content
+	var prefix strings.Builder
+	for strings.HasPrefix(rest, "[file name]: ") {
+		end := strings.Index(rest, "\n\n")
+		if end < 0 {
+			break
+		}
+		block := rest[:end+2]
+		if strings.Contains(block, "[file content begin]\n") && !strings.Contains(block, "\n[file content end]\n") {
+			contentEnd := strings.Index(rest, "\n[file content end]\n\n")
+			if contentEnd < 0 {
+				break
+			}
+			block = rest[:contentEnd+len("\n[file content end]\n\n")]
+		}
+		prefix.WriteString(block)
+		rest = rest[len(block):]
+	}
+	return prefix.String(), rest
+}

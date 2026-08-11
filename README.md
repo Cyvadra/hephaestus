@@ -121,7 +121,12 @@ web-fetch provider.
 | `HEPHAESTUS_PROJECTS_ROOT` | `./data/projects` | Root directory for named projects and their uploads. Supports `~`. |
 | `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE` | `false` | Allows filesystem tools to access paths outside the project and system temporary directory. |
 | `HEPHAESTUS_SHELL_ENABLED` | `false` | Enables the shell tool. |
-| `HEPHAESTUS_FIXED_PLUGINS` | `session_summary` | Comma-separated plugins that run for every session and cannot be disabled. |
+| `HEPHAESTUS_ENV_LOCATION` | required | Display name for the location included in a new session's first message. |
+| `HEPHAESTUS_ENV_LATITUDE` | required | Latitude of the configured environment location, from `-90` to `90`. |
+| `HEPHAESTUS_ENV_LONGITUDE` | required | Longitude of the configured environment location, from `-180` to `180`. |
+| `HEPHAESTUS_ENV_TIMEZONE` | required | IANA timezone used for time, lunar date, and four-pillar calculation. |
+| `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | Ordered public weather providers used as fallback for first-turn context. |
+| `HEPHAESTUS_FIXED_PLUGINS` | `environment_context,session_summary` | Comma-separated plugins that run for every session and cannot be disabled. |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | none | WeCom webhook that receives warning and error notifications. |
 | `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | Primary page-fetch provider: `firecrawl` or `local`. |
 | `HEPHAESTUS_FIRECRAWL_API_KEY` | required for `firecrawl` | Firecrawl API key. |

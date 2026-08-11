@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/fsutil"
 )
@@ -59,6 +60,11 @@ type Config struct {
 	UploadFileMaxBytes       int64
 	UploadTotalMaxBytes      int64
 	UploadMaxFiles           int
+	EnvironmentLocation      string
+	EnvironmentLatitude      float64
+	EnvironmentLongitude     float64
+	EnvironmentTimezone      string
+	WeatherProviders         []string
 	// FixedPlugins run for every session and cannot be disabled through
 	// mutable session settings.
 	FixedPlugins []string
@@ -102,14 +108,49 @@ func Load() (*Config, error) {
 		UploadFileMaxBytes:       getenvInt64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
 		UploadTotalMaxBytes:      getenvInt64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
 		UploadMaxFiles:           getenvInt("HEPHAESTUS_UPLOAD_MAX_FILES", 5),
-		FixedPlugins:             splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "session_summary")),
+		EnvironmentLocation:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_LOCATION")),
+		EnvironmentTimezone:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_TIMEZONE")),
+		WeatherProviders:         splitCommaSeparated(getenvDefault("HEPHAESTUS_WEATHER_PROVIDERS", "open_meteo,wttr,met_no")),
+		FixedPlugins:             splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "environment_context,session_summary")),
 	}
+	var errLatitude, errLongitude error
+	cfg.EnvironmentLatitude, errLatitude = requiredFloat("HEPHAESTUS_ENV_LATITUDE")
+	cfg.EnvironmentLongitude, errLongitude = requiredFloat("HEPHAESTUS_ENV_LONGITUDE")
 
 	if cfg.PostgresDSN == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_POSTGRES_DSN is required")
 	}
 	if cfg.DeepSeekAPIKey == "" && cfg.LocalModelURL == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY or HEPHAESTUS_LOCAL_MODEL_URL is required")
+	}
+	if cfg.EnvironmentLocation == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_ENV_LOCATION is required")
+	}
+	if errLatitude != nil {
+		return nil, errLatitude
+	}
+	if errLongitude != nil {
+		return nil, errLongitude
+	}
+	if cfg.EnvironmentLatitude < -90 || cfg.EnvironmentLatitude > 90 {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_ENV_LATITUDE must be between -90 and 90")
+	}
+	if cfg.EnvironmentLongitude < -180 || cfg.EnvironmentLongitude > 180 {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_ENV_LONGITUDE must be between -180 and 180")
+	}
+	if cfg.EnvironmentTimezone == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_ENV_TIMEZONE is required")
+	}
+	if _, err := time.LoadLocation(cfg.EnvironmentTimezone); err != nil {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_ENV_TIMEZONE: %w", err)
+	}
+	if len(cfg.WeatherProviders) == 0 {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEATHER_PROVIDERS cannot be empty")
+	}
+	for _, provider := range cfg.WeatherProviders {
+		if provider != "open_meteo" && provider != "wttr" && provider != "met_no" {
+			return nil, fmt.Errorf("bootstrap: unsupported weather provider %q", provider)
+		}
 	}
 	if (cfg.BaiduOCRAPIKey == "") != (cfg.BaiduOCRSecretKey == "") {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_BAIDU_OCR_API_KEY and HEPHAESTUS_BAIDU_OCR_SECRET_KEY must be set together")
@@ -156,6 +197,18 @@ func getenvInt64(key string, fallback int64) int64 {
 		}
 	}
 	return fallback
+}
+
+func requiredFloat(key string) (float64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0, fmt.Errorf("bootstrap: %s is required", key)
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("bootstrap: %s must be a number", key)
+	}
+	return parsed, nil
 }
 
 func getenvDefault(key, fallback string) string {

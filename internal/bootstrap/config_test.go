@@ -1,9 +1,18 @@
 package bootstrap
 
 import (
+	"os"
 	"reflect"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	os.Setenv("HEPHAESTUS_ENV_LOCATION", "深圳")
+	os.Setenv("HEPHAESTUS_ENV_LATITUDE", "22.5431")
+	os.Setenv("HEPHAESTUS_ENV_LONGITUDE", "114.0579")
+	os.Setenv("HEPHAESTUS_ENV_TIMEZONE", "Asia/Shanghai")
+	os.Exit(m.Run())
+}
 
 func TestSplitCommaSeparated(t *testing.T) {
 	got := splitCommaSeparated(" session_summary,options, ,storyline_status ")
@@ -149,5 +158,30 @@ func TestLoadRejectsPartialOCRCredentialsAndInvalidUploadLimits(t *testing.T) {
 	t.Setenv("HEPHAESTUS_UPLOAD_MAX_FILES", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected invalid upload limit to fail")
+	}
+}
+
+func TestLoadRejectsInvalidEnvironmentContext(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_ENV_LOCATION", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing location error")
+	}
+	t.Setenv("HEPHAESTUS_ENV_LOCATION", "深圳")
+	t.Setenv("HEPHAESTUS_ENV_LATITUDE", "91")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid latitude error")
+	}
+	t.Setenv("HEPHAESTUS_ENV_LATITUDE", "22.5431")
+	t.Setenv("HEPHAESTUS_ENV_TIMEZONE", "not/a-timezone")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid timezone error")
+	}
+	t.Setenv("HEPHAESTUS_ENV_TIMEZONE", "Asia/Shanghai")
+	t.Setenv("HEPHAESTUS_WEATHER_PROVIDERS", "unknown")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid provider error")
 	}
 }

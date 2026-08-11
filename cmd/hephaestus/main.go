@@ -33,6 +33,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/Cyvadra/hephaestus/pkg/baidu/ocr"
+	"github.com/Cyvadra/hephaestus/pkg/weather"
 	"github.com/joho/godotenv"
 )
 
@@ -91,6 +92,16 @@ func main() {
 	toolReg.Register(shellTool)
 
 	pluginReg := plugin.NewRegistry(notifier)
+	weatherClient, err := weather.NewClient(nil, cfg.WeatherProviders)
+	if err != nil {
+		log.Fatalf("weather: %v", err)
+	}
+	pluginReg.Register(builtin.NewEnvironmentContextPlugin(builtin.EnvironmentContextConfig{
+		Location:    cfg.EnvironmentLocation,
+		Coordinates: weather.Location{Latitude: cfg.EnvironmentLatitude, Longitude: cfg.EnvironmentLongitude},
+		Timezone:    cfg.EnvironmentTimezone,
+		Weather:     weatherClient,
+	}))
 	pluginReg.Register(builtin.NewSessionSummaryPlugin(db, llmClient, 5*time.Minute))
 	pluginReg.Register(builtin.NewStorylineStatusPlugin(db, llmClient))
 	pluginReg.Register(builtin.NewOptionsPlugin(llmClient))
