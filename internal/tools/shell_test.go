@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -215,14 +216,22 @@ func TestShellToolSchemaOnlyExposesCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected schema properties, got %+v", parameters)
 	}
-	if _, ok := properties["command"]; !ok {
-		t.Fatalf("expected command parameter, got %+v", properties)
+	if want := map[string]bool{"command": true, "working_directory": true, "timeout_seconds": true}; !reflect.DeepEqual(propertyNames(properties), want) {
+		t.Fatalf("schema properties = %v, want %v", propertyNames(properties), want)
 	}
 	for _, removed := range []string{"action", "session_id", "data", "background", "pty", "keys"} {
 		if _, ok := properties[removed]; ok {
 			t.Errorf("did not expect legacy %q parameter", removed)
 		}
 	}
+}
+
+func propertyNames(properties map[string]any) map[string]bool {
+	names := make(map[string]bool, len(properties))
+	for name := range properties {
+		names[name] = true
+	}
+	return names
 }
 
 func TestShellToolForegroundTimeoutKillsDescendantsHoldingOutput(t *testing.T) {
@@ -235,5 +244,86 @@ func TestShellToolForegroundTimeoutKillsDescendantsHoldingOutput(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("foreground cleanup took too long: %s", elapsed)
+	}
+}
+
+func TestSSHShellBackendMapsProjectDirectories(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "release")
+	ctx := toolkit.WithWorkspace(context.Background(), project)
+	backend := sshShellBackend{projectsRoot: "/srv/hephaestus/projects"}
+
+	for _, test := range []struct {
+		requested string
+		want      string
+	}{
+		{"", "/srv/hephaestus/projects/release"},
+		{"build", "/srv/hephaestus/projects/release/build"},
+		{"/opt/build", "/opt/build"},
+	} {
+		got, err := backend.workingDirectory(ctx, test.requested)
+		if err != nil {
+			t.Fatalf("workingDirectory(%q): %v", test.requested, err)
+		}
+		if got != test.want {
+			t.Errorf("workingDirectory(%q) = %q, want %q", test.requested, got, test.want)
+		}
+	}
+}
+
+func TestSSHShellBackendRequiresProject(t *testing.T) {
+	backend := sshShellBackend{projectsRoot: "/srv/hephaestus/projects"}
+	if _, err := backend.workingDirectory(context.Background(), ""); err == nil {
+		t.Fatal("expected a missing Project error")
+	}
+}
+
+func TestSSHShellBackendUsesNonInteractiveOpenSSH(t *testing.T) {
+	backend := sshShellBackend{
+		destination:  "build-host",
+		projectsRoot: "/srv/hephaestus/projects",
+	}
+	ctx := toolkit.WithWorkspace(context.Background(), filepath.Join(t.TempDir(), "default"))
+	command := "printf '%s' \"a b\""
+	cmd, err := backend.command(ctx, command, "/srv/hephaestus/projects/default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Path == "" || !strings.HasSuffix(cmd.Path, "ssh") {
+		t.Fatalf("expected ssh executable, got %q", cmd.Path)
+	}
+	wantPrefix := []string{"ssh", "-T", "-o", "BatchMode=yes", "--", "build-host"}
+	if len(cmd.Args) < len(wantPrefix) || !reflect.DeepEqual(cmd.Args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("SSH args prefix = %q, want %q", cmd.Args, wantPrefix)
+	}
+	wrapper := cmd.Args[len(cmd.Args)-1]
+	if !strings.HasSuffix(wrapper, "exec sh -c "+shellQuote(command)) {
+		t.Fatalf("command is not shell-quoted in wrapper: %q", wrapper)
+	}
+}
+
+func TestSSHShellBackendRestrictsDirectoriesUnlessOverridden(t *testing.T) {
+	backend := sshShellBackend{projectsRoot: "/srv/hephaestus/projects"}
+	wrapper := backend.wrapper("pwd", "/etc", "/srv/hephaestus/projects/default")
+	if !strings.Contains(wrapper, "access denied") {
+		t.Fatalf("expected restricted wrapper, got %q", wrapper)
+	}
+	backend.access.AllowOutsideProject = true
+	wrapper = backend.wrapper("pwd", "/etc", "/srv/hephaestus/projects/default")
+	if strings.Contains(wrapper, "access denied") {
+		t.Fatalf("expected unrestricted wrapper, got %q", wrapper)
+	}
+}
+
+func TestSSHShellBackendCreatesOnlyDefaultProjectRoot(t *testing.T) {
+	backend := sshShellBackend{projectsRoot: "/srv/hephaestus/projects"}
+	defaultRoot := "/srv/hephaestus/projects/default-workspace"
+	if wrapper := backend.wrapper("pwd", defaultRoot, defaultRoot); !strings.HasPrefix(wrapper, "mkdir -p '") {
+		t.Fatalf("expected default Project creation, got %q", wrapper)
+	}
+	if wrapper := backend.wrapper("pwd", "/srv/hephaestus/projects/release", "/srv/hephaestus/projects/release"); strings.HasPrefix(wrapper, "mkdir -p ") {
+		t.Fatalf("did not expect non-default Project creation, got %q", wrapper)
+	}
+	if wrapper := backend.wrapper("pwd", defaultRoot+"/build", defaultRoot); strings.HasPrefix(wrapper, "mkdir -p ") {
+		t.Fatalf("did not expect explicit directory creation, got %q", wrapper)
 	}
 }

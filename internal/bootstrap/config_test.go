@@ -125,6 +125,53 @@ func TestLoadWebFetchConfig(t *testing.T) {
 	}
 }
 
+func TestLoadShellBackendConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ShellBackend != "local" {
+		t.Fatalf("ShellBackend = %q, want local", cfg.ShellBackend)
+	}
+
+	t.Setenv("HEPHAESTUS_SHELL_ENABLED", "true")
+	t.Setenv("HEPHAESTUS_SHELL_BACKEND", "ssh")
+	t.Setenv("HEPHAESTUS_SHELL_SSH_DESTINATION", "build-host")
+	t.Setenv("HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT", "/srv/hephaestus/projects")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ShellBackend != "ssh" || cfg.ShellSSHDestination != "build-host" || cfg.ShellSSHProjectsRoot != "/srv/hephaestus/projects" {
+		t.Fatalf("unexpected SSH shell configuration: %+v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidShellBackendConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_SHELL_BACKEND", "container")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid shell backend error")
+	}
+
+	t.Setenv("HEPHAESTUS_SHELL_BACKEND", "ssh")
+	t.Setenv("HEPHAESTUS_SHELL_ENABLED", "true")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing SSH configuration error")
+	}
+	t.Setenv("HEPHAESTUS_SHELL_SSH_DESTINATION", "-unsafe")
+	t.Setenv("HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT", "relative")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid SSH destination and root error")
+	}
+}
+
 func TestLoadRequiresFirecrawlKeyByDefault(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")

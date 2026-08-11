@@ -121,6 +121,9 @@ web-fetch provider.
 | `HEPHAESTUS_PROJECTS_ROOT` | `./data/projects` | Root directory for named projects and their uploads. Supports `~`. |
 | `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE` | `false` | Allows filesystem tools to access paths outside the project and system temporary directory. |
 | `HEPHAESTUS_SHELL_ENABLED` | `false` | Enables the shell tool. |
+| `HEPHAESTUS_SHELL_BACKEND` | `local` | Shell execution target: `local` or `ssh`. |
+| `HEPHAESTUS_SHELL_SSH_DESTINATION` | none | Required for enabled SSH shell execution. An SSH config host alias or `user@host`; OpenSSH manages authentication, host verification, and proxies. |
+| `HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT` | none | Required for enabled SSH shell execution. Absolute POSIX directory containing remote Projects. |
 | `HEPHAESTUS_ENV_LOCATION` | required | Display name for the location included in a new session's first message. |
 | `HEPHAESTUS_ENV_LATITUDE` | required | Latitude of the configured environment location, from `-90` to `90`. |
 | `HEPHAESTUS_ENV_LONGITUDE` | required | Longitude of the configured environment location, from `-180` to `180`. |
@@ -143,6 +146,31 @@ web-fetch provider.
 | `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` | none | Baidu OCR secret key; must be set with the OCR API key. |
 | `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | Comma-separated text extensions eligible for prompt inclusion. |
 | `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,bmp` | Comma-separated image extensions eligible for OCR. |
+
+### SSH Shell Execution
+
+Set `HEPHAESTUS_SHELL_BACKEND=ssh` to execute the existing `shell` tool on a
+remote host without changing its tool name or request parameters. The service
+uses the system `ssh` client with `BatchMode=yes`, so configure authentication,
+host keys, ports, and `ProxyJump` in `~/.ssh/config` or an SSH agent before
+starting the service. The server verifies that it can connect and enter the
+configured remote Projects root during startup.
+
+For a Project named `default`, the local workspace and remote shell workspace
+are intentionally distinct:
+
+```text
+local:  <HEPHAESTUS_PROJECTS_ROOT>/default
+remote: <HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT>/default
+```
+
+Create and populate the remote directory before use. Shell execution does not
+sync local Project files, uploads, or `AGENTS.md`; filesystem tools remain
+local. In SSH mode, a relative `working_directory` is relative to the remote
+Project, while an absolute value names a remote path. By default only the
+current remote Project and `/tmp` are permitted; set
+`HEPHAESTUS_PROJECT_ACCESS_OVERRIDE=true` to allow other remote paths. SSH
+failures and timeouts return an error and never run the command locally.
 | `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | Largest text file included directly in a prompt. |
 | `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES` | `4194304` | Largest image sent to OCR. |
 | `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | Largest individual attachment. |

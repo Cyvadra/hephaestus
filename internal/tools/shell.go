@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -65,10 +64,26 @@ var _ io.Writer = (*streamingOutputWriter)(nil)
 // inspection, file operations, background jobs, and process management.
 type ShellTool struct {
 	enabled      bool
-	access       FileAccessConfig
 	timeout      time.Duration
-	hostInfo     string
+	backend      shellBackend
 	interactions *interaction.Manager
+}
+
+// ShellConfig selects the host on which commands run. The tool's public
+// parameters are independent of this configuration.
+type ShellConfig struct {
+	Enabled         bool
+	Timeout         time.Duration
+	Access          FileAccessConfig
+	Backend         string
+	SSHDestination  string
+	SSHProjectsRoot string
+}
+
+type shellBackend interface {
+	command(context.Context, string, string) (*exec.Cmd, error)
+	workingDirectory(context.Context, string) (string, error)
+	hostInfo() string
 }
 
 func NewShellTool(enabled bool, timeout time.Duration) *ShellTool {
@@ -76,10 +91,40 @@ func NewShellTool(enabled bool, timeout time.Duration) *ShellTool {
 }
 
 func NewShellToolWithAccess(enabled bool, timeout time.Duration, access FileAccessConfig) *ShellTool {
+	tool, err := NewShellToolWithConfig(ShellConfig{Enabled: enabled, Timeout: timeout, Access: access, Backend: "local"})
+	if err != nil {
+		panic(err)
+	}
+	return tool
+}
+
+// NewShellToolWithConfig constructs a tool whose local or SSH backend is
+// selected at process startup. SSH authentication remains the responsibility
+// of the user's OpenSSH configuration and agent.
+func NewShellToolWithConfig(config ShellConfig) (*ShellTool, error) {
+	timeout := config.Timeout
 	if timeout <= 0 {
 		timeout = defaultCommandTimeout
 	}
-	return &ShellTool{enabled: enabled, access: access, timeout: timeout, hostInfo: captureHostInfo()}
+	var backend shellBackend
+	switch config.Backend {
+	case "", "local":
+		backend = localShellBackend{access: config.Access}
+	case "ssh":
+		sshBackend, err := newSSHShellBackend(config.SSHDestination, config.SSHProjectsRoot, config.Access)
+		if err != nil {
+			return nil, err
+		}
+		if config.Enabled {
+			if err := sshBackend.probe(); err != nil {
+				return nil, err
+			}
+		}
+		backend = sshBackend
+	default:
+		return nil, fmt.Errorf("shell: unsupported backend %q", config.Backend)
+	}
+	return &ShellTool{enabled: config.Enabled, timeout: timeout, backend: backend}, nil
 }
 
 // SetInteractionManager enables user confirmation for commands matched by
@@ -89,37 +134,23 @@ func (t *ShellTool) SetInteractionManager(manager *interaction.Manager) {
 	t.interactions = manager
 }
 
-// captureHostInfo records the output of `uname -a` once at construction so
-// the model sees the exact host environment (kernel, architecture, hostname)
-// whenever the shell tool is registered to a request. The platform targets
-// Linux/Unix, where uname is always available; on any failure the example is
-// simply omitted rather than failing construction.
-func captureHostInfo() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "uname", "-a").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
 // Example returns a concrete shell invocation (uname -a) together with the
 // host's actual response, so the model sees both the tool's I/O format and
 // the environment it runs in. It is attached to the tool's description when
 // the tool is registered to an LLM request.
 func (t *ShellTool) Example() string {
-	if t.hostInfo == "" {
+	hostInfo := t.backend.hostInfo()
+	if hostInfo == "" {
 		return ""
 	}
-	return `{"command": "uname -a"}` + "\n\u2192 " + t.hostInfo
+	return `{"command": "uname -a"}` + "\n\u2192 " + hostInfo
 }
 
 func (ShellTool) Name() string       { return "shell" }
 func (t *ShellTool) Available() bool { return t.enabled }
 func (ShellTool) Audited() bool      { return true }
 func (ShellTool) Description() string {
-	return "Runs one shell command in the current Project and returns stdout and stderr. Use ordinary shell commands for file inspection, editing, searching, tests, and process control."
+	return "Runs one shell command on the configured execution host in the current Project and returns stdout and stderr. Use ordinary shell commands for file inspection, editing, searching, tests, and process control."
 }
 func (ShellTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{
@@ -152,21 +183,9 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 		}
 	}
 	workingDir, _ := args["working_directory"].(string)
-	if workingDir == "" {
-		var ok bool
-		workingDir, ok = toolkit.WorkspaceFromContext(ctx)
-		if !ok {
-			return toolkit.ErrorResult("shell: requires a Project-bound session or an allowed working_directory")
-		}
-	} else {
-		// projectPath confines only the working directory; the command itself
-		// runs with the full privileges of the process user, so this is not a
-		// sandbox (see the safety-policy comment in policy.go).
-		resolved, err := projectPath(ctx, workingDir, t.access)
-		if err != nil {
-			return toolkit.ErrorResult("shell: working_directory: " + err.Error())
-		}
-		workingDir = resolved
+	resolvedWorkingDir, err := t.backend.workingDirectory(ctx, workingDir)
+	if err != nil {
+		return toolkit.ErrorResult("shell: working_directory: " + err.Error())
 	}
 	timeout := t.timeout
 	if value, ok := args["timeout_seconds"].(float64); ok {
@@ -181,7 +200,10 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	}
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := commandFor(execCtx, command, workingDir)
+	cmd, err := t.backend.command(execCtx, command, resolvedWorkingDir)
+	if err != nil {
+		return toolkit.ErrorResult("shell: " + err.Error())
+	}
 	setProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -193,7 +215,7 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	output := &streamingOutputWriter{ctx: execCtx}
 	cmd.Stdout = output
 	cmd.Stderr = output
-	err := cmd.Run()
+	err = cmd.Run()
 	if execCtx.Err() == context.DeadlineExceeded {
 		return toolkit.ErrorResult(fmt.Sprintf("shell: command timed out after %s\n%s", timeout, output.String()))
 	}
@@ -201,17 +223,6 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 		return toolkit.ErrorResult(fmt.Sprintf("shell: %v\n%s", err, output.String()))
 	}
 	return toolkit.SilentResult(output.String())
-}
-
-func commandFor(ctx context.Context, command, dir string) *exec.Cmd {
-	if runtime.GOOS == "windows" {
-		cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command)
-		cmd.Dir = dir
-		return cmd
-	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = dir
-	return cmd
 }
 
 func (t *ShellTool) requestPermission(ctx context.Context, command, pattern string) error {

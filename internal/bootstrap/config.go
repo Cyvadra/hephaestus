@@ -42,7 +42,13 @@ type Config struct {
 	// the bound Project and the system temporary directory.
 	ProjectAccessOverride bool
 	// ShellEnabled defaults to false.
-	ShellEnabled             bool
+	ShellEnabled bool
+	// ShellBackend selects local execution or the system OpenSSH client.
+	ShellBackend string
+	// ShellSSHDestination is an SSH config host alias or user@host.
+	ShellSSHDestination string
+	// ShellSSHProjectsRoot is the absolute POSIX root containing remote Projects.
+	ShellSSHProjectsRoot     string
 	WebFetchProvider         string
 	FirecrawlAPIKey          string
 	WebFetchChromePath       string
@@ -92,6 +98,9 @@ func Load() (*Config, error) {
 		ProjectsRoot:             projectsRoot,
 		ProjectAccessOverride:    env.bool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
 		ShellEnabled:             env.bool("HEPHAESTUS_SHELL_ENABLED"),
+		ShellBackend:             strings.ToLower(strings.TrimSpace(getenvDefault("HEPHAESTUS_SHELL_BACKEND", "local"))),
+		ShellSSHDestination:      strings.TrimSpace(os.Getenv("HEPHAESTUS_SHELL_SSH_DESTINATION")),
+		ShellSSHProjectsRoot:     strings.TrimSpace(os.Getenv("HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT")),
 		WebFetchProvider:         strings.ToLower(strings.TrimSpace(getenvDefault("HEPHAESTUS_WEB_FETCH_PROVIDER", "firecrawl"))),
 		FirecrawlAPIKey:          strings.TrimSpace(os.Getenv("HEPHAESTUS_FIRECRAWL_API_KEY")),
 		WebFetchChromePath:       strings.TrimSpace(os.Getenv("HEPHAESTUS_WEB_FETCH_CHROME_PATH")),
@@ -162,6 +171,17 @@ func Load() (*Config, error) {
 	}
 	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl or local")
+	}
+	if cfg.ShellBackend != "local" && cfg.ShellBackend != "ssh" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SHELL_BACKEND must be local or ssh")
+	}
+	if cfg.ShellEnabled && cfg.ShellBackend == "ssh" {
+		if !validSSHDestination(cfg.ShellSSHDestination) {
+			return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SHELL_SSH_DESTINATION is required and must not start with - or contain whitespace")
+		}
+		if !strings.HasPrefix(cfg.ShellSSHProjectsRoot, "/") {
+			return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT must be an absolute POSIX path")
+		}
 	}
 	if cfg.WebFetchProvider == "firecrawl" && cfg.FirecrawlAPIKey == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_FIRECRAWL_API_KEY is required when web fetch provider is firecrawl")
@@ -244,6 +264,12 @@ func getenvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func validSSHDestination(destination string) bool {
+	return destination != "" && !strings.HasPrefix(destination, "-") && strings.IndexFunc(destination, func(r rune) bool {
+		return r <= ' ' || r == 0x7f
+	}) == -1
 }
 
 func splitCommaSeparated(value string) []string {

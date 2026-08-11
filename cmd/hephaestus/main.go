@@ -89,7 +89,16 @@ func main() {
 	toolReg.Register(webFetch)
 	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars})
 	toolReg.Register(webSearch)
-	shellTool := tools.NewShellToolWithAccess(cfg.ShellEnabled, 0, fileAccess)
+	shellTool, err := tools.NewShellToolWithConfig(tools.ShellConfig{
+		Enabled:         cfg.ShellEnabled,
+		Access:          fileAccess,
+		Backend:         cfg.ShellBackend,
+		SSHDestination:  cfg.ShellSSHDestination,
+		SSHProjectsRoot: cfg.ShellSSHProjectsRoot,
+	})
+	if err != nil {
+		log.Fatalf("shell: %v", err)
+	}
 	shellTool.SetInteractionManager(interactions)
 	toolReg.Register(shellTool)
 
