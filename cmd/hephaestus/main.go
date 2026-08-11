@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("project: ensure default: %v", err)
 	}
-	llmClient := llm.New(cfg.DeepSeekAPIKey)
+	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey)
 	sessions := session.New(db)
 	if err := session.BindUnscopedSessions(db, defaultProject.ID); err != nil {
 		log.Fatalf("session: bind default project: %v", err)

@@ -35,6 +35,11 @@ func (exampleTool) Execute(context.Context, map[string]any) *toolkit.ToolResult 
 func TestCallAttachesToolExampleToDescription(t *testing.T) {
 	var captured ds4.ChatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -62,10 +67,60 @@ func TestCallAttachesToolExampleToDescription(t *testing.T) {
 	}
 }
 
+func TestCallRoutesLocalModelAlias(t *testing.T) {
+	official := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("official request path = %q, want /models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+	}))
+	defer official.Close()
+
+	var localRequest ds4.ChatRequest
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"local-model"}]}`))
+		case "/chat/completions":
+			if got := r.Header.Get("Authorization"); got != "Bearer local-key" {
+				t.Fatalf("local authorization = %q, want local key", got)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&localRequest); err != nil {
+				t.Fatalf("decode local request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`))
+		default:
+			t.Fatalf("local request path = %q", r.URL.Path)
+		}
+	}))
+	defer local.Close()
+
+	client := NewWithLocalModel("official-key", local.URL, "local-key")
+	client.ds4.WithBaseURL(official.URL)
+	response, err := client.Call(context.Background(), registry.Identity{PreferredModel: "local-model"}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil)
+	if err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+	if response.Content() != "done" {
+		t.Fatalf("response content = %q, want done", response.Content())
+	}
+	if localRequest.Model != "local-model" {
+		t.Fatalf("local request model = %q, want local-model", localRequest.Model)
+	}
+}
+
 func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
 	var request ds4.ChatRequest
 	var requestPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
 		requestPath = r.URL.Path
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -113,6 +168,11 @@ func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
 func TestRawCallRetriesWithProviderMaxTokens(t *testing.T) {
 	var received []int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
 		var request ds4.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)

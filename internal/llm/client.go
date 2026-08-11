@@ -29,6 +29,16 @@ func New(apiKey string) *Client {
 	return &Client{ds4: ds4.New(apiKey)}
 }
 
+// NewWithLocalModel creates a Client that also routes model names advertised
+// by a local OpenAI-compatible endpoint to that endpoint.
+func NewWithLocalModel(apiKey, localURL, localAPIKey string) *Client {
+	client := ds4.New(apiKey)
+	if localURL != "" {
+		client.WithLocalKey(localAPIKey).WithLocalURL(localURL)
+	}
+	return &Client{ds4: client}
+}
+
 // NewWithBaseURL creates a Client authenticated with apiKey that sends
 // requests to baseURL instead of the provider default. It exists for
 // self-hosted endpoints and for tests that point at a stub server.

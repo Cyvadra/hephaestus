@@ -14,7 +14,14 @@ import (
 // server so Compress/Summarize can be exercised without real credentials.
 func testClient(t *testing.T, handler http.HandlerFunc) *llm.Client {
 	t.Helper()
-	server := httptest.NewServer(handler)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
+		handler(w, r)
+	}))
 	t.Cleanup(server.Close)
 	return llm.NewWithBaseURL("test-key", server.URL)
 }

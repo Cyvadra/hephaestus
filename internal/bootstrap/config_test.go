@@ -48,6 +48,32 @@ func TestLoadSerpAPIConfig(t *testing.T) {
 	}
 }
 
+func TestLoadLocalModelConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_LOCAL_MODEL_URL", " http://localhost:8080/v1/ ")
+	t.Setenv("HEPHAESTUS_LOCAL_MODEL_API_KEY", " local-key ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LocalModelURL != "http://localhost:8080/v1" {
+		t.Fatalf("LocalModelURL = %q", cfg.LocalModelURL)
+	}
+	if cfg.LocalModelAPIKey != "local-key" {
+		t.Fatalf("LocalModelAPIKey = %q", cfg.LocalModelAPIKey)
+	}
+}
+
+func TestLoadRequiresLLMProvider(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing LLM provider error")
+	}
+}
+
 func TestLoadWebFetchConfig(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")

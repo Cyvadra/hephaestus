@@ -12,6 +12,21 @@ HEPHAESTUS_DEEPSEEK_API_KEY="..."
 HEPHAESTUS_FIRECRAWL_API_KEY="fc-..."
 ```
 
+For a local OpenAI-compatible model server, add its base URL and optional API
+key. `HEPHAESTUS_DEEPSEEK_API_KEY` may be omitted when a local model URL is
+configured.
+
+```sh
+HEPHAESTUS_LOCAL_MODEL_URL="http://localhost:8080/v1"
+HEPHAESTUS_LOCAL_MODEL_API_KEY=""
+```
+
+On the first LLM request, Hephaestus discovers models from DeepSeek and the
+local server. In the frontend Identity configuration, set `preferred_model` to
+the local server's advertised model ID (for example, `noip-2000:2b`); no URL
+or provider setting is needed in the Identity itself. A local model wins when
+both providers advertise the same ID.
+
 Run the backend with:
 
 ```sh

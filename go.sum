@@ -4,6 +4,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/Cyvadra/ds4 v0.0.0-20260803104146-961761cabdd6 h1:+S5lJkQ1W2CYe5e61VDRLOLXsht6ciksUuY7sMtlkbQ=
 github.com/Cyvadra/ds4 v0.0.0-20260803104146-961761cabdd6/go.mod h1:LyKWfvFSKAAcFJ2XN0DXoQHh7MQCJo1X+Tq0thJHbSU=
+github.com/Cyvadra/ds4 v0.0.0-20260811072002-35a35d2476dd h1:qUHo8NefoGdSDqac4cQVKW19dj6aBSeBm16En+RaW7g=
+github.com/Cyvadra/ds4 v0.0.0-20260811072002-35a35d2476dd/go.mod h1:LyKWfvFSKAAcFJ2XN0DXoQHh7MQCJo1X+Tq0thJHbSU=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/PuerkitoBio/purell v1.1.1 h1:WEQqlqaGbrPkxLJWfBwQmfEAE1Z7ONdDLqrN38tNFfI=

@@ -22,6 +22,10 @@ type Config struct {
 	PostgresDSN string
 	// DeepSeekAPIKey authenticates outbound calls via github.com/Cyvadra/ds4.
 	DeepSeekAPIKey string
+	// LocalModelURL and LocalModelAPIKey configure an optional OpenAI-compatible
+	// endpoint. When set, ds4 routes identities by their preferred model name.
+	LocalModelURL    string
+	LocalModelAPIKey string
 	// BaiduOCRAPIKey and BaiduOCRSecretKey authenticate optional image OCR.
 	BaiduOCRAPIKey    string
 	BaiduOCRSecretKey string
@@ -71,6 +75,8 @@ func Load() (*Config, error) {
 		ConfigDir:                getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
 		PostgresDSN:              os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
 		DeepSeekAPIKey:           os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
+		LocalModelURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_URL")), "/"),
+		LocalModelAPIKey:         strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_API_KEY")),
 		BaiduOCRAPIKey:           strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_API_KEY")),
 		BaiduOCRSecretKey:        strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY")),
 		WeComWebhookURL:          os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
@@ -102,8 +108,8 @@ func Load() (*Config, error) {
 	if cfg.PostgresDSN == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_POSTGRES_DSN is required")
 	}
-	if cfg.DeepSeekAPIKey == "" {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY is required")
+	if cfg.DeepSeekAPIKey == "" && cfg.LocalModelURL == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY or HEPHAESTUS_LOCAL_MODEL_URL is required")
 	}
 	if (cfg.BaiduOCRAPIKey == "") != (cfg.BaiduOCRSecretKey == "") {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_BAIDU_OCR_API_KEY and HEPHAESTUS_BAIDU_OCR_SECRET_KEY must be set together")
