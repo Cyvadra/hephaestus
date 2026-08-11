@@ -47,7 +47,7 @@ export async function* streamMessage(
   text: string,
   activeLeafMessageId?: number,
   files: File[] = [],
-  options: GenerationOptions = { reasoningEffort: 'none', webSearch: true },
+  options: GenerationOptions = { reasoningEffort: 'high', webSearch: false },
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const body = files.length > 0

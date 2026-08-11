@@ -122,7 +122,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const [activeSession, setActiveSession] = useState<Session | null>(null)
   const [headerTitleDraft, setHeaderTitleDraft] = useState('')
-  const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'none', webSearch: true })
+  const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'high', webSearch: false })
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
@@ -148,7 +148,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (initializedOptionsSessionRef.current !== targetSessionId) {
       setGenerationOptions({
         reasoningEffort: composerReasoningEffort(h.session.ReasoningEffort || h.reasoning_effort),
-        webSearch: h.session.EnableWebSearch ?? true,
+        webSearch: h.session.EnableWebSearch ?? false,
       })
       initializedOptionsSessionRef.current = targetSessionId
     }
@@ -289,12 +289,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
-
-  useEffect(() => {
-    if (resolvedSessionId == null && createdSessionRef.current == null && selectedConcierge) {
-      setGenerationOptions({ reasoningEffort: composerReasoningEffort(selectedConcierge.reasoning_effort), webSearch: true })
-    }
-  }, [resolvedSessionId, selectedConcierge])
 
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
