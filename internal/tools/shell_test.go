@@ -96,6 +96,28 @@ func TestStreamingOutputWriterRetainsBoundedTail(t *testing.T) {
 	}
 }
 
+func TestShellToolTimeoutOutOfRangeFallsBackToDefault(t *testing.T) {
+	ctx, _ := projectTestContext(t)
+	tool := NewShellTool(true, 0)
+	// A sub-1s timeout_seconds is outside the schema's 1..300 range; it must
+	// fall back to the tool default rather than clamping to the maximum, so
+	// the quick command still succeeds.
+	result := tool.Execute(ctx, map[string]any{"command": "printf hello", "timeout_seconds": 0.5})
+	if result.IsError {
+		t.Fatalf("expected command to run with the default timeout, got %+v", result)
+	}
+	if result.ForLLM != "hello" {
+		t.Fatalf("expected hello, got %q", result.ForLLM)
+	}
+}
+
+// Shell and project creation have externally visible side effects and must
+// be recorded in ToolAudit via the Audited capability.
+var (
+	_ toolkit.Audited = ShellTool{}
+	_ toolkit.Audited = CreateProjectTool{}
+)
+
 func TestShellToolRunsHighRiskCommandAfterInteractiveApproval(t *testing.T) {
 	ctx, _ := projectTestContext(t)
 	ctx = toolkit.WithSessionID(ctx, 7)

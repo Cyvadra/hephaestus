@@ -2,6 +2,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -77,6 +78,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: projects root: %w", err)
 	}
+	env := &envValues{}
 	cfg := &Config{
 		ConfigDir:                getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
 		PostgresDSN:              os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
@@ -88,26 +90,26 @@ func Load() (*Config, error) {
 		WeComWebhookURL:          os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
 		ListenAddr:               getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
 		ProjectsRoot:             projectsRoot,
-		ProjectAccessOverride:    getenvBool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
-		ShellEnabled:             getenvBool("HEPHAESTUS_SHELL_ENABLED"),
+		ProjectAccessOverride:    env.bool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
+		ShellEnabled:             env.bool("HEPHAESTUS_SHELL_ENABLED"),
 		WebFetchProvider:         strings.ToLower(strings.TrimSpace(getenvDefault("HEPHAESTUS_WEB_FETCH_PROVIDER", "firecrawl"))),
 		FirecrawlAPIKey:          strings.TrimSpace(os.Getenv("HEPHAESTUS_FIRECRAWL_API_KEY")),
 		WebFetchChromePath:       strings.TrimSpace(os.Getenv("HEPHAESTUS_WEB_FETCH_CHROME_PATH")),
-		WebFetchMaxChars:         getenvInt("HEPHAESTUS_WEB_FETCH_MAX_CHARS", 16_000),
-		WebFetchSummaryMaxChars:  getenvInt("HEPHAESTUS_WEB_FETCH_SUMMARY_MAX_CHARS", 4_000),
+		WebFetchMaxChars:         env.int("HEPHAESTUS_WEB_FETCH_MAX_CHARS", 16_000),
+		WebFetchSummaryMaxChars:  env.int("HEPHAESTUS_WEB_FETCH_SUMMARY_MAX_CHARS", 4_000),
 		WebSearchBraveAPIKeys:    splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS")),
 		WebSearchTavilyAPIKeys:   splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS")),
 		WebSearchSerpAPIKeys:     splitCommaSeparated(os.Getenv("HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS")),
 		WebSearchSerpAPIEngine:   getenvDefault("HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE", "google_light"),
 		WebSearchSearXNGBaseURL:  os.Getenv("HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL"),
-		WebSearchSummaryMaxChars: getenvInt("HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS", 4_000),
+		WebSearchSummaryMaxChars: env.int("HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS", 4_000),
 		UploadTextExtensions:     splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS", "md,markdown,txt,csv,json,yaml,yml,toml,xml")),
 		UploadImageExtensions:    splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS", "jpg,jpeg,png,bmp")),
-		UploadInlineTextMaxBytes: getenvInt64("HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES", 10<<10),
-		UploadOCRImageMaxBytes:   getenvInt64("HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES", 4<<20),
-		UploadFileMaxBytes:       getenvInt64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
-		UploadTotalMaxBytes:      getenvInt64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
-		UploadMaxFiles:           getenvInt("HEPHAESTUS_UPLOAD_MAX_FILES", 5),
+		UploadInlineTextMaxBytes: env.int64("HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES", 10<<10),
+		UploadOCRImageMaxBytes:   env.int64("HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES", 4<<20),
+		UploadFileMaxBytes:       env.int64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
+		UploadTotalMaxBytes:      env.int64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
+		UploadMaxFiles:           env.int("HEPHAESTUS_UPLOAD_MAX_FILES", 5),
 		EnvironmentLocation:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_LOCATION")),
 		EnvironmentTimezone:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_TIMEZONE")),
 		WeatherProviders:         splitCommaSeparated(getenvDefault("HEPHAESTUS_WEATHER_PROVIDERS", "open_meteo,wttr,met_no")),
@@ -117,6 +119,9 @@ func Load() (*Config, error) {
 	cfg.EnvironmentLatitude, errLatitude = requiredFloat("HEPHAESTUS_ENV_LATITUDE")
 	cfg.EnvironmentLongitude, errLongitude = requiredFloat("HEPHAESTUS_ENV_LONGITUDE")
 
+	if len(env.problems) > 0 {
+		return nil, errors.Join(env.problems...)
+	}
 	if cfg.PostgresDSN == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_POSTGRES_DSN is required")
 	}
@@ -174,29 +179,52 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-func getenvBool(key string) bool {
-	value, err := strconv.ParseBool(os.Getenv(key))
-	return err == nil && value
+// envValues parses numeric/boolean environment variables, recording a
+// descriptive error for every value that is set but unparsable instead of
+// silently falling back to the default.
+type envValues struct {
+	problems []error
 }
 
-// getenvInt returns the integer value of key, or fallback when unset or
-// unparsable.
-func getenvInt(key string, fallback int) int {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			return parsed
-		}
+// int returns the integer value of key, or fallback when unset. A set but
+// unparsable value is recorded as a problem and falls back.
+func (v *envValues) int(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
 	}
-	return fallback
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		v.problems = append(v.problems, fmt.Errorf("bootstrap: %s must be an integer, got %q", key, raw))
+		return fallback
+	}
+	return parsed
 }
 
-func getenvInt64(key string, fallback int64) int64 {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return parsed
-		}
+func (v *envValues) int64(key string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
 	}
-	return fallback
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		v.problems = append(v.problems, fmt.Errorf("bootstrap: %s must be an integer, got %q", key, raw))
+		return fallback
+	}
+	return parsed
+}
+
+func (v *envValues) bool(key string) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return false
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		v.problems = append(v.problems, fmt.Errorf("bootstrap: %s must be true or false, got %q", key, raw))
+		return false
+	}
+	return parsed
 }
 
 func requiredFloat(key string) (float64, error) {

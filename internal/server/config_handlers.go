@@ -118,7 +118,7 @@ func (s *Server) replaceConfiguration(c *gin.Context) {
 		configurationError(c, err)
 		return
 	}
-	name, err := configurationName(value)
+	name, err := registry.ValueName(kind, value)
 	if err != nil {
 		configurationError(c, err)
 		return
@@ -159,7 +159,7 @@ func configurationKind(c *gin.Context) registry.Kind {
 }
 
 func decodeConfiguration(c *gin.Context, kind registry.Kind) (any, error) {
-	value, err := configurationValue(kind)
+	value, err := registry.NewValue(kind)
 	if err != nil {
 		return nil, err
 	}
@@ -172,44 +172,6 @@ func decodeConfiguration(c *gin.Context, kind registry.Kind) (any, error) {
 		return nil, fmt.Errorf("invalid configuration payload: expected one JSON value")
 	}
 	return value, nil
-}
-
-func configurationValue(kind registry.Kind) (any, error) {
-	switch kind {
-	case registry.KindIdentity:
-		return &registry.Identity{}, nil
-	case registry.KindImpression:
-		return &registry.Impression{}, nil
-	case registry.KindToolGroup:
-		return &registry.ToolGroup{}, nil
-	case registry.KindConcierge:
-		return &registry.Concierge{}, nil
-	case registry.KindWorkflow:
-		return &registry.Workflow{}, nil
-	case registry.KindJob:
-		return &registry.Job{}, nil
-	default:
-		return nil, registry.ErrInvalidKind
-	}
-}
-
-func configurationName(value any) (string, error) {
-	switch typed := value.(type) {
-	case *registry.Identity:
-		return typed.Name, nil
-	case *registry.Impression:
-		return typed.Name, nil
-	case *registry.ToolGroup:
-		return typed.Name, nil
-	case *registry.Concierge:
-		return typed.Name, nil
-	case *registry.Workflow:
-		return typed.Name, nil
-	case *registry.Job:
-		return typed.Name, nil
-	default:
-		return "", registry.ErrInvalidKind
-	}
 }
 
 func configurationError(c *gin.Context, err error) {

@@ -22,10 +22,27 @@ func TestSplitCommaSeparated(t *testing.T) {
 	}
 }
 
-func TestGetenvBoolAcceptsStandardTrueValues(t *testing.T) {
+func TestEnvValuesBoolAcceptsStandardTrueValues(t *testing.T) {
 	t.Setenv("HEPHAESTUS_TEST_BOOL", "1")
-	if !getenvBool("HEPHAESTUS_TEST_BOOL") {
+	env := &envValues{}
+	if !env.bool("HEPHAESTUS_TEST_BOOL") {
 		t.Fatal("expected ParseBool-compatible true value")
+	}
+	if len(env.problems) != 0 {
+		t.Fatalf("expected no problems, got %v", env.problems)
+	}
+}
+
+func TestEnvValuesRecordsUnparsableValues(t *testing.T) {
+	t.Setenv("HEPHAESTUS_TEST_BOOL", "not-a-bool")
+	t.Setenv("HEPHAESTUS_TEST_INT", "50MB")
+	t.Setenv("HEPHAESTUS_TEST_INT64", "12.5")
+	env := &envValues{}
+	env.bool("HEPHAESTUS_TEST_BOOL")
+	env.int("HEPHAESTUS_TEST_INT", 7)
+	env.int64("HEPHAESTUS_TEST_INT64", 9)
+	if len(env.problems) != 3 {
+		t.Fatalf("expected 3 problems for unparsable values, got %v", env.problems)
 	}
 }
 

@@ -26,6 +26,9 @@ func NewCreateProjectTool(projects *project.Service) *CreateProjectTool {
 }
 
 func (CreateProjectTool) Name() string { return "create_project" }
+func (CreateProjectTool) Audited() bool {
+	return true
+}
 func (CreateProjectTool) Description() string {
 	return "Creates a new Project: a named on-disk folder (with a skeleton AGENTS.md) that file and " +
 		"shell tools can be scoped to. Only call this when the user has explicitly asked for a new project."

@@ -117,6 +117,7 @@ func (t *ShellTool) Example() string {
 
 func (ShellTool) Name() string       { return "shell" }
 func (t *ShellTool) Available() bool { return t.enabled }
+func (ShellTool) Audited() bool      { return true }
 func (ShellTool) Description() string {
 	return "Runs one shell command in the current Project and returns stdout and stderr. Use ordinary shell commands for file inspection, editing, searching, tests, and process control."
 }
@@ -158,6 +159,9 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 			return toolkit.ErrorResult("shell: requires a Project-bound session or an allowed working_directory")
 		}
 	} else {
+		// projectPath confines only the working directory; the command itself
+		// runs with the full privileges of the process user, so this is not a
+		// sandbox (see the safety-policy comment in policy.go).
 		resolved, err := projectPath(ctx, workingDir, t.access)
 		if err != nil {
 			return toolkit.ErrorResult("shell: working_directory: " + err.Error())
@@ -166,10 +170,14 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	}
 	timeout := t.timeout
 	if value, ok := args["timeout_seconds"].(float64); ok {
+		// Values outside the schema's 1..300 range fall back to the tool
+		// default rather than being clamped to the maximum: a tiny value must
+		// not silently become the most permissive timeout.
 		if value < 1 || value > 300 {
-			value = 300 // safety net for direct callers; schema enforces 1..300 via RunTool
+			timeout = t.timeout
+		} else {
+			timeout = time.Duration(value) * time.Second
 		}
-		timeout = time.Duration(value) * time.Second
 	}
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

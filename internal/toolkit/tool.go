@@ -30,3 +30,12 @@ type Tool interface {
 type Example interface {
 	Example() string
 }
+
+// Audited is an optional Tool capability. A tool that implements it marks
+// externally visible side effects (shell execution, project creation) that
+// must be recorded in the ToolAudit table even when the surrounding turn
+// later aborts. Keeping this on the tool itself instead of a hard-coded
+// list in the pipeline means adding a risky tool audits it by default.
+type Audited interface {
+	Audited() bool
+}

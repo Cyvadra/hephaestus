@@ -9,7 +9,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
 // Hook identifies a point in the session pipeline a Plugin can observe.
@@ -45,6 +47,12 @@ type TurnContext struct {
 	Messages         []store.ChatMessage
 	IsFirstTurn      bool
 	FirstUserMessage string
+	// ToolCall is the in-flight tool invocation on the ToolCall hook's
+	// before phase; ToolResult is its outcome on the after phase. Both are
+	// nil on every other hook, giving plugins typed access instead of
+	// reaching into Metadata.
+	ToolCall   *ds4.ToolCall
+	ToolResult *toolkit.ToolResult
 	// Metadata carries hook-specific or plugin-specific data (e.g. the
 	// pending tool call, the outbound text about to be sent) without
 	// forcing every hook to share one rigid schema.
@@ -67,6 +75,8 @@ func (t TurnContext) clone() TurnContext {
 		Messages:         messages,
 		IsFirstTurn:      t.IsFirstTurn,
 		FirstUserMessage: t.FirstUserMessage,
+		ToolCall:         t.ToolCall,
+		ToolResult:       t.ToolResult,
 		Metadata:         metadata,
 	}
 }

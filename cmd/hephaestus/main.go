@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -46,6 +47,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("bootstrap: %v", err)
 	}
+	warnIfExposed(cfg.ListenAddr)
 
 	notifier := notify.New(cfg.WeComWebhookURL)
 
@@ -155,6 +157,21 @@ func main() {
 }
 
 type ocrRecognizer struct{}
+
+// warnIfExposed logs a warning when the API binds to a non-loopback
+// address, since the server has no authentication and the shell tool runs
+// with full user privileges.
+func warnIfExposed(addr string) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return
+	}
+	switch strings.Trim(host, "[]") {
+	case "", "127.0.0.1", "::1", "localhost":
+		return
+	}
+	log.Printf("warning: HEPHAESTUS_LISTEN_ADDR %q is not loopback; the API has no authentication", addr)
+}
 
 func newOCRRecognizer(apiKey, secretKey string) upload.Recognizer {
 	if apiKey == "" {

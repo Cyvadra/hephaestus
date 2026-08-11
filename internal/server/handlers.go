@@ -67,27 +67,15 @@ func (s *Server) createSession(c *gin.Context) {
 		return
 	}
 
-	sess, err := s.sessions.CreateFromConcierge(concierge, boundProject.ID)
-	if err != nil {
-		internalError(c, err)
-		return
-	}
-	// Persist the session's initial generation runtime state: thinking mode
-	// follows the identity, and web search starts enabled.
-	enableWebSearch := true
 	reasoningEffort := ""
 	if identity, ok := reg.Identities[concierge.Identity]; ok {
 		reasoningEffort = identity.ReasoningEffort
 	}
-	if err := s.db.Model(sess).UpdateColumns(map[string]any{
-		"reasoning_effort":  reasoningEffort,
-		"enable_web_search": enableWebSearch,
-	}).Error; err != nil {
+	sess, err := s.sessions.CreateFromConcierge(concierge, boundProject.ID, reasoningEffort)
+	if err != nil {
 		internalError(c, err)
 		return
 	}
-	sess.ReasoningEffort = reasoningEffort
-	sess.EnableWebSearch = &enableWebSearch
 	c.JSON(http.StatusCreated, sess)
 }
 
@@ -130,8 +118,13 @@ func (s *Server) getHistory(c *gin.Context) {
 	settings := sess.Settings.Data()
 	identity, ok := reg.Identities[settings.Identity]
 	if !ok {
-		c.JSON(http.StatusInternalServerError, errorResponse{Error: "session identity not found"})
-		return
+		// The session references an identity that no longer exists; fall
+		// back to the registry default so history stays viewable.
+		identity, ok = reg.Identities[reg.DefaultIdentityName()]
+		if !ok {
+			c.JSON(http.StatusInternalServerError, errorResponse{Error: "session identity not found"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, historyResponse{Session: sess, Messages: messages, ReasoningEffort: identity.ReasoningEffort})
 }
@@ -155,6 +148,9 @@ func (r sendMessageRequest) turnOptions(onDelta func(chat.StreamEvent)) chat.Tur
 	}
 }
 
+// validateGenerationOptions rejects per-turn reasoning_effort values the
+// composer UI does not expose. "low" is deliberately absent (identities may
+// still declare it) so the per-turn override stays aligned with the UI.
 func validateGenerationOptions(req *sendMessageRequest) error {
 	switch req.ReasoningEffort {
 	case "", registry.ReasoningNone, registry.ReasoningHigh, registry.ReasoningMax:
@@ -186,6 +182,10 @@ type sendMessageResponse struct {
 	// Metadata carries any plugin-attached data for this turn (e.g.
 	// suggested next-user-message alternatives).
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// BranchNotActivated is set when the turn's output was persisted as a
+	// reachable but inactive branch because the session's active leaf
+	// changed mid-turn.
+	BranchNotActivated bool `json:"branch_not_activated,omitempty"`
 }
 
 // streamEventEnvelope makes every SSE payload self-describing and ordered.
@@ -245,7 +245,7 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrStaleActiveLeaf):
-			c.JSON(http.StatusConflict, errorResponse{Error: "session changed; refresh and retry"})
+			writeStaleLeaf(c)
 		case errors.Is(err, session.ErrMessageNotFound), errors.Is(err, gorm.ErrRecordNotFound):
 			c.JSON(http.StatusNotFound, errorResponse{Error: "session or message not found"})
 		case errors.Is(err, session.ErrNotAssistant),
@@ -289,7 +289,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 	result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(nil))
 	if err != nil {
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
-			c.JSON(http.StatusConflict, errorResponse{Error: "session changed; refresh and retry"})
+			writeStaleLeaf(c)
 			return
 		}
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -300,7 +300,11 @@ func (s *Server) sendMessage(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, sendMessageResponse{Message: result.Message, Metadata: mergeMetadata(result.Metadata, uploadResult)})
+	c.JSON(http.StatusOK, sendMessageResponse{
+		Message:            result.Message,
+		Metadata:           mergeMetadata(result.Metadata, uploadResult),
+		BranchNotActivated: result.Metadata["stale_active_leaf"] == true,
+	})
 }
 
 // streamMessage godoc
@@ -614,17 +618,29 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 	select {
 	case err := <-errCh:
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
-			streamEvent("error", "session changed; refresh and retry")
+			streamEvent("error", staleLeafMessage)
 		} else {
 			streamEvent("error", err.Error())
 		}
 	case result := <-resultCh:
-		streamEvent("done", sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
+		streamEvent("done", sendMessageResponse{
+			Message:            result.Message,
+			Metadata:           result.Metadata,
+			BranchNotActivated: result.Metadata["stale_active_leaf"] == true,
+		})
 	}
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+// staleLeafMessage is the stable client-visible message for a session whose
+// active branch changed mid-request.
+const staleLeafMessage = "session changed; refresh and retry"
+
+func writeStaleLeaf(c *gin.Context) {
+	c.JSON(http.StatusConflict, errorResponse{Error: staleLeafMessage})
 }
 
 func internalError(c *gin.Context, err error) {

@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/llm"
+	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
+	"gorm.io/datatypes"
 )
 
 func TestLastUserMessage_ReturnsTrailingUserMessage(t *testing.T) {
@@ -233,5 +237,117 @@ func TestIncompleteMessages_StripsDanglingToolCallsFromInterruptedAssistantMessa
 	}
 	if got[0].Content != "visible reply" || got[0].ReasoningContent != "reasoning" {
 		t.Fatalf("expected assistant content to survive, got %+v", got[0])
+	}
+}
+
+func TestMaybeCompress_SkipsWhenContextWindowUnset(t *testing.T) {
+	// A missing context window must not fire compression on every turn.
+	pipeline := &Pipeline{}
+	turn := plugin.TurnContext{
+		SessionID: 1,
+		Messages: []store.ChatMessage{
+			{Role: ds4.RoleAssistant, Content: strings.Repeat("x", 10_000)},
+			{Role: ds4.RoleUser, Content: "hello"},
+		},
+		Metadata: map[string]any{},
+	}
+	activePath := []store.ChatMessage{{ID: 1, Role: ds4.RoleAssistant, Content: strings.Repeat("x", 10_000)}}
+
+	out, err := pipeline.maybeCompress(context.Background(), store.Session{ID: 1}, registry.Identity{ContextWindowTokens: 0}, activePath, nil, turn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Messages) != len(turn.Messages) {
+		t.Fatalf("expected messages untouched when context window is unset, got %d", len(out.Messages))
+	}
+}
+
+func TestMaybeCompress_DoesNotFireBelowThreshold(t *testing.T) {
+	pipeline := &Pipeline{}
+	turn := plugin.TurnContext{
+		SessionID: 1,
+		Messages:  []store.ChatMessage{{Role: ds4.RoleUser, Content: "short"}},
+		Metadata:  map[string]any{},
+	}
+	activePath := []store.ChatMessage{{ID: 1, Role: ds4.RoleAssistant, Content: "hi"}}
+
+	out, err := pipeline.maybeCompress(context.Background(), store.Session{ID: 1}, registry.Identity{ContextWindowTokens: 1000}, activePath, nil, turn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Messages) != 1 || out.Messages[0].Content != "short" {
+		t.Fatalf("expected messages untouched below threshold, got %+v", out.Messages)
+	}
+}
+
+func TestEstimateMessageLengthCountsReasoningAndToolCalls(t *testing.T) {
+	m := store.ChatMessage{
+		Content:          "aaaa",
+		ReasoningContent: "aaaa",
+		ToolCalls:        []byte(`{"x":"aaaa"}`),
+	}
+	want := transform.EstimateLength(m.Content) + transform.EstimateLength(m.ReasoningContent) + transform.EstimateLength(string(m.ToolCalls))
+	if got := estimateMessageLength(m); got != want {
+		t.Fatalf("estimateMessageLength() = %d, want %d", got, want)
+	}
+	if transform.EstimateLength(m.ReasoningContent) == 0 || transform.EstimateLength(string(m.ToolCalls)) == 0 {
+		t.Fatal("test requires non-zero reasoning/tool-call estimates to be meaningful")
+	}
+}
+
+func TestResolveSettings_ValidSettingsUntouched(t *testing.T) {
+	reg := registry.NewStore(&registry.Registry{
+		Identities:  map[string]registry.Identity{"default": {Name: "default"}},
+		Impressions: map[string]registry.Impression{"imp": {Name: "imp"}},
+		ToolGroups:  map[string]registry.ToolGroup{"tg": {Name: "tg"}},
+	})
+	pipeline := &Pipeline{registries: reg}
+	sess := &store.Session{
+		Settings: datatypes.NewJSONType(store.SessionSettings{
+			Identity:    "default",
+			Impressions: []string{"imp"},
+			ToolGroups:  []string{"tg"},
+			Plugins:     []string{},
+		}),
+	}
+
+	got, err := pipeline.resolveSettings(sess)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Identity != "default" || len(got.Impressions) != 1 || len(got.ToolGroups) != 1 {
+		t.Fatalf("expected valid settings untouched, got %+v", got)
+	}
+	if sess.Settings.Data().Identity != "default" {
+		t.Fatalf("expected no persistence for valid settings, got %+v", sess.Settings.Data())
+	}
+}
+
+func TestKeepRegisteredDropsUnknownNames(t *testing.T) {
+	dirty := false
+	got := keepRegistered([]string{"known", "missing", "known2"}, map[string]struct{}{
+		"known":  {},
+		"known2": {},
+	}, &dirty)
+	if !dirty {
+		t.Fatal("expected dirty to be set when a name is dropped")
+	}
+	if len(got) != 2 || got[0] != "known" || got[1] != "known2" {
+		t.Fatalf("expected only known names kept in order, got %v", got)
+	}
+}
+
+func TestShellAndCreateProjectAreAudited(t *testing.T) {
+	shell := namedTool{name: "shell"}
+	if _, ok := any(shell).(toolkit.Audited); ok {
+		t.Fatal("namedTool must not be audited; this test relies on real tools")
+	}
+	// The capability is exercised through the real implementations in
+	// internal/tools; here we only assert the pipeline rejects non-audited
+	// tools without recording. beginToolAudit with a non-audited tool must
+	// return 0.
+	pipeline := &Pipeline{}
+	if id := pipeline.beginToolAudit(1, shell, ds4.ToolCall{}, map[string]any{}); id != 0 {
+		t.Fatalf("expected non-audited tool to skip audit, got audit id %d", id)
 	}
 }

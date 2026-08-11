@@ -22,6 +22,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/transform"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -121,24 +122,12 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	if err := p.db.First(&prep.sess, sessionID).Error; err != nil {
 		return prep, fmt.Errorf("chat: load session %d: %w", sessionID, err)
 	}
-	prep.settings = prep.sess.Settings.Data()
-
-	identity, ok := prep.registry.Identities[prep.settings.Identity]
-	if !ok {
-		p.notify.Error("chat: session %d has missing identity %q; message not persisted", sessionID, prep.settings.Identity)
-		return prep, fmt.Errorf("chat: identity %q not found", prep.settings.Identity)
+	settings, err := p.resolveSettings(&prep.sess)
+	if err != nil {
+		return prep, err
 	}
-	prep.identity = identity
-	for _, name := range prep.settings.Impressions {
-		if _, ok := prep.registry.Impressions[name]; !ok {
-			return prep, fmt.Errorf("chat: impression %q not found", name)
-		}
-	}
-	for _, name := range prep.settings.Plugins {
-		if !p.plugins.Has(name) {
-			return prep, fmt.Errorf("chat: plugin %q not found", name)
-		}
-	}
+	prep.settings = settings
+	prep.identity = prep.registry.Identities[settings.Identity]
 
 	toolGroups := make(map[string]toolkit.ToolGroupTools, len(prep.registry.ToolGroups))
 	for name, tg := range prep.registry.ToolGroups {
@@ -171,6 +160,64 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	prep.compRow = compRow
 
 	return prep, nil
+}
+
+// resolveSettings sanitizes a session's settings against the current
+// registry, self-healing stale references: a missing identity falls back to
+// the registry's default, and unknown impressions, tool groups and plugins
+// are dropped. Repaired settings are persisted so the session converges to
+// a healthy state instead of failing every turn.
+func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, error) {
+	settings := sess.Settings.Data()
+	reg := p.registries.Current()
+	dirty := false
+
+	if _, ok := reg.Identities[settings.Identity]; !ok {
+		fallback := reg.DefaultIdentityName()
+		if fallback == "" {
+			return settings, fmt.Errorf("chat: session %d references missing identity %q and no fallback identity exists", sess.ID, settings.Identity)
+		}
+		settings.Identity = fallback
+		dirty = true
+	}
+	settings.Impressions = keepRegistered(settings.Impressions, reg.Impressions, &dirty)
+	settings.ToolGroups = keepRegistered(settings.ToolGroups, reg.ToolGroups, &dirty)
+	settings.Plugins = keepKnownPlugins(settings.Plugins, p.plugins, &dirty)
+
+	if !dirty {
+		return settings, nil
+	}
+	if err := p.db.Model(sess).Update("settings", datatypes.NewJSONType(settings)).Error; err != nil {
+		return settings, fmt.Errorf("chat: repair session %d settings: %w", sess.ID, err)
+	}
+	p.notify.Warn("chat: session %d settings repaired: identity=%q impressions=%v tool_groups=%v plugins=%v",
+		sess.ID, settings.Identity, settings.Impressions, settings.ToolGroups, settings.Plugins)
+	sess.Settings = datatypes.NewJSONType(settings)
+	return settings, nil
+}
+
+func keepRegistered[T any](names []string, known map[string]T, dirty *bool) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := known[name]; ok {
+			out = append(out, name)
+		} else {
+			*dirty = true
+		}
+	}
+	return out
+}
+
+func keepKnownPlugins(names []string, reg *plugin.Registry, dirty *bool) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if reg.Has(name) {
+			out = append(out, name)
+		} else {
+			*dirty = true
+		}
+	}
+	return out
 }
 
 // TurnOptions carries the optional axes of a turn. ExpectedLeaf enables
@@ -238,17 +285,9 @@ func withOnDeltaReporter(ctx context.Context, onDelta func(StreamEvent)) context
 // active; with opts.OnDelta set, assistant content deltas are streamed as
 // they arrive while persistence still only happens once the turn completes.
 func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
-	return p.runTurn(ctx, sessionID, userText, opts)
-}
-
-func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
-	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
-	prep, err := p.prepare(sessionID)
+	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
 	if err != nil {
 		return nil, err
-	}
-	if prep.workspace != "" {
-		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
 	}
 	if !sameMessageID(prep.sess.ActiveLeafMessageID, opts.ExpectedLeaf) {
 		return nil, session.ErrStaleActiveLeaf
@@ -259,14 +298,13 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	if err != nil {
 		return nil, err
 	}
-	staticMessageCount := len(p.staticContext(prep.registry, prep.settings))
 
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
 	summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
 
-	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, staticMessageCount, turn)
+	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, turn)
 	if err != nil {
 		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 		return nil, err
@@ -285,6 +323,22 @@ func (p *Pipeline) runTurn(ctx context.Context, sessionID uint, userText string,
 	result, err := p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
 	p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 	return result, err
+}
+
+// prepareTurn performs the shared per-turn setup every entry point needs:
+// wiring the onDelta reporter into ctx, loading the session and its
+// settings, and binding the session's workspace. The caller then applies
+// its own leaf checks and turn-specific context.
+func (p *Pipeline) prepareTurn(ctx context.Context, sessionID uint, opts TurnOptions) (turnPrep, context.Context, error) {
+	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
+	prep, err := p.prepare(sessionID)
+	if err != nil {
+		return prep, ctx, err
+	}
+	if prep.workspace != "" {
+		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
+	}
+	return prep, ctx, nil
 }
 
 // scheduleSessionSummary starts the fixed session-summary plugin after
@@ -325,27 +379,14 @@ func (p *Pipeline) awaitSessionSummary(ctx context.Context, done <-chan struct{}
 	}
 }
 
-// Regenerate re-answers the nearest ancestor user message on sessionID's
-// active path, creating a sibling assistant branch under it instead of
-// persisting a new user message. If the active leaf is itself an
-// unanswered user message, this is equivalent to answering it fresh. With
-// opts.OnDelta set, assistant content deltas are streamed as they arrive.
-func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
-	return p.regenerate(ctx, sessionID, opts)
-}
-
 // Continue resumes an incomplete assistant response at the active session
 // leaf. The prefix remains in history and the generated suffix is persisted
 // as its child, so the complete reply can be reconstructed without copying
 // the already-generated content.
 func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts TurnOptions) (*TurnResult, error) {
-	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
-	prep, err := p.prepare(sessionID)
+	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
 	if err != nil {
 		return nil, err
-	}
-	if prep.workspace != "" {
-		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
 	}
 	if prep.sess.ActiveLeafMessageID == nil || *prep.sess.ActiveLeafMessageID != messageID {
 		return nil, session.ErrStaleActiveLeaf
@@ -407,14 +448,15 @@ func (p *Pipeline) continueResponse(ctx context.Context, identity registry.Ident
 	return ds4MessageToStore(*response.FirstMessage())
 }
 
-func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
-	ctx = withOnDeltaReporter(ctx, opts.OnDelta)
-	prep, err := p.prepare(sessionID)
+// Regenerate re-answers the nearest ancestor user message on sessionID's
+// active path, creating a sibling assistant branch under it instead of
+// persisting a new user message. If the active leaf is itself an
+// unanswered user message, this is equivalent to answering it fresh. With
+// opts.OnDelta set, assistant content deltas are streamed as they arrive.
+func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
+	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
 	if err != nil {
 		return nil, err
-	}
-	if prep.workspace != "" {
-		ctx = toolkit.WithWorkspace(ctx, prep.workspace)
 	}
 	if len(prep.activePath) == 0 {
 		return nil, fmt.Errorf("chat: session %d has no messages to regenerate", sessionID)
@@ -438,7 +480,6 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	if err != nil {
 		return nil, err
 	}
-	staticMessageCount := len(p.staticContext(prep.registry, prep.settings))
 
 	turn := newTurnContext(sessionID, llmContext, userIdx == 0, userMsg.Content)
 	// Compression on the regenerate path covers history up to (but not
@@ -451,7 +492,7 @@ func (p *Pipeline) regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	// user message, so the message before the user is always at or after the
 	// previous coverage boundary.
 	compressPath := pathUpToUser[:userIdx]
-	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, prep.compRow, staticMessageCount, turn)
+	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, prep.compRow, turn)
 	if err != nil {
 		return nil, err
 	}
@@ -479,6 +520,23 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.S
 	}
 
 	saved, err := p.sessions.AppendMessagesAtLeaf(sessionID, parentID, expectedLeaf, persistMessages)
+	if errors.Is(err, session.ErrStaleActiveLeaf) {
+		// The active branch moved under us mid-turn. Keep the already
+		// generated output as a reachable-but-inactive branch instead of
+		// discarding it, and tell the caller the branch was not activated.
+		detached, detachErr := p.sessions.AppendMessagesDetached(sessionID, parentID, persistMessages)
+		if detachErr != nil {
+			return nil, detachErr
+		}
+		final := detached[len(detached)-1]
+		turn.Messages[len(turn.Messages)-1] = final
+		if turn.Metadata == nil {
+			turn.Metadata = map[string]any{}
+		}
+		turn.Metadata["stale_active_leaf"] = true
+		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+		return &TurnResult{Message: &final, Metadata: turn.Metadata}, converseErr
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -578,19 +636,25 @@ func (p *Pipeline) staticContext(reg *registry.Registry, settings store.SessionS
 // Registry-dispatched Plugin: per the design doc, a failed compression must
 // abort the whole turn exactly like /stop, which the generic "skip a
 // failing plugin and continue" Plugin contract cannot express.
-func (p *Pipeline) compressIfNeeded(ctx context.Context, pluginNames []string, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, staticMessageCount int, turn plugin.TurnContext) (plugin.TurnContext, error) {
+func (p *Pipeline) compressIfNeeded(ctx context.Context, pluginNames []string, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, turn plugin.TurnContext) (plugin.TurnContext, error) {
 	turn = p.plugins.Run(ctx, pluginNames, plugin.HookContextCompression, plugin.PhaseBefore, turn)
-	turn, err := p.maybeCompress(ctx, sess, identity, activePath, compRow, staticMessageCount, turn)
+	turn, err := p.maybeCompress(ctx, sess, identity, activePath, compRow, turn)
 	if err != nil {
 		return plugin.TurnContext{}, err
 	}
 	return p.plugins.Run(ctx, pluginNames, plugin.HookContextCompression, plugin.PhaseAfter, turn), nil
 }
 
-func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, staticMessageCount int, turn plugin.TurnContext) (plugin.TurnContext, error) {
+func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, turn plugin.TurnContext) (plugin.TurnContext, error) {
+	// A missing context window makes the trigger threshold meaningless and
+	// would fire compression on every turn; skip rather than pay for an LLM
+	// compaction with no sane target.
+	if identity.ContextWindowTokens <= 0 {
+		return turn, nil
+	}
 	total := 0
 	for _, m := range turn.Messages {
-		total += transform.EstimateLength(m.Content)
+		total += estimateMessageLength(m)
 	}
 	if float64(total) <= compressionTriggerRatio*float64(identity.ContextWindowTokens) {
 		return turn, nil
@@ -599,7 +663,16 @@ func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identi
 		return turn, nil
 	}
 
-	toCompress := turn.Messages[staticMessageCount : len(turn.Messages)-1]
+	// Compress only history not already covered by a previous compression.
+	// The prior compacted block is kept verbatim and folded into the new
+	// one, so repeated compressions never re-summarize an earlier summary.
+	split := 0
+	if compRow != nil {
+		for split < len(activePath) && activePath[split].ID <= compRow.LastMessageID {
+			split++
+		}
+	}
+	toCompress := activePath[split:]
 	if len(toCompress) == 0 {
 		return turn, nil
 	}
@@ -617,8 +690,19 @@ func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identi
 		return plugin.TurnContext{}, fmt.Errorf("chat: compression failed, aborting turn: %w", err)
 	}
 
-	newMessages := make([]store.ChatMessage, 0, len(compacted)+1)
-	for _, m := range compacted {
+	// The stored block must be self-contained: prior compacted history plus
+	// the newly compacted tail, covering FirstMessageID..LastMessageID.
+	sequence := compacted
+	if compRow != nil {
+		var unpacked []transform.Message
+		if err := json.Unmarshal(compRow.Messages, &unpacked); err != nil {
+			return plugin.TurnContext{}, fmt.Errorf("chat: unpack compression %d: %w", compRow.ID, err)
+		}
+		sequence = append(unpacked, compacted...)
+	}
+
+	newMessages := make([]store.ChatMessage, 0, len(sequence)+1)
+	for _, m := range sequence {
 		newMessages = append(newMessages, store.ChatMessage{Role: m.Role, Content: m.Content})
 	}
 	newMessages = append(newMessages, keep...)
@@ -627,16 +711,25 @@ func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identi
 	if compRow != nil {
 		firstMessageID = compRow.FirstMessageID
 	}
-	compactedJSON, err := json.Marshal(compacted)
+	sequenceJSON, err := json.Marshal(sequence)
 	if err != nil {
 		return plugin.TurnContext{}, fmt.Errorf("chat: marshal compression: %w", err)
 	}
-	if _, err := p.sessions.StoreCompression(sess.ID, firstMessageID, activePath[len(activePath)-1].ID, compactedJSON); err != nil {
+	if _, err := p.sessions.StoreCompression(sess.ID, firstMessageID, activePath[len(activePath)-1].ID, sequenceJSON); err != nil {
 		return plugin.TurnContext{}, fmt.Errorf("chat: persist compression: %w", err)
 	}
 
 	turn.Messages = newMessages
 	return turn, nil
+}
+
+// estimateMessageLength approximates a message's context length, counting
+// every field the model receives (content, reasoning, tool calls) rather
+// than only Content.
+func estimateMessageLength(m store.ChatMessage) int {
+	return transform.EstimateLength(m.Content) +
+		transform.EstimateLength(m.ReasoningContent) +
+		transform.EstimateLength(string(m.ToolCalls))
 }
 
 // converse runs the first LLM call and, while the model requests tool
@@ -706,61 +799,13 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 			if err := p.trackConsecutiveToolCall(ctx, turn.SessionID, &lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
 				return toPersist, turn, err
 			}
-			turn.Metadata["tool_call"] = tc
+			turn.ToolCall = &tc
+			turn.ToolResult = nil
 			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseBefore, turn)
+			turn.ToolCall = nil
 		}
 
-		// Tool calls from a single model response are independent of one
-		// another, so they run concurrently; results are collected back in
-		// the model's original order for deterministic persistence.
-		results := make([]*toolkit.ToolResult, len(toolCalls))
-		var wg sync.WaitGroup
-		for i, tc := range toolCalls {
-			wg.Add(1)
-			go func(idx int, tc ds4.ToolCall) {
-				defer wg.Done()
-				results[idx] = p.executeTool(ctx, turn.SessionID, allowedTools, tc, func(chunk string) {
-					if onDelta != nil {
-						onDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
-							CallIndex: callIndex,
-							Index:     idx,
-							ID:        tc.ID,
-							Name:      tc.Function.Name,
-							Result:    chunk,
-							Status:    "calling",
-						}})
-					}
-				})
-			}(i, tc)
-		}
-		wg.Wait()
-
-		for toolIndex, tc := range toolCalls {
-			result := results[toolIndex]
-			turn.Metadata["tool_result"] = result
-			turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseAfter, turn)
-
-			content := result.ContentForLLM()
-			if onDelta != nil {
-				status := "complete"
-				if result.IsError {
-					status = "error"
-				}
-				onDelta(StreamEvent{Type: "tool_result", ToolCall: &StreamToolCall{
-					CallIndex: callIndex,
-					Index:     toolIndex,
-					ID:        tc.ID,
-					Name:      tc.Function.Name,
-					Result:    content,
-					Status:    status,
-				}})
-			}
-
-			toolMsg := store.ChatMessage{Role: ds4.RoleTool, Content: content, ToolCallID: tc.ID, Timestamp: time.Now()}
-			messages = append(messages, toolMsg)
-			toPersist = append(toPersist, toolMsg)
-			turn.Messages = messages
-		}
+		messages, toPersist, turn = p.runToolCalls(ctx, settings, turn.SessionID, callIndex, allowedTools, toolCalls, messages, toPersist, turn, onDelta)
 
 		turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseBefore, turn)
 		messages = turn.Messages
@@ -791,6 +836,65 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	return toPersist, turn, nil
 }
 
+// runToolCalls executes a single model response's independent tool calls
+// concurrently, runs the after-phase ToolCall hook for each with its
+// outcome, and appends the resulting tool messages to messages/toPersist in
+// the model's original order for deterministic persistence.
+func (p *Pipeline) runToolCalls(ctx context.Context, settings store.SessionSettings, sessionID uint, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext) {
+	results := make([]*toolkit.ToolResult, len(toolCalls))
+	var wg sync.WaitGroup
+	for i, tc := range toolCalls {
+		wg.Add(1)
+		go func(idx int, tc ds4.ToolCall) {
+			defer wg.Done()
+			results[idx] = p.executeTool(ctx, sessionID, allowedTools, tc, func(chunk string) {
+				if onDelta != nil {
+					onDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
+						CallIndex: callIndex,
+						Index:     idx,
+						ID:        tc.ID,
+						Name:      tc.Function.Name,
+						Result:    chunk,
+						Status:    "calling",
+					}})
+				}
+			})
+		}(i, tc)
+	}
+	wg.Wait()
+
+	for toolIndex, tc := range toolCalls {
+		result := results[toolIndex]
+		turn.ToolCall = &tc
+		turn.ToolResult = result
+		turn = p.plugins.Run(ctx, settings.Plugins, plugin.HookToolCall, plugin.PhaseAfter, turn)
+		turn.ToolCall = nil
+		turn.ToolResult = nil
+
+		content := result.ContentForLLM()
+		if onDelta != nil {
+			status := "complete"
+			if result.IsError {
+				status = "error"
+			}
+			onDelta(StreamEvent{Type: "tool_result", ToolCall: &StreamToolCall{
+				CallIndex: callIndex,
+				Index:     toolIndex,
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Result:    content,
+				Status:    status,
+			}})
+		}
+
+		toolMsg := store.ChatMessage{Role: ds4.RoleTool, Content: content, ToolCallID: tc.ID, Timestamp: time.Now()}
+		messages = append(messages, toolMsg)
+		toPersist = append(toPersist, toolMsg)
+		turn.Messages = messages
+	}
+	return messages, toPersist, turn
+}
+
 func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall, reportOutput func(string)) *toolkit.ToolResult {
 	t, ok := allowedTools[tc.Function.Name]
 	if !ok {
@@ -804,7 +908,7 @@ func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools
 		}
 	}
 
-	auditID := p.beginToolAudit(sessionID, tc, args)
+	auditID := p.beginToolAudit(sessionID, t, tc, args)
 	toolCtx := toolkit.WithSessionID(ctx, sessionID)
 	if reportOutput != nil {
 		toolCtx = toolkit.WithOutputReporter(toolCtx, reportOutput)
@@ -823,13 +927,9 @@ func (p *Pipeline) executeTool(ctx context.Context, sessionID uint, allowedTools
 	return result
 }
 
-var auditedTools = map[string]bool{
-	"create_project": true,
-	"shell":          true,
-}
-
-func (p *Pipeline) beginToolAudit(sessionID uint, tc ds4.ToolCall, args map[string]any) uint {
-	if !auditedTools[tc.Function.Name] {
+func (p *Pipeline) beginToolAudit(sessionID uint, tool toolkit.Tool, tc ds4.ToolCall, args map[string]any) uint {
+	audited, ok := tool.(toolkit.Audited)
+	if !ok || !audited.Audited() {
 		return 0
 	}
 	encoded, err := json.Marshal(args)

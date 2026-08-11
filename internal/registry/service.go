@@ -136,7 +136,7 @@ func (s *Service) List(kind Kind) (any, error) {
 }
 
 func (s *Service) Get(kind Kind, name string) (any, error) {
-	value, err := newValue(kind)
+	value, err := NewValue(kind)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func (s *Service) Replace(kind Kind, value any) error {
 }
 
 func (s *Service) Delete(kind Kind, name string) error {
-	if _, err := newValue(kind); err != nil {
+	if _, err := NewValue(kind); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -188,7 +188,7 @@ func (s *Service) write(kind Kind, value any, replace bool) error {
 	if err := normalizeValue(kind, value); err != nil {
 		return err
 	}
-	name, err := valueName(kind, value)
+	name, err := ValueName(kind, value)
 	if err != nil {
 		return err
 	}
@@ -225,6 +225,16 @@ func (s *Service) write(kind Kind, value any, replace bool) error {
 	return nil
 }
 
+// DefaultIdentityName returns the alphabetically first identity name, used
+// as the fallback when a session references an identity that no longer
+// exists. Returns "" when the registry has no identities at all.
+func (r *Registry) DefaultIdentityName() string {
+	if len(r.Identities) == 0 {
+		return ""
+	}
+	return sortedMapKeys(r.Identities)[0]
+}
+
 func (s *Service) validatedRegistry(tx *gorm.DB) (*Registry, error) {
 	reg, err := LoadDatabase(tx, s.static)
 	if err != nil {
@@ -236,81 +246,142 @@ func (s *Service) validatedRegistry(tx *gorm.DB) (*Registry, error) {
 	return reg, nil
 }
 
-func newValue(kind Kind) (any, error) {
-	switch kind {
-	case KindIdentity:
-		return &Identity{}, nil
-	case KindImpression:
-		return &Impression{}, nil
-	case KindToolGroup:
-		return &ToolGroup{}, nil
-	case KindConcierge:
-		return &Concierge{}, nil
-	case KindWorkflow:
-		return &Workflow{}, nil
-	case KindJob:
-		return &Job{}, nil
-	default:
-		return nil, ErrInvalidKind
-	}
+// kindDescriptor centralizes the per-kind behaviors (blank value, name
+// extraction, normalization) that the HTTP handlers and the write/delete
+// paths all need. Keeping them as data instead of parallel switches makes
+// adding a configuration kind a single table entry.
+type kindDescriptor struct {
+	blank     func() any
+	name      func(any) (string, bool)
+	normalize func(any) error // nil means the kind needs no normalization
 }
 
-func modelForKind(kind Kind) any {
-	value, _ := newValue(kind)
-	return value
-}
-
-func normalizeValue(kind Kind, value any) error {
-	switch typed := value.(type) {
-	case *Identity:
-		if kind != KindIdentity {
-			break
-		}
-		return normalizeIdentity(typed)
-	case *Impression:
-		if kind == KindImpression {
-			return nil
-		}
-	case *ToolGroup:
-		if kind == KindToolGroup {
-			return nil
-		}
-	case *Concierge:
-		if kind == KindConcierge {
+var kindDescriptors = map[Kind]kindDescriptor{
+	KindIdentity: {
+		blank: func() any { return &Identity{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*Identity)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+		normalize: func(v any) error {
+			typed, ok := v.(*Identity)
+			if !ok {
+				return wrongPayload(KindIdentity)
+			}
+			return normalizeIdentity(typed)
+		},
+	},
+	KindImpression: {
+		blank: func() any { return &Impression{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*Impression)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+	},
+	KindToolGroup: {
+		blank: func() any { return &ToolGroup{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*ToolGroup)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+	},
+	KindConcierge: {
+		blank: func() any { return &Concierge{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*Concierge)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+		normalize: func(v any) error {
+			typed, ok := v.(*Concierge)
+			if !ok {
+				return wrongPayload(KindConcierge)
+			}
 			return normalizeConcierge(typed)
-		}
-	case *Workflow:
-		if kind == KindWorkflow {
+		},
+	},
+	KindWorkflow: {
+		blank: func() any { return &Workflow{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*Workflow)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+		normalize: func(v any) error {
+			typed, ok := v.(*Workflow)
+			if !ok {
+				return wrongPayload(KindWorkflow)
+			}
 			return normalizeWorkflow(typed)
-		}
-	case *Job:
-		if kind == KindJob {
-			return nil
-		}
-	}
+		},
+	},
+	KindJob: {
+		blank: func() any { return &Job{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*Job)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+	},
+}
+
+func wrongPayload(kind Kind) error {
 	return fmt.Errorf("registry: %w %q payload", ErrInvalidKind, kind)
 }
 
-func valueName(kind Kind, value any) (string, error) {
-	var name string
-	switch typed := value.(type) {
-	case *Identity:
-		name = typed.Name
-	case *Impression:
-		name = typed.Name
-	case *ToolGroup:
-		name = typed.Name
-	case *Concierge:
-		name = typed.Name
-	case *Workflow:
-		name = typed.Name
-	case *Job:
-		name = typed.Name
-	default:
-		return "", fmt.Errorf("registry: %w %q payload", ErrInvalidKind, kind)
+// NewValue returns a blank configuration value for kind, for decoding a
+// request payload, or ErrInvalidKind.
+func NewValue(kind Kind) (any, error) {
+	desc, ok := kindDescriptors[kind]
+	if !ok {
+		return nil, ErrInvalidKind
+	}
+	return desc.blank(), nil
+}
+
+// ValueName extracts the persisted name from a configuration value of kind.
+func ValueName(kind Kind, value any) (string, error) {
+	desc, ok := kindDescriptors[kind]
+	if !ok {
+		return "", ErrInvalidKind
+	}
+	name, ok := desc.name(value)
+	if !ok {
+		return "", wrongPayload(kind)
 	}
 	if name == "" {
 		return "", fmt.Errorf("registry: %s name must not be empty", kind)
 	}
 	return name, nil
+}
+
+func normalizeValue(kind Kind, value any) error {
+	desc, ok := kindDescriptors[kind]
+	if !ok {
+		return ErrInvalidKind
+	}
+	if desc.normalize == nil {
+		return nil
+	}
+	return desc.normalize(value)
+}
+
+func modelForKind(kind Kind) any {
+	value, _ := NewValue(kind)
+	return value
 }

@@ -38,20 +38,17 @@ var (
 func New(db *gorm.DB) *Service { return &Service{db: db} }
 
 // CreateFromConcierge creates a new Session whose initial Settings are a
-// snapshot of concierge's identity/impressions/tool groups/plugins.
-func (s *Service) CreateFromConcierge(concierge registry.Concierge, projectID uint) (*store.Session, error) {
-	return s.Create(concierge.Name, SettingsFromConcierge(concierge), projectID)
-}
-
-// Create makes a new session from an explicit settings snapshot.
-func (s *Service) Create(sourceConcierge string, settings store.SessionSettings, projectID uint) (*store.Session, error) {
-	if projectID == 0 {
-		return nil, fmt.Errorf("session: project id is required")
-	}
+// snapshot of concierge's identity/impressions/tool groups/plugins, with
+// the initial runtime state (reasoning effort and web-search availability)
+// derived from the identity and persisted atomically with the session row.
+func (s *Service) CreateFromConcierge(concierge registry.Concierge, projectID uint, reasoningEffort string) (*store.Session, error) {
+	enableWebSearch := true
 	sess := &store.Session{
-		SourceConcierge: sourceConcierge,
+		SourceConcierge: concierge.Name,
 		ProjectID:       projectID,
-		Settings:        datatypes.NewJSONType(settings),
+		Settings:        datatypes.NewJSONType(SettingsFromConcierge(concierge)),
+		ReasoningEffort: reasoningEffort,
+		EnableWebSearch: &enableWebSearch,
 	}
 	if err := s.db.Create(sess).Error; err != nil {
 		return nil, fmt.Errorf("session: create: %w", err)
@@ -120,33 +117,8 @@ func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, c
 	copy(out, msgs)
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		var sess store.Session
-		if err := tx.First(&sess, sessionID).Error; err != nil {
-			return fmt.Errorf("session: load for append: %w", err)
-		}
-		if parentID != nil {
-			var count int64
-			if err := tx.Model(&store.ChatMessage{}).Where("id = ? AND session_id = ?", *parentID, sessionID).Count(&count).Error; err != nil {
-				return fmt.Errorf("session: validate parent: %w", err)
-			}
-			if count == 0 {
-				return ErrInvalidParent
-			}
-		}
-		parent := parentID
-		for i := range out {
-			out[i].SessionID = sessionID
-			out[i].ParentMessageID = parent
-			if out[i].Status == "" {
-				out[i].Status = store.MessageStatusComplete
-			}
-			if out[i].Timestamp.IsZero() {
-				out[i].Timestamp = time.Now()
-			}
-			if err := tx.Create(&out[i]).Error; err != nil {
-				return fmt.Errorf("session: append message %d/%d: %w", i+1, len(out), err)
-			}
-			parent = &out[i].ID
+		if err := insertChain(tx, sessionID, parentID, out); err != nil {
+			return err
 		}
 		result := tx.Model(&store.Session{}).Where("id = ?", sessionID)
 		if checkActiveLeaf {
@@ -169,6 +141,54 @@ func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, c
 		return nil, err
 	}
 	return out, nil
+}
+
+// AppendMessagesDetached inserts msgs as a single chain below parentID
+// without touching the session's active leaf. It lets a turn whose branch
+// lost a leaf race persist its output as a reachable-but-inactive branch
+// instead of discarding generated tokens.
+func (s *Service) AppendMessagesDetached(sessionID uint, parentID *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+	out := make([]store.ChatMessage, len(msgs))
+	copy(out, msgs)
+	if err := insertChain(s.db, sessionID, parentID, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// insertChain persists msgs as a chain whose first element is a child of
+// parentID (nil for the first message of a session), assigning each row's
+// id in place. It does not advance the session's active leaf, so callers
+// that need atomicity must wrap it in their own transaction.
+func insertChain(tx *gorm.DB, sessionID uint, parentID *uint, msgs []store.ChatMessage) error {
+	if parentID != nil {
+		var count int64
+		if err := tx.Model(&store.ChatMessage{}).Where("id = ? AND session_id = ?", *parentID, sessionID).Count(&count).Error; err != nil {
+			return fmt.Errorf("session: validate parent: %w", err)
+		}
+		if count == 0 {
+			return ErrInvalidParent
+		}
+	}
+	parent := parentID
+	for i := range msgs {
+		msgs[i].SessionID = sessionID
+		msgs[i].ParentMessageID = parent
+		if msgs[i].Status == "" {
+			msgs[i].Status = store.MessageStatusComplete
+		}
+		if msgs[i].Timestamp.IsZero() {
+			msgs[i].Timestamp = time.Now()
+		}
+		if err := tx.Create(&msgs[i]).Error; err != nil {
+			return fmt.Errorf("session: append message %d/%d: %w", i+1, len(msgs), err)
+		}
+		parent = &msgs[i].ID
+	}
+	return nil
 }
 
 // SelectActiveLeaf validates that leafID belongs to sessionID before making
