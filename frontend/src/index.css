@@ -5001,7 +5001,8 @@ body {
 
 .sidebar-brand-icon {
     width: 24px;
-    height: 24px
+    height: 24px;
+    transform: rotate(180deg)
 }
 
 .sidebar-brand-wordmark {
