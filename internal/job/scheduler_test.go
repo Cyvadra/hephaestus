@@ -127,6 +127,22 @@ func TestIntegration_SchedulerEnvReflectsState(t *testing.T) {
 	}
 }
 
+func TestIntegration_SchedulerEnvAllowsMissingState(t *testing.T) {
+	jobName := uniqueJobName("new")
+	reg := baseRegistry()
+	reg.Jobs[jobName] = morningJob(jobName, 1)
+	s := newServices(t, reg, &fakeRunner{})
+	now := time.Now()
+
+	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, now)
+	if err != nil {
+		t.Fatalf("buildEnv without state: %v", err)
+	}
+	if env.ExecutionsToday != 0 || env.HasLastStarted || env.HasLastSucceeded {
+		t.Fatalf("expected empty state environment, got %+v", env)
+	}
+}
+
 // TestIntegration_SchedulerEnvResetsExecutionsOnNewDay guards against the
 // stale-counter deadlock: yesterday's ExecutionsToday must read as zero, or
 // triggers like `ExecutionsToday == 0` never fire again.

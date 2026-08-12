@@ -142,7 +142,7 @@ func (s *Scheduler) buildEnv(jobName string, now time.Time) (registry.TriggerEnv
 	}
 
 	var state store.JobState
-	if err := s.db.Where("job_name = ?", jobName).First(&state).Error; err == nil {
+	if err := s.db.Where("job_name = ?", jobName).Limit(1).Find(&state).Error; err == nil {
 		// The persisted counter belongs to state.LocalDate; on a new day it
 		// is stale and must read as zero, or triggers referencing
 		// ExecutionsToday would never fire again.
