@@ -5794,6 +5794,10 @@ body {
     max-width: min(100%, 760px)
 }
 
+.message-stack.user.editing {
+    max-width: min(100%, 800px)
+}
+
 .message-card,.streaming-bubble,.command-block,.error-block {
     box-sizing: border-box;
     border-radius: 10px;

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Check, Copy, Download, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
@@ -22,6 +22,7 @@ interface Props {
 
 export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, onRegenerate, onContinue }: Props) {
   const [editing, setEditing] = useState(false)
+  const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
   const [editText, setEditText] = useState(msg.Content)
   const [editReasoning, setEditReasoning] = useState(msg.ReasoningContent)
   const [copied, setCopied] = useState(false)
@@ -67,21 +68,43 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
     }
   }
 
+  const handleUserEditKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      handleEditSubmit()
+    }
+  }
+
+  const handleAssistantEditKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      void handleAssistantEditSubmit()
+    }
+  }
+
   const handleCopy = async () => {
     await navigator.clipboard.writeText(msg.Content)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1000)
   }
 
+  const startUserEdit = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const card = event.currentTarget.closest('.message-stack')?.querySelector('.message-card')
+    setUserEditWidth(card instanceof HTMLElement ? card.getBoundingClientRect().width + 80 : null)
+    setEditText(parsedUserContent?.body ?? msg.Content)
+    setEditing(true)
+  }
+
   if (isUser) {
     return (
       <div className="message-row user">
-        <div className="message-stack user">
+        <div className={'message-stack user' + (editing ? ' editing' : '')} style={editing && userEditWidth != null ? { width: `min(100%, ${userEditWidth}px)` } : undefined}>
           {editing ? (
             <div className="message-editor">
               <textarea
                 value={editText}
                 onChange={e => setEditText(e.target.value)}
+                onKeyDown={handleUserEditKeyDown}
                 className="message-editor-textarea"
                 rows={3}
                 autoFocus
@@ -111,7 +134,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   {copied ? <Check /> : <Copy />}
                 </IconButton>
                 <button
-                  onClick={() => { setEditText(parsedUserContent?.body ?? msg.Content); setEditing(true) }}
+                  onClick={startUserEdit}
                   className="message-action-btn message-icon-btn"
                   aria-label="编辑"
                   title="编辑"
@@ -143,6 +166,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 <textarea
                   value={editText}
                   onChange={event => setEditText(event.target.value)}
+                  onKeyDown={handleAssistantEditKeyDown}
                   className="message-editor-textarea"
                   rows={5}
                   autoFocus
@@ -153,6 +177,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 <textarea
                   value={editReasoning}
                   onChange={event => setEditReasoning(event.target.value)}
+                  onKeyDown={handleAssistantEditKeyDown}
                   className="message-editor-textarea reasoning-editor-textarea"
                   rows={4}
                 />

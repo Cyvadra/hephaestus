@@ -58,7 +58,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   }
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       submit()
     }

@@ -321,6 +321,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
 
     const leafId = leafOverride !== undefined ? leafOverride : localLeafId
+    const previousLeafId = localLeafId
+    if (leafOverride !== undefined) setLocalLeafId(leafId ?? null)
     setCommandResponse(null)
     setError(null)
     setStreaming(true)
@@ -380,6 +382,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onError: setError,
       })
     } catch (cause) {
+      if (leafOverride !== undefined) setLocalLeafId(previousLeafId)
       if (!controller.signal.aborted) setError(String(cause))
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
