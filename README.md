@@ -44,6 +44,10 @@ npm run dev
 
 The development server proxies `/api` requests to the backend.
 
+Preview:
+
+![Screenshot](./docs/screenshots/chat.jpeg)
+
 ## Use It
 
 Create a project and a session through the chat interface or the API, then

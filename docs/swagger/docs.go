@@ -1732,9 +1732,6 @@ const docTemplate = `{
         },
         "internal_server.sendMessageRequest": {
             "type": "object",
-            "required": [
-                "text"
-            ],
             "properties": {
                 "active_leaf_message_id": {
                     "description": "ActiveLeafMessageID, when set, switches the session onto this\nbranch before the message is processed (see design doc's session\nbranching semantics). Required for every continuation, per doc.",
