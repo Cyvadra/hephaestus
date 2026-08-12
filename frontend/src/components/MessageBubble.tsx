@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Check, Copy, Download, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
@@ -231,20 +231,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
           )}
           {attachments.length > 0 && (
             <div className="assistant-attachments" aria-label="已发送文件">
-              {attachments.map(attachment => (
-                <a
-                  className="assistant-attachment"
-                  download={attachment.Name}
-                  href={attachmentDownloadURL(msg.SessionID, attachment.ID)}
-                  key={attachment.ID}
-                  title={`下载 ${attachment.Name}`}
-                >
-                  <FileText aria-hidden="true" size={16} />
-                  <span>{attachment.Name}</span>
-                  <small>{formatAttachmentSize(attachment.Size)}</small>
-                  <Download aria-hidden="true" size={15} />
-                </a>
-              ))}
+              {attachments.map(attachment => <AssistantAttachment key={attachment.ID} attachment={attachment} />)}
             </div>
           )}
                 </div>
@@ -315,6 +302,44 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
 
 function formatAttachmentSize(size: number) {
   return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`
+}
+
+function AssistantAttachment({ attachment }: { attachment: ChatMessage['Attachments'][number] }) {
+  const nameRef = useRef<HTMLSpanElement>(null)
+  const [scroll, setScroll] = useState({ distance: 0, duration: 0 })
+
+  useEffect(() => {
+    const name = nameRef.current
+    if (!name) return
+    const updateScroll = () => {
+      const distance = Math.max(0, name.scrollWidth - name.clientWidth)
+      const duration = distance > 0 ? Math.max(.5, distance / 100) : 0
+      setScroll(current => current.distance === distance && current.duration === duration ? current : { distance, duration })
+    }
+    const observer = new ResizeObserver(updateScroll)
+    observer.observe(name)
+    updateScroll()
+    return () => observer.disconnect()
+  }, [attachment.Name])
+
+  const style = {
+    '--attachment-name-scroll-distance': `${scroll.distance}px`,
+    '--attachment-name-scroll-duration': `${scroll.duration}s`,
+  } as CSSProperties
+
+  return (
+    <a
+      className={'assistant-attachment' + (scroll.distance > 0 ? ' overflowing' : '')}
+      download={attachment.Name}
+      href={attachmentDownloadURL(attachment.SessionID, attachment.ID)}
+      title={`下载 ${attachment.Name}`}
+    >
+      <FileText aria-hidden="true" size={16} />
+      <span ref={nameRef} style={style}><span>{attachment.Name}</span></span>
+      <small>{formatAttachmentSize(attachment.Size)}</small>
+      <Download aria-hidden="true" size={15} />
+    </a>
+  )
 }
 
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void | Promise<void>; children: React.ReactNode }) {

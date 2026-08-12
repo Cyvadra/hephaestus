@@ -6360,37 +6360,67 @@ body {
 
 .assistant-attachments {
     display: grid;
-    gap: 6px;
-    margin-top: 10px
+    gap: 7px;
+    margin-top: 12px
 }
 
 .assistant-attachment {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     min-width: 0;
-    padding: 7px 8px;
+    padding: 8px 9px;
     color: var(--dsw-alias-label-primary);
     background: var(--dsw-specific-input-major);
-    border-radius: 4px;
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 6px;
+    width: min(30%, 360px);
+    min-width: 220px;
+    max-width: 100%;
     font-size: 12px;
-    text-decoration: none
+    line-height: 18px;
+    text-decoration: none;
+    transition: background-color .15s ease, border-color .15s ease
 }
 
-.assistant-attachment:hover {
-    background: var(--dsw-specific-input-major-hover)
+.assistant-attachment:hover,.assistant-attachment:focus-visible {
+    background: var(--dsw-specific-input-major-hover);
+    border-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 35%, var(--dsw-alias-border-l2));
+    outline: none
 }
 
-.assistant-attachment span {
+.assistant-attachment > svg:first-child {
+    color: var(--dsw-alias-label-secondary)
+}
+
+.assistant-attachment > span {
     overflow: hidden;
-    text-overflow: ellipsis;
+    font-weight: 500;
     white-space: nowrap
+}
+
+.assistant-attachment > span > span {
+    display: inline-block;
+    min-width: max-content
+}
+
+.assistant-attachment:hover > span > span,.assistant-attachment:focus-visible > span > span {
+    animation: attachment-name-scroll calc(var(--attachment-name-scroll-duration) + 1s) ease-in-out .3s infinite alternate
+}
+
+@keyframes attachment-name-scroll {
+    0%,12% { transform: translateX(0) }
+    88%,100% { transform: translateX(calc(-1 * var(--attachment-name-scroll-distance))) }
 }
 
 .assistant-attachment small {
     color: var(--dsw-alias-label-tertiary);
     white-space: nowrap
+}
+
+.assistant-attachment > svg:last-child {
+    color: var(--dsw-alias-label-tertiary)
 }
 
 .upload-warning-block {
@@ -6922,9 +6952,31 @@ body.dark {
 }
 
 .ds-markdown pre {
+    box-sizing: border-box;
+    display: inline-block;
+    width: fit-content;
+    max-width: 100%;
+    padding: 12px 14px;
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-alias-bg-module-platform);
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 8px;
     font-family: var(--ds-font-family-code);
     margin: 16px 0;
-    overflow: auto
+    overflow: auto;
+    white-space: pre;
+    overflow-wrap: normal;
+    line-height: 1.65
+}
+
+.ds-markdown pre > code {
+    display: block;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    font-size: 12px!important;
+    line-height: inherit;
+    white-space: inherit
 }
 
 .ds-markdown code {
