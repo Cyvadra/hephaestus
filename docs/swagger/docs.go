@@ -310,6 +310,183 @@ const docTemplate = `{
                 }
             }
         },
+        "/job-runs": {
+            "get": {
+                "description": "Lists job runs, newest first, with optional job-name filter and bounded pagination.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "List job runs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by job name",
+                        "name": "job",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Result offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.JobRun"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/job-runs/{id}": {
+            "get": {
+                "description": "Returns a job run with its attempted workflow runs.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "Get a job run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Job run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.jobRunDetail"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/job-runs/{id}/cancel": {
+            "post": {
+                "description": "Requests cancellation of an active job run.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "Cancel a job run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Job run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/projects/{name}": {
+            "delete": {
+                "description": "Deletes a non-default project only when it has no sessions. Its project directory is deleted only when requested.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "projects"
+                ],
+                "summary": "Delete an empty project",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Deletion options",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.deleteProjectRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sessions": {
             "get": {
                 "description": "Returns every session ordered by updated_at descending.",
@@ -800,9 +977,237 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/workflow-runs": {
+            "get": {
+                "description": "Lists workflow runs, newest first, with optional workflow-name filter and bounded pagination.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "List workflow runs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by workflow name",
+                        "name": "workflow",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Result offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRun"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/workflow-runs/{id}": {
+            "get": {
+                "description": "Returns a workflow run with its ordered steps and transcripts.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "Get a workflow run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Workflow run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.workflowRunDetail"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/workflow-runs/{id}/cancel": {
+            "post": {
+                "description": "Requests cancellation of an active workflow run.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "Cancel a workflow run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Workflow run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/workflow-runs/{id}/stream": {
+            "get": {
+                "description": "Streams a workflow run's live progress over SSE: run snapshots, step lifecycle, and agent deltas (text/reasoning/tool calls). Ends with a \"done\" event when the run reaches a terminal status.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "Stream a workflow run's live progress",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Workflow run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/workflows/{name}/runs": {
+            "post": {
+                "description": "Begins an asynchronous run of the named Workflow in a Project with the given input, returning the created run (202).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "runs"
+                ],
+                "summary": "Start a workflow run",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workflow name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Project and input",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.startWorkflowRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRun"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_registry_Job": {
+            "type": "object"
+        },
+        "datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_registry_Workflow": {
+            "type": "object"
+        },
         "datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_store_SessionSettings": {
             "type": "object"
         },
@@ -902,6 +1307,70 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_hephaestus_internal_store.JobRun": {
+            "type": "object",
+            "properties": {
+                "cancelled": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "job": {
+                    "description": "Job is the resolved Job definition at run creation.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_registry_Job"
+                        }
+                    ]
+                },
+                "jobName": {
+                    "type": "string"
+                },
+                "localDate": {
+                    "type": "string"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.JobRunStatus"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.JobRunStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "succeeded",
+                "completed_with_errors",
+                "failed",
+                "cancelled",
+                "interrupted"
+            ],
+            "x-enum-varnames": [
+                "JobRunPending",
+                "JobRunRunning",
+                "JobRunSucceeded",
+                "JobRunCompletedWithErrors",
+                "JobRunFailed",
+                "JobRunCancelled",
+                "JobRunInterrupted"
+            ]
+        },
         "github_com_Cyvadra_hephaestus_internal_store.Project": {
             "type": "object",
             "properties": {
@@ -984,9 +1453,172 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_hephaestus_internal_store.WorkflowRun": {
+            "type": "object",
+            "properties": {
+                "attempt": {
+                    "description": "Attempt is the 1-based retry attempt this run represents.",
+                    "type": "integer"
+                },
+                "bindingIndex": {
+                    "type": "integer"
+                },
+                "cancelled": {
+                    "description": "Cancelled records that cancellation was requested for this run.",
+                    "type": "boolean"
+                },
+                "concierge": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "input": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "jobName": {
+                    "type": "string"
+                },
+                "jobRunID": {
+                    "description": "JobRunID links a scheduler-triggered run; nil for manually started\nruns. JobName and BindingIndex identify the owning binding.",
+                    "type": "integer"
+                },
+                "output": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "projectName": {
+                    "type": "string"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRunStatus"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "workflow": {
+                    "description": "Workflow is the resolved Workflow definition at run creation.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_registry_Workflow"
+                        }
+                    ]
+                },
+                "workflowName": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.WorkflowRunStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "succeeded",
+                "failed",
+                "fatal",
+                "cancelled",
+                "interrupted"
+            ],
+            "x-enum-varnames": [
+                "WorkflowRunPending",
+                "WorkflowRunRunning",
+                "WorkflowRunSucceeded",
+                "WorkflowRunFailed",
+                "WorkflowRunFatal",
+                "WorkflowRunCancelled",
+                "WorkflowRunInterrupted"
+            ]
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.WorkflowStepRun": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowStepRunStatus"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "transcript": {
+                    "description": "Transcript is the step's agent-run messages as JSON.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "workflowRunID": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.WorkflowStepRunStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "succeeded",
+                "failed",
+                "fatal",
+                "cancelled",
+                "interrupted"
+            ],
+            "x-enum-varnames": [
+                "WorkflowStepPending",
+                "WorkflowStepRunning",
+                "WorkflowStepSucceeded",
+                "WorkflowStepFailed",
+                "WorkflowStepFatal",
+                "WorkflowStepCancelled",
+                "WorkflowStepInterrupted"
+            ]
+        },
         "internal_server.conciergeItem": {
             "type": "object",
             "properties": {
+                "description": {
+                    "type": "string"
+                },
                 "identity": {
                     "type": "string"
                 },
@@ -1033,6 +1665,14 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_server.deleteProjectRequest": {
+            "type": "object",
+            "properties": {
+                "delete_directory": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_server.editAssistantMessageRequest": {
             "type": "object",
             "required": [
@@ -1076,6 +1716,20 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_server.jobRunDetail": {
+            "type": "object",
+            "properties": {
+                "run": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.JobRun"
+                },
+                "workflow_runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRun"
+                    }
+                }
+            }
+        },
         "internal_server.sendMessageRequest": {
             "type": "object",
             "required": [
@@ -1103,6 +1757,10 @@ const docTemplate = `{
         "internal_server.sendMessageResponse": {
             "type": "object",
             "properties": {
+                "branch_not_activated": {
+                    "description": "BranchNotActivated is set when the turn's output was persisted as a\nreachable but inactive branch because the session's active leaf\nchanged mid-turn.",
+                    "type": "boolean"
+                },
                 "command_response": {
                     "description": "CommandResponse is set (and never persisted) when Text was a slash command.",
                     "type": "string"
@@ -1119,6 +1777,18 @@ const docTemplate = `{
                     "description": "Metadata carries any plugin-attached data for this turn (e.g.\nsuggested next-user-message alternatives).",
                     "type": "object",
                     "additionalProperties": {}
+                }
+            }
+        },
+        "internal_server.startWorkflowRunRequest": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "project": {
+                    "type": "string"
                 }
             }
         },
@@ -1139,6 +1809,20 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_server.workflowRunDetail": {
+            "type": "object",
+            "properties": {
+                "run": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRun"
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowStepRun"
+                    }
                 }
             }
         }

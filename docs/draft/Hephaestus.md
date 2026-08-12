@@ -140,16 +140,17 @@
 - Meaning: 定时或长程任务的调度逻辑；Workflow 的触发器
 - Format: yaml
 - Fields:
-  - 标题，概述，任务目标（可能是长文本）
-  - bound workflows
-    - Workflow 可能会需要多个输入参数，job 也可能执行多个 Workflow，这在 yaml 中应有体现；注意合理设计
-    - 每个 Workflow，需要包含失败重试的设定，固定延迟多久，重试几次
-    - Workflow 发生 fatal error，则不再重试
+  - name / title / description / goal（goal 可能是长文本）
+  - bound workflows（按顺序执行）
+    - 每个 binding：workflow（名称）、project（运行所在 Project）、input（传给 Workflow 的输入）、max_attempts（总尝试次数，含首次）、retry_delay_seconds（两次尝试之间的固定延迟）
+    - input 支持字面量；字符串叶子可包含 `${...}` 占位符，仅做字符串替换、绝不执行任意表达式。可用变量：`job.name`、`job.title`、`job.goal`、`run.local_date`、`run.started_at`、`trigger.last_succeeded_at`、`now`
+    - Workflow 发生 fatal error（配置缺失/输入不合 schema），则不再重试
   - trigger condition
-    - 需要实现： “日终/凌晨 且 5 小时无新消息”、“工作时间且闲置 2 小时以上”、“每天上午九点”等
-    - 使用 expr-lang/expr 进行实现
+    - 使用 expr-lang/expr 实现，编译期即要求结果为 boolean
     - 固定使用程序所在的主机的时区
-  - max execution times per current timezone day
+    - 调度为启动后立即检查一次，随后以 40~80 分钟随机间隔轮询；因此 trigger 应写成“宽泛的资格窗口 + 持久化状态去重”，例如 `Hour >= 9 && LastSucceededDate != Date`，而不要依赖精确到分钟的相等判断
+    - 求值环境（全部为主机本地时间）：`Now`、`Date`、`Hour`、`Minute`、`Weekday`、`HasMessages`、`LastMessageAt`、`IdleSeconds`、`ExecutionsToday`（跨日自动清零）、`HasLastStarted`、`LastStartedAt`、`HasLastSucceeded`、`LastSucceededAt`、`LastSucceededDate`（"2006-01-02"，从未成功时为空串）
+  - max_executions_per_day（按主机本地自然日计数）
 
 #### Workflow
 
@@ -162,13 +163,17 @@
     - 描述该工作流的用途；对 LLM 可见
   - Concierge
     - 使用平台的哪个 Concierge name
-  - Input Schema
-    - sample
-  - Output Schema
-    - sample
+  - Input Schema / Output Schema
+    - JSON Schema（JSON object）
+    - 为空表示无约束；非空时配置校验阶段即编译，运行期校验输入/最终输出
   - Steps
     - string list，代表具体的执行步骤
-    - 每一行都仅使用自然语言表述
+    - 每一行都仅使用自然语言表述，且不可为空
+- 执行语义：
+  - 每个 step 作为一次独立的 agent/tool 循环运行（复用 chat 的 agent loop），在选定 Project 的工作区内执行
+  - 每个 step 的 prompt 包含 workflow 描述、输入、此前各 step 的输出，以及当前 step 的指令；step 输出会持久化并传递给后续 step
+  - 有 Output Schema 时，最终 step 的回复必须是单个完整 JSON 值并通过校验；无 Output Schema 时，最终文本以 JSON string 持久化
+  - 每个 step 的 transcript 与输出按 step 落库；进程重启不会在原位恢复，未完成的 run 标记为 interrupted
 - Format: yaml
 
 #### Chat history
@@ -225,10 +230,11 @@
 
 #### Job
 
-- 程序启动/重启时检查第一轮 trigger condition，然后 ticker(randomly 40~80 minutes) 轮询检查
-- Job 的执行，需要保留运行记录和日志，在数据库中持久化
-- 一个 Workflow 的失败，不影响后续 Workflow 的执行
-- 任务目标可能会作为 Workflow 的输入；计划会在新建 Job 之前，做一些专用于定时/长程任务的 Workflow，使 Job 成为 Workflow 的触发器
+- 程序启动/重启时先检查第一轮 trigger condition，然后 ticker(randomly 40~80 minutes) 轮询检查；启动时还会将上次未完成的 pending/running 记录 reconcile 为 interrupted
+- Job 的执行，需要保留运行记录和日志，在数据库中持久化（`job_run`、`job_state`、`workflow_run`、`workflow_step_run`）
+- Job 的 claim（资格检查、每日上限、并发去重）在单个数据库事务内完成：同一 Job 永不并发执行
+- 一个 Workflow 的失败，不影响后续 Workflow 的执行；只有全部 binding 成功才算 Job 成功，否则为 completed_with_errors / failed
+- 任务目标（goal）可作为 Workflow 的输入（`${job.goal}`）；计划会在新建 Job 之前，做一些专用于定时/长程任务的 Workflow，使 Job 成为 Workflow 的触发器
 
 #### Chat history
 
@@ -378,10 +384,10 @@
 
 - 模型调用侧，仅使用通用的 chat-completions 接口，不使用 responses 等容易造成兼容性问题的方案
 - 个人项目，对各类配置文件（identity, concierge 等所有概念），仅使用 name 作为唯一标识
-- 对于后续会提到的一些概念(identity, impression, tool group, plugin, concierge, workflow)，均使用名称作为uniqueness，使用静态配置文件内容作为 single source of truth，程序启动时从文件加载，不入库，也不在程序内或数据库中附加任何额外的非运行时信息
+- 对于后续会提到的一些概念(identity, impression, tool group, plugin, concierge, workflow)，均使用名称作为uniqueness；静态配置文件提供启动基线，数据库中的同类配置作为覆盖层（overlay），可经由配置 API 增删改并即时发布生效
 - 所有 yaml / toml 等 source of truth 静态配置文件，存放在同一个目录中方便管理，不设子目录，使用 prefix 来判断类型，例如 `identity-default.toml` ；注意验证文件后缀名，以及文件名去除 prefix 和 extension 后，在 case insensitive 的情况下，应与其 name 相同
 - 业务数据/运行时的 data model (session, chat messages, compression)，主键采用自增整型 id，避免使用 uuid
-- 个人使用，设计为不支持热重载，静态配置文件更新后，用户需要重启才会载入新配置；不设版本号，每次breaking更新，用户也会更新全量配置文件
+- 静态配置文件不支持热重载，文件更新后需重启载入；数据库配置的修改通过配置 API 完成，写入即校验并热发布，不设版本号；进行中的 Workflow/Job run 使用创建时的定义快照，不受后续配置变更影响
 - 弱化所有“审计”相关的要求
 - 一切从简，尽可能轻量级，注重平台的灵活性和可拓展性
 - [identity|impression|toolgroup|plugin|concierge|job|workflow] 等结构体，尽可能都以 toml / yaml 的格式进行读写

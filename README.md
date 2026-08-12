@@ -144,8 +144,26 @@ web-fetch provider.
 | `HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS` | `4000` | Maximum size of an LLM-generated search-result digest. |
 | `HEPHAESTUS_BAIDU_OCR_API_KEY` | none | Baidu OCR API key; must be set with the OCR secret. |
 | `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` | none | Baidu OCR secret key; must be set with the OCR API key. |
+| `HEPHAESTUS_QQ_APP_ID` | none | QQ Bot AppID for optional proactive notifications; set all three QQ variables together. |
+| `HEPHAESTUS_QQ_APP_SECRET` | none | QQ Bot AppSecret used to obtain an access token. |
+| `HEPHAESTUS_QQ_USER_OPENID` | none | Bot-scoped QQ user OpenID that receives `send_notification` messages. |
 | `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | Comma-separated text extensions eligible for prompt inclusion. |
 | `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,bmp` | Comma-separated image extensions eligible for OCR. |
+
+### QQ Notifications
+
+Set `HEPHAESTUS_QQ_APP_ID`, `HEPHAESTUS_QQ_APP_SECRET`, and
+`HEPHAESTUS_QQ_USER_OPENID` together to initialize QQ notifications. With all
+three unset, the application starts normally and omits the unavailable tool.
+After configuration, explicitly activate the `qq` tool group before using
+`send_notification`; the group is not enabled by the default concierge.
+
+The tool accepts only `channel="qq"` and `markdown_content`. It obtains an
+access token from `https://api.bot.qq.com/app/getAppAccessToken`, caches it
+until shortly before expiry, and sends custom Markdown with the official
+`Authorization: QQBot <access_token>` scheme. The recipient must have a valid
+Bot-scoped user OpenID and an eligible relationship with the bot. Delivery is
+also subject to the user's proactive-message setting and QQ platform limits.
 
 ### SSH Shell Execution
 

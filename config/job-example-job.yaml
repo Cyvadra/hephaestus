@@ -1,12 +1,24 @@
 # Complete Job example. The trigger is an expr-lang/expr expression evaluated
 # in the host's local timezone. This false trigger keeps the example inert.
+# NOTE: the scheduler polls on a randomized 40-80 minute interval, so a trigger
+# is only evaluated at each poll. Express broad eligibility conditions (e.g.
+# idle time, time-of-day windows, daily caps) instead of exact-minute times,
+# which the polling granularity can skip entirely.
+# Each binding runs its Workflow inside a Project and passes a fixed input;
+# string values may reference ${...} placeholders resolved by string
+# substitution (job.name, job.title, job.goal, run.local_date, run.started_at,
+# trigger.last_succeeded_at, now). max_attempts is the total number of
+# attempts including the first.
 name: example-job
 title: Example scheduled job
-description: Demonstrates every Job field and a Workflow retry policy.
+description: Demonstrates every Job field, a Workflow binding, and its retry policy.
 goal: Run the example workflow when the configured trigger becomes true.
 workflows:
   - workflow: example-workflow
+    project: default-workspace
+    input:
+      topic: "Hephaestus"
+    max_attempts: 3
     retry_delay_seconds: 60
-    retry_count: 2
 trigger: "false"
 max_executions_per_day: 1
