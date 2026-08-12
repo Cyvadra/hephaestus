@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Eye, PenLine, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { listProjects } from '../../api/client'
 import type {
@@ -10,6 +10,7 @@ import type {
   JobWorkflowBinding,
 } from '../../api/types'
 import { JOB_INPUT_PLACEHOLDERS, JOB_TRIGGER_ENV } from '../../api/types'
+import Markdown from '../Markdown'
 import MarkdownEditor from './MarkdownEditor'
 import { Field, NumberInput, Section, StringListEditor, SuggestionInput, TagsInput, TextArea, TextInput, Toggle } from './fields'
 
@@ -95,7 +96,72 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
 }
 
 function MessageEditor({ values, onChange }: { values: ConfigurationMessage[]; onChange: (values: ConfigurationMessage[]) => void }) {
-  return <div className="configuration-repeat-list configuration-messages">{values.map((message, index) => <article className="configuration-message-row" key={index}><header><span>Message {index + 1}</span><select aria-label={`消息 ${index + 1} 角色`} value={message.role} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item))}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option><option value="tool">tool</option></select><button type="button" aria-label={`删除消息 ${index + 1}`} title="删除消息" onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button></header><textarea aria-label={`消息 ${index + 1} 内容`} rows={message.content.length > 240 ? 12 : 6} value={message.content} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item))} /></article>)}<button className="configuration-add-row" type="button" onClick={() => onChange([...values, { role: 'user', content: '' }])}><Plus size={15} />添加消息</button></div>
+  const blocks = messageBlocks(values)
+  const update = (index: number, patch: Partial<ConfigurationMessage>) => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
+  const remove = (index: number, count = 1) => onChange(values.filter((_, itemIndex) => itemIndex < index || itemIndex >= index + count))
+  const move = (from: number, to: number) => {
+    if (from === to) return
+    const next = [...blocks]
+    const [block] = next.splice(from, 1)
+    next.splice(to, 0, block)
+    onChange(next.flatMap(item => item.messages))
+  }
+
+  return <div className="configuration-repeat-list configuration-messages">
+    {blocks.map((block, blockIndex) => {
+      const [message, answer] = block.messages
+      const order = <MessageOrderControls index={blockIndex} total={blocks.length} onMove={move} />
+
+      if (answer) return <QuestionAnswerEditor key={block.start} question={message} answer={answer} number={blockIndex + 1} order={order} onQuestionChange={content => update(block.start, { content })} onAnswerChange={content => update(block.start + 1, { content })} onRemove={() => remove(block.start, 2)} />
+
+      return <article className="configuration-instruction-row" key={block.start}>
+        <header><span>{message.role === 'system' ? '指令' : `Message ${block.start + 1}`}</span><select aria-label={`消息 ${block.start + 1} 角色`} value={message.role} onChange={event => update(block.start, { role: event.target.value })}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option><option value="tool">tool</option></select>{order}<button type="button" aria-label={`删除消息 ${block.start + 1}`} title="删除消息" onClick={() => remove(block.start)}><Trash2 size={15} /></button></header>
+        <AutoResizeTextArea aria-label={`消息 ${block.start + 1} 内容`} value={message.content} onChange={content => update(block.start, { content })} placeholder="输入系统指令或上下文内容" />
+      </article>
+    })}
+    <div className="configuration-message-actions"><button className="configuration-add-row" type="button" onClick={() => onChange([...values, { role: 'system', content: '' }])}><Plus size={15} />添加指令</button><button className="configuration-add-row" type="button" onClick={() => onChange([...values, { role: 'user', content: '' }, { role: 'assistant', content: '' }])}><Plus size={15} />添加对话</button></div>
+  </div>
+}
+
+function messageBlocks(values: ConfigurationMessage[]) {
+  const blocks: { start: number; messages: ConfigurationMessage[] }[] = []
+  for (let index = 0; index < values.length; index += 1) {
+    const message = values[index]
+    const answer = message.role === 'user' && values[index + 1]?.role === 'assistant' ? values[index + 1] : undefined
+    blocks.push({ start: index, messages: answer ? [message, answer] : [message] })
+    if (answer) index += 1
+  }
+  return blocks
+}
+
+function MessageOrderControls({ index, total, onMove }: { index: number; total: number; onMove: (from: number, to: number) => void }) {
+  return <div className="configuration-message-order" role="group" aria-label="调整消息顺序">
+    <button type="button" aria-label="移至顶部" title="移至顶部" disabled={index === 0} onClick={() => onMove(index, 0)}><ChevronsUp size={15} /></button>
+    <button type="button" aria-label="上移" title="上移" disabled={index === 0} onClick={() => onMove(index, index - 1)}><ChevronUp size={15} /></button>
+    <button type="button" aria-label="下移" title="下移" disabled={index === total - 1} onClick={() => onMove(index, index + 1)}><ChevronDown size={15} /></button>
+    <button type="button" aria-label="移至底部" title="移至底部" disabled={index === total - 1} onClick={() => onMove(index, total - 1)}><ChevronsDown size={15} /></button>
+  </div>
+}
+
+function QuestionAnswerEditor({ question, answer, number, order, onQuestionChange, onAnswerChange, onRemove }: { question: ConfigurationMessage; answer: ConfigurationMessage; number: number; order: React.ReactNode; onQuestionChange: (content: string) => void; onAnswerChange: (content: string) => void; onRemove: () => void }) {
+  const [preview, setPreview] = useState(true)
+  return <article className="configuration-qa-row">
+    <header><span>对话 {number}</span>{order}<button type="button" aria-label={`删除对话 ${number}`} title="删除对话" onClick={onRemove}><Trash2 size={15} /></button></header>
+    <label className="configuration-qa-question"><span>User</span><AutoResizeTextArea aria-label={`对话 ${number} 用户问题`} value={question.content} onChange={onQuestionChange} placeholder="输入用户问题" /></label>
+    <div className="configuration-qa-answer"><div className="configuration-qa-answer-header"><span>Assistant</span><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? '编辑回答' : '预览 Markdown'} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? '编辑' : '预览'}</button></div>{preview ? <div className="configuration-qa-preview">{answer.content ? <Markdown>{answer.content}</Markdown> : <span>Markdown 预览将显示在这里</span>}</div> : <AutoResizeTextArea aria-label={`对话 ${number} 助理回答`} value={answer.content} onChange={onAnswerChange} placeholder="输入助理回答，支持 Markdown" />}</div>
+  </article>
+}
+
+function AutoResizeTextArea({ value, onChange, ...props }: Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange'> & { value: string; onChange: (value: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const resize = () => {
+    const element = ref.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${element.scrollHeight}px`
+  }
+  useEffect(resize, [value])
+  return <textarea {...props} ref={ref} className="configuration-auto-textarea" rows={1} value={value} onChange={event => { onChange(event.target.value); resize() }} />
 }
 
 function JsonEditor({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {

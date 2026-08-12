@@ -7823,9 +7823,9 @@ body[data-ds-dark-theme] {
 .sidebar.configuration-mode { padding-bottom: 10px }
 .sidebar.configuration-mode .sidebar-brand { margin-bottom: 7px }
 .configuration-sidebar-header { display: flex; align-items: center; gap: 8px; padding: 5px 3px 11px }
-.configuration-sidebar-header > button,.configuration-group-heading button,.configuration-repeat-row button,.configuration-message-row button,.configuration-binding-row button { display: grid; place-items: center; flex: none; padding: 0; color: var(--dsw-alias-label-secondary); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
+.configuration-sidebar-header > button,.configuration-group-heading button,.configuration-repeat-row button,.configuration-instruction-row button,.configuration-qa-row button,.configuration-binding-row button { display: grid; place-items: center; flex: none; padding: 0; color: var(--dsw-alias-label-secondary); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
 .configuration-sidebar-header > button { width: 28px; height: 28px }
-.configuration-sidebar-header > button:hover,.configuration-group-heading button:hover,.configuration-repeat-row button:hover,.configuration-message-row button:hover,.configuration-binding-row button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover) }
+.configuration-sidebar-header > button:hover,.configuration-group-heading button:hover,.configuration-repeat-row button:hover,.configuration-instruction-row button:hover,.configuration-qa-row button:hover,.configuration-binding-row button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover) }
 .configuration-sidebar-header > div { display: grid; min-width: 0 }
 .configuration-sidebar-header strong { font-size: 13px; line-height: 18px; font-weight: 600 }
 .configuration-sidebar-header span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px; text-transform: uppercase }
@@ -7909,14 +7909,30 @@ body[data-ds-dark-theme] {
 .configuration-repeat-row input,.configuration-repeat-row textarea { flex: 1 }
 .configuration-repeat-row button,.configuration-binding-row button { width: 32px; height: 32px; margin-top: 2px }
 .configuration-messages { gap: 12px }
-.configuration-message-row { overflow: hidden; background: color-mix(in srgb,var(--dsw-alias-interactive-bg-hover) 45%,var(--dsw-alias-bg-base)); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px }
-.configuration-message-row > header { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l1) }
-.configuration-message-row > header > span { flex: 1; color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; text-transform: uppercase }
-.configuration-message-row > header select { width: 118px; height: 30px; padding: 3px 8px; background: var(--dsw-alias-bg-base); font-size: 11px }
-.configuration-message-row > header button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--dsw-alias-label-tertiary); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
-.configuration-message-row > header button:hover { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb,var(--dsw-alias-state-error-primary) 7%,transparent) }
-.configuration-message-row > textarea { display: block; width: 100%; min-height: 132px; max-height: 440px; padding: 12px 14px; background: var(--dsw-alias-bg-base); border: 0; border-radius: 0; resize: vertical; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 12px; line-height: 19px }
-.configuration-message-row > textarea:focus { box-shadow: inset 0 0 0 1px var(--dsw-alias-button-primary-fill) }
+.configuration-instruction-row,.configuration-qa-row { overflow: hidden; background: color-mix(in srgb,var(--dsw-alias-interactive-bg-hover) 45%,var(--dsw-alias-bg-base)); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px }
+.configuration-instruction-row > header,.configuration-qa-row > header { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l1) }
+.configuration-instruction-row > header > span,.configuration-qa-row > header > span { flex: 1; color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; text-transform: uppercase }
+.configuration-instruction-row > header select { width: 108px; height: 28px; padding: 3px 8px; background: var(--dsw-alias-bg-base); font-size: 11px }
+.configuration-instruction-row > header button,.configuration-qa-row > header button { width: 30px; height: 30px }
+.configuration-instruction-row > header button:hover,.configuration-qa-row > header button:hover { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb,var(--dsw-alias-state-error-primary) 7%,transparent) }
+.configuration-instruction-row > header button:disabled,.configuration-qa-row > header button:disabled { opacity: .35; cursor: not-allowed }
+.configuration-instruction-row > header button:disabled:hover,.configuration-qa-row > header button:disabled:hover { color: var(--dsw-alias-label-secondary); background: transparent }
+.configuration-message-order { display: flex; align-items: center; gap: 1px; margin-left: auto; padding: 2px; background: color-mix(in srgb,var(--dsw-alias-border-l1) 70%,transparent); border-radius: 6px }
+.configuration-message-order button { width: 24px!important; height: 24px!important }
+.configuration-auto-textarea { display: block; box-sizing: border-box; width: 100%; min-height: 43px; padding: 11px 13px; overflow: hidden; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 0; border-radius: 0; outline: 0; resize: none; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 12px; line-height: 19px }
+.configuration-auto-textarea:focus { box-shadow: inset 0 0 0 1px var(--dsw-alias-button-primary-fill) }
+.configuration-message-actions { display: flex; flex-wrap: wrap; gap: 8px }
+.configuration-qa-question { display: grid; gap: 6px; padding: 12px 13px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb,var(--dsw-alias-bg-base) 58%,transparent) }
+.configuration-qa-question > span,.configuration-qa-answer-header > span { color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; text-transform: uppercase }
+.configuration-qa-question .configuration-auto-textarea { min-height: 42px; padding: 10px 11px; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font-family: inherit; font-size: 13px; line-height: 20px }
+.configuration-qa-question .configuration-auto-textarea:focus { border-color: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 11%,transparent) }
+.configuration-qa-answer-header { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 0 9px 0 13px; background: color-mix(in srgb,var(--dsw-alias-bg-base) 70%,transparent) }
+.configuration-qa-answer-header button { display: inline-flex; align-items: center; gap: 4px; min-width: 54px; height: 26px; padding: 0 7px; font: inherit; font-size: 10px }
+.configuration-qa-answer-header button.active { color: var(--dsw-alias-button-primary-fill); background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 8%,transparent) }
+.configuration-qa-preview { min-height: 43px; padding: 11px 13px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: 12px; line-height: 19px }
+.configuration-qa-preview > span { color: var(--dsw-alias-label-tertiary) }
+.configuration-qa-preview .ds-markdown > :first-child { margin-top: 0 }
+.configuration-qa-preview .ds-markdown > :last-child { margin-bottom: 0 }
 .configuration-binding-row input:first-of-type { flex: 1 }
 .configuration-binding-row input:not(:first-of-type) { flex: 0 0 150px }
 .configuration-add-row { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: max-content; height: 32px; padding: 0 10px; color: var(--dsw-alias-label-secondary); background: transparent; border: 1px dashed var(--dsw-alias-border-l2); border-radius: 7px; font: inherit; font-size: 11px; cursor: pointer }
@@ -8064,7 +8080,7 @@ body[data-ds-dark-theme] {
     .configuration-editor-body.mode-split { grid-template-columns: 1fr }
     .configuration-editor-body.mode-split > .configuration-markdown-preview { display: none }
     .configuration-editor-modes button:nth-child(2) { display: none }
-    .configuration-message-row > header select { width: 104px }
+    .configuration-instruction-row > header select { width: 104px }
 }
 @media not all and (min-width: 560px) {
     .sidebar.configuration-mode { display: none; position: fixed; z-index: 40; inset: 0 auto 0 0; width: min(86vw,300px); box-shadow: 18px 0 40px rgba(0,0,0,.18) }
