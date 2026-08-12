@@ -187,6 +187,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   {!reasoningPinned && reasoningHovered && (
                     <ReasoningPreview
                       messages={thinkingMessages}
+                      onClick={() => setReasoningPinned(true)}
                       onMouseEnter={() => setReasoningHovered(true)}
                       onMouseLeave={() => setReasoningHovered(false)}
                     />
@@ -278,8 +279,9 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   )
 }
 
-function ReasoningPreview({ messages, onMouseEnter, onMouseLeave }: {
+function ReasoningPreview({ messages, onClick, onMouseEnter, onMouseLeave }: {
   messages: ChatMessage[]
+  onClick: () => void
   onMouseEnter: () => void
   onMouseLeave: () => void
 }) {
@@ -301,6 +303,7 @@ function ReasoningPreview({ messages, onMouseEnter, onMouseLeave }: {
     <div
       ref={previewRef}
       className={`reasoning-preview${isOverflowing ? ' is-overflowing' : ''}`}
+      onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
