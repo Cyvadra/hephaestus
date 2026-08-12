@@ -23,7 +23,7 @@ require (
 	gorm.io/gorm v1.31.2
 )
 
-replace github.com/ProgramCX/GoQQBot => github.com/Cyvadra/GoQQBot v0.0.0-20260812085950-2a911c5b1be3
+replace github.com/ProgramCX/GoQQBot => github.com/Cyvadra/GoQQBot v0.0.0-20260812211948-aba3cf4b2a34
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect

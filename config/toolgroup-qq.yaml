@@ -1,3 +1,2 @@
 name: qq
-tools:
-  - send_notification
+tools: []
