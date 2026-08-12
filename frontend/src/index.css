@@ -7923,6 +7923,81 @@ body[data-ds-dark-theme] {
 .configuration-add-row:hover { color: var(--dsw-alias-button-primary-fill); border-color: var(--dsw-alias-button-primary-fill) }
 .configuration-json-editor { font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace!important; font-size: 12px!important; line-height: 18px!important; tab-size: 2 }
 
+/* Job 绑定卡片 */
+.configuration-binding-card { padding: 12px 14px; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px }
+.configuration-binding-fields { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr) minmax(0,110px) minmax(0,120px) 32px; align-items: end; gap: 8px }
+.configuration-binding-fields label { display: grid; gap: 4px; min-width: 0 }
+.configuration-binding-fields label > span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px }
+.configuration-binding-fields button { display: grid; place-items: center; width: 32px; height: 36px; padding: 0; color: var(--dsw-alias-label-tertiary); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
+.configuration-binding-fields button:hover { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb,var(--dsw-alias-state-error-primary) 7%,transparent) }
+.configuration-binding-input { display: grid; gap: 5px; margin-top: 10px }
+.configuration-binding-input > span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px }
+.configuration-binding-input > span small { opacity: .85 }
+.configuration-placeholder-editor { display: grid; gap: 6px; min-width: 0 }
+.configuration-placeholder-chips { display: flex; flex-wrap: wrap; gap: 5px }
+.configuration-placeholder-chips button { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; color: var(--dsw-alias-button-primary-fill); background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 7%,transparent); border: 1px solid color-mix(in srgb,var(--dsw-alias-button-primary-fill) 18%,transparent); border-radius: 11px; font: inherit; font-size: 10px; cursor: pointer }
+.configuration-placeholder-chips button:hover { background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 14%,transparent) }
+.configuration-placeholder-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; outline: 0; resize: vertical; font: inherit }
+.configuration-placeholder-editor textarea:focus { border-color: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 13%,transparent) }
+
+/* 在线测试与运行记录 */
+.run-tester { box-sizing: border-box; margin: 22px 40px 96px; padding: 20px 22px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px }
+.run-tester > header h2 { margin: 0 0 4px; font-size: 15px; line-height: 22px }
+.run-tester > header p { margin: 0 0 16px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px }
+.run-tester-form { display: grid; gap: 10px; margin-bottom: 18px }
+.run-tester-form label { display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; font-weight: 500 }
+.run-tester-form label small { color: var(--dsw-alias-label-tertiary); font-weight: 400 }
+.run-tester-form input,.run-tester-form textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; outline: 0; font: inherit; font-size: 13px; line-height: 19px }
+.run-tester-form input { height: 36px }
+.run-tester-form textarea { resize: vertical }
+.run-tester-actions { display: flex; gap: 8px }
+.run-tester-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 13px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; font: inherit; font-size: 12px; cursor: pointer }
+.run-tester-actions button.primary { color: var(--dsw-alias-label-primary-foreground); background: var(--dsw-alias-button-primary-fill); border-color: var(--dsw-alias-button-primary-fill) }
+.run-tester-actions button:disabled { opacity: .45; cursor: not-allowed }
+.run-list-empty { padding: 26px; color: var(--dsw-alias-label-tertiary); font-size: 12px; text-align: center; border: 1px dashed var(--dsw-alias-border-l2); border-radius: 8px }
+.run-list { display: grid; gap: 8px }
+.run-row { border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-base) }
+.run-row.expanded { border-color: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 30%,transparent) }
+.run-row-head { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 7px 10px }
+.run-row-toggle { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; color: var(--dsw-alias-label-tertiary); background: transparent; border: 0; border-radius: 6px; cursor: pointer; transition: transform .15s ease }
+.run-row.expanded .run-row-toggle { transform: rotate(90deg) }
+.run-row-toggle:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover) }
+.run-row-title { display: grid; gap: 1px; min-width: 0; flex: 1 }
+.run-row-title strong { overflow: hidden; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 17px; text-overflow: ellipsis; white-space: nowrap }
+.run-row-title span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px }
+.run-row-time { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px; white-space: nowrap }
+.run-status { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 10px; line-height: 20px; white-space: nowrap }
+.run-status-pending { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover) }
+.run-status-running { color: #2f6fdd; background: color-mix(in srgb,#2f6fdd 10%,transparent) }
+.run-status-succeeded { color: #237a4b; background: color-mix(in srgb,#2e9d64 10%,transparent) }
+.run-status-failed,.run-status-fatal { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb,var(--dsw-alias-state-error-primary) 9%,transparent) }
+.run-status-cancelled,.run-status-interrupted { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover) }
+.run-status-completed_with_errors { color: #b07a00; background: color-mix(in srgb,#c98a13 12%,transparent) }
+.run-cancel { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px; color: var(--dsw-alias-label-secondary); background: transparent; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font: inherit; font-size: 10px; cursor: pointer }
+.run-cancel:hover { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary) }
+.run-error { display: flex; align-items: flex-start; gap: 6px; margin: 0 10px 8px; padding: 7px 9px; color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb,var(--dsw-alias-state-error-primary) 6%,transparent); border-radius: 6px; font-size: 11px; line-height: 16px; white-space: pre-wrap; overflow-wrap: anywhere }
+.run-error svg { flex: none; margin-top: 1px }
+.run-detail { padding: 0 10px 10px }
+.run-data { display: grid; gap: 8px; margin-bottom: 10px }
+.run-data > div { min-width: 0 }
+.run-data h4 { margin: 0 0 4px; color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px; font-weight: 600 }
+.run-data pre,.run-step-body pre { max-height: 240px; margin: 0; padding: 8px 10px; overflow: auto; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 11px; line-height: 17px; white-space: pre-wrap; overflow-wrap: anywhere }
+.run-steps { display: grid; gap: 7px }
+.run-detail-muted { color: var(--dsw-alias-label-tertiary); font-size: 11px }
+.run-step-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px }
+.run-step-row > .run-status { margin-top: 1px }
+.run-step-body { min-width: 0; flex: 1 }
+.run-step-body strong { display: block; color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 16px }
+.run-step-body p { margin: 3px 0 5px; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 17px }
+.run-step-body pre { margin-top: 5px }
+.run-live { margin-bottom: 16px; padding: 12px 14px; border: 1px solid color-mix(in srgb,var(--dsw-alias-button-primary-fill) 28%,transparent); border-radius: 9px; background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 4%,transparent) }
+.run-live > header { display: flex; align-items: center; gap: 10px; min-width: 0 }
+.run-live-badge { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 24px; padding: 0 9px; color: #fff; background: var(--dsw-alias-button-primary-fill); border-radius: 12px; font-size: 10px; line-height: 24px }
+.run-live-step { overflow: hidden; min-width: 0; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap }
+.run-live-tools { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px }
+.run-live-tool { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; color: #2f6fdd; background: color-mix(in srgb,#2f6fdd 10%,transparent); border-radius: 10px; font-size: 10px; line-height: 20px }
+.run-live-text { max-height: 220px; margin: 9px 0 0; padding: 9px 11px; overflow: auto; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 11px; line-height: 17px; white-space: pre-wrap; overflow-wrap: anywhere }
+
 .configuration-markdown-editor { overflow: hidden; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base) }
 .configuration-markdown-editor.fullscreen { z-index: 60; position: fixed; inset: 18px; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.25) }
 .configuration-editor-toolbar { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 6px; border-bottom: 1px solid var(--dsw-alias-border-l1) }

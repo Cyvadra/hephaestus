@@ -181,8 +181,10 @@ export interface WorkflowConfiguration {
 
 export interface JobWorkflowBinding {
   workflow: string
+  project: string
+  input: Record<string, unknown>
+  max_attempts: number
   retry_delay_seconds: number
-  retry_count: number
 }
 
 export interface JobConfiguration {
@@ -194,6 +196,138 @@ export interface JobConfiguration {
   trigger: string
   max_executions_per_day: number
 }
+
+// 在线测试与运行记录
+export type WorkflowRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'fatal' | 'cancelled' | 'interrupted'
+export type WorkflowStepRunStatus = WorkflowRunStatus
+export type JobRunStatus = 'pending' | 'running' | 'succeeded' | 'completed_with_errors' | 'failed' | 'cancelled' | 'interrupted'
+
+// Go store.WorkflowRun / store.JobRun have no json tags → exported field names.
+export interface WorkflowDefinition {
+  name: string
+  description: string
+  concierge: string
+  input_schema: unknown
+  output_schema: unknown
+  steps: string[]
+}
+
+export interface WorkflowRun {
+  ID: number
+  JobRunID: number | null
+  JobName: string
+  BindingIndex: number
+  WorkflowName: string
+  Concierge: string
+  ProjectName: string
+  Workflow: WorkflowDefinition
+  Input: unknown
+  Output: unknown
+  Attempt: number
+  Status: WorkflowRunStatus
+  Error: string
+  Cancelled: boolean
+  StartedAt: string | null
+  FinishedAt: string | null
+  CreatedAt: string
+  UpdatedAt: string
+}
+
+export interface WorkflowStepRun {
+  ID: number
+  WorkflowRunID: number
+  Index: number
+  Text: string
+  Transcript: unknown
+  Output: string
+  Status: WorkflowStepRunStatus
+  Error: string
+  StartedAt: string | null
+  FinishedAt: string | null
+  CreatedAt: string
+  UpdatedAt: string
+}
+
+export interface JobDefinition {
+  name: string
+  title: string
+  description: string
+  goal: string
+  workflows: JobWorkflowBinding[]
+  trigger: string
+  max_executions_per_day: number
+}
+
+export interface JobRun {
+  ID: number
+  JobName: string
+  LocalDate: string
+  Job: JobDefinition
+  Status: JobRunStatus
+  Error: string
+  Cancelled: boolean
+  StartedAt: string | null
+  FinishedAt: string | null
+  CreatedAt: string
+  UpdatedAt: string
+}
+
+export interface WorkflowRunDetail {
+  run: WorkflowRun
+  steps: WorkflowStepRun[]
+}
+
+export interface JobRunDetail {
+  run: JobRun
+  workflow_runs: WorkflowRun[]
+}
+
+// 工作流运行实时进度（SSE）。后端把 agent.StreamEvent 序列化为
+// { type, text?, tool_call? }，run/step 事件携带完整快照。
+export interface WorkflowStreamToolCall {
+  call_index: number
+  index: number
+  id?: string
+  name?: string
+  arguments?: string
+  result?: string
+  status: string
+}
+
+export interface WorkflowDelta {
+  type: 'delta' | 'reasoning' | 'tool_call' | 'tool_output' | 'tool_result'
+  text?: string
+  tool_call?: WorkflowStreamToolCall
+}
+
+export interface WorkflowProgressEvent {
+  type: 'run' | 'step' | 'delta' | 'done'
+  run?: WorkflowRun
+  step?: WorkflowStepRun
+  delta?: WorkflowDelta
+}
+
+export interface WorkflowProgressEnvelope {
+  sequence: number
+  data: WorkflowProgressEvent | WorkflowRun
+}
+
+// Job 输入占位符与触发器求值环境，用于表单自动补全。
+export const JOB_INPUT_PLACEHOLDERS = [
+  'job.name',
+  'job.title',
+  'job.goal',
+  'run.local_date',
+  'run.started_at',
+  'trigger.last_succeeded_at',
+  'now',
+] as const
+
+export const JOB_TRIGGER_ENV = [
+  'Now', 'Date', 'Hour', 'Minute', 'Weekday',
+  'HasMessages', 'LastMessageAt', 'IdleSeconds',
+  'ExecutionsToday', 'HasLastStarted', 'LastStartedAt', 'HasLastSucceeded', 'LastSucceededAt',
+] as const
 
 export interface ConfigurationByKind {
   identities: IdentityConfiguration

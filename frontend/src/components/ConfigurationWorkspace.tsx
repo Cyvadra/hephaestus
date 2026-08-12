@@ -1,9 +1,10 @@
 import { AlertCircle, Check, Database, ListTree, LoaderCircle, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, replaceConfiguration } from '../api/client'
-import type { Configuration, ConfigurationCatalog, ConfigurationKind } from '../api/types'
+import type { Configuration, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind } from '../api/types'
 import ConfigurationForm from './configuration/ConfigurationForm'
 import { CONFIGURATION_META, createEmptyConfiguration, getConfigurationMeta, validateConfiguration } from './configuration/model'
+import { JobRunsPanel, WorkflowRunTester } from './configuration/RunTester'
 import type { ConfigurationLists } from './ConfigurationSidebar'
 
 interface Props {
@@ -110,7 +111,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       <div className="configuration-workspace-scroll">
         {error && <div className="configuration-alert error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
         {notice && <div className="configuration-alert success" role="status"><Check size={16} /><span>{notice}</span></div>}
-        {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />读取配置...</div> : <form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} /></form>}
+        {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />读取配置...</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
       </div>
       {currentValue && !loading && <footer className="configuration-action-bar">
         <div>{!isNew && <button className="danger-quiet" type="button" onClick={() => { setDeleteName(''); setDeleteOpen(true) }}><Trash2 size={15} />删除</button>}</div>

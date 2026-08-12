@@ -1,4 +1,4 @@
-import type { ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, HistoryResponse, Project, SendMessageResponse, Session } from './types'
+import type { ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, WorkflowRun, WorkflowRunDetail } from './types'
 
 const BASE = '/api/v1'
 
@@ -136,3 +136,42 @@ export const deleteConfiguration = async (kind: ConfigurationKind, name: string)
     throw new Error(body.error ?? res.statusText)
   }
 }
+
+// --- 工作流 / 任务 运行（在线测试与运行记录） ---
+
+export const startWorkflowRun = (workflowName: string, project: string, input: Record<string, unknown>) =>
+  fetchJSON<WorkflowRun>(`${BASE}/workflows/${encodeURIComponent(workflowName)}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project, input }),
+  })
+
+export const listWorkflowRuns = (workflow?: string, limit = 50, offset = 0) => {
+  const params = new URLSearchParams()
+  if (workflow) params.set('workflow', workflow)
+  if (limit !== 50) params.set('limit', String(limit))
+  if (offset > 0) params.set('offset', String(offset))
+  const query = params.size > 0 ? `?${params.toString()}` : ''
+  return fetchJSON<WorkflowRun[]>(`${BASE}/workflow-runs${query}`)
+}
+
+export const getWorkflowRun = (runID: number) =>
+  fetchJSON<WorkflowRunDetail>(`${BASE}/workflow-runs/${runID}`)
+
+export const cancelWorkflowRun = (runID: number) =>
+  fetchJSON<{ status: string }>(`${BASE}/workflow-runs/${runID}/cancel`, { method: 'POST' })
+
+export const listJobRuns = (job?: string, limit = 50, offset = 0) => {
+  const params = new URLSearchParams()
+  if (job) params.set('job', job)
+  if (limit !== 50) params.set('limit', String(limit))
+  if (offset > 0) params.set('offset', String(offset))
+  const query = params.size > 0 ? `?${params.toString()}` : ''
+  return fetchJSON<JobRun[]>(`${BASE}/job-runs${query}`)
+}
+
+export const getJobRun = (runID: number) =>
+  fetchJSON<JobRunDetail>(`${BASE}/job-runs/${runID}`)
+
+export const cancelJobRun = (runID: number) =>
+  fetchJSON<{ status: string }>(`${BASE}/job-runs/${runID}/cancel`, { method: 'POST' })

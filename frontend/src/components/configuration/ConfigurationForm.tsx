@@ -1,5 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { listProjects } from '../../api/client'
 import type {
   Configuration,
   ConfigurationByKind,
@@ -8,6 +9,7 @@ import type {
   ConfigurationMessage,
   JobWorkflowBinding,
 } from '../../api/types'
+import { JOB_INPUT_PLACEHOLDERS, JOB_TRIGGER_ENV } from '../../api/types'
 import MarkdownEditor from './MarkdownEditor'
 import { Field, NumberInput, Section, StringListEditor, SuggestionInput, TagsInput, TextArea, TextInput, Toggle } from './fields'
 
@@ -24,6 +26,10 @@ const EMPTY_CATALOG: ConfigurationCatalog = { identities: [], impressions: [], t
 
 export default function ConfigurationForm({ kind, value, errors, isNew, catalog = EMPTY_CATALOG, onChange }: Props) {
   const set = <T extends Configuration>(next: T) => onChange(next)
+  const [projects, setProjects] = useState<string[]>([])
+  useEffect(() => {
+    void listProjects().then(list => setProjects(list.map(item => item.Name))).catch(() => undefined)
+  }, [])
   const name = (
     <Field label="名称" htmlFor="configuration-name" error={errors.name} hint={isNew ? '保存后名称不可修改' : '名称用于稳定引用，编辑时不可修改'}>
       <TextInput id="configuration-name" value={value.name} disabled={!isNew} onChange={nameValue => set({ ...value, name: nameValue })} placeholder="lowercase-name" />
@@ -81,8 +87,8 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
       const job = value as ConfigurationByKind['jobs']
       return <>
         <Section title="基础信息">{name}<Field label="标题" htmlFor="job-title"><TextInput id="job-title" value={job.title} onChange={title => set({ ...job, title })} /></Field><Field label="描述" wide><TextArea id="job-description" value={job.description} onChange={description => set({ ...job, description })} /></Field><Field label="目标" wide><TextArea id="job-goal" value={job.goal} onChange={goal => set({ ...job, goal })} /></Field></Section>
-        <Section title="调度"><Field label="触发表达式" htmlFor="job-trigger" wide hint="expr-lang/expr 表达式，使用服务所在时区"><TextArea id="job-trigger" rows={3} value={job.trigger} onChange={trigger => set({ ...job, trigger })} /></Field><Field label="每日最大执行次数" htmlFor="job-max"><NumberInput id="job-max" min={0} value={job.max_executions_per_day} onChange={max_executions_per_day => set({ ...job, max_executions_per_day: max_executions_per_day ?? 0 })} /></Field></Section>
-        <Section title="工作流"><Field label="Workflow Bindings" wide><WorkflowBindings values={job.workflows} suggestions={catalog.workflows} onChange={workflows => set({ ...job, workflows })} /></Field></Section>
+        <Section title="调度"><Field label="触发表达式" htmlFor="job-trigger" wide hint="expr-lang/expr 表达式，使用服务所在时区；点击下方变量插入"><TriggerEditor id="job-trigger" rows={3} value={job.trigger} onChange={trigger => set({ ...job, trigger })} /></Field><Field label="每日最大执行次数" htmlFor="job-max"><NumberInput id="job-max" min={0} value={job.max_executions_per_day} onChange={max_executions_per_day => set({ ...job, max_executions_per_day: max_executions_per_day ?? 0 })} /></Field></Section>
+        <Section title="工作流" description="每个绑定在指定 Project 内运行其 Workflow，max_attempts 为总尝试次数。"><Field label="Workflow Bindings" wide><WorkflowBindings values={job.workflows} suggestions={catalog.workflows} projects={projects} onChange={workflows => set({ ...job, workflows })} /></Field></Section>
       </>
     }
   }
@@ -99,6 +105,70 @@ function JsonEditor({ value, onChange }: { value: unknown; onChange: (value: unk
   return <textarea className="configuration-json-editor" rows={10} value={source} onChange={event => setSource(event.target.value)} onBlur={event => { try { onChange(JSON.parse(source)); event.target.setCustomValidity('') } catch { event.target.setCustomValidity('请输入合法 JSON'); event.target.reportValidity() } }} />
 }
 
-function WorkflowBindings({ values, suggestions, onChange }: { values: JobWorkflowBinding[]; suggestions: string[]; onChange: (values: JobWorkflowBinding[]) => void }) {
-  return <div className="configuration-repeat-list"><datalist id="workflow-suggestions">{suggestions.map(item => <option key={item} value={item} />)}</datalist>{values.map((binding, index) => <div className="configuration-binding-row" key={index}><input aria-label="Workflow" list="workflow-suggestions" value={binding.workflow} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, workflow: event.target.value } : item))} /><input aria-label="重试延迟秒数" type="number" min={0} value={binding.retry_delay_seconds} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, retry_delay_seconds: Number(event.target.value) } : item))} /><input aria-label="重试次数" type="number" min={0} value={binding.retry_count} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, retry_count: Number(event.target.value) } : item))} /><button type="button" aria-label="删除绑定" onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button></div>)}<button className="configuration-add-row" type="button" onClick={() => onChange([...values, { workflow: '', retry_delay_seconds: 0, retry_count: 0 }])}><Plus size={15} />添加工作流</button></div>
+function WorkflowBindings({ values, suggestions, projects, onChange }: { values: JobWorkflowBinding[]; suggestions: string[]; projects: string[]; onChange: (values: JobWorkflowBinding[]) => void }) {
+  return <div className="configuration-repeat-list"><datalist id="workflow-suggestions">{suggestions.map(item => <option key={item} value={item} />)}</datalist><datalist id="project-suggestions">{projects.map(item => <option key={item} value={item} />)}</datalist>{values.map((binding, index) => {
+    const update = (patch: Partial<JobWorkflowBinding>) => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
+    return <div className="configuration-binding-card" key={index}>
+      <div className="configuration-binding-fields">
+        <label><span>工作流</span><input aria-label="Workflow" list="workflow-suggestions" placeholder="选择或输入" value={binding.workflow} onChange={event => update({ workflow: event.target.value })} /></label>
+        <label><span>项目</span><input aria-label="Project" list="project-suggestions" placeholder="default-workspace" value={binding.project} onChange={event => update({ project: event.target.value })} /></label>
+        <label><span>最大尝试</span><input aria-label="最大尝试次数" type="number" min={1} value={binding.max_attempts} onChange={event => update({ max_attempts: Number(event.target.value) })} /></label>
+        <label><span>重试延迟(秒)</span><input aria-label="重试延迟秒数" type="number" min={0} value={binding.retry_delay_seconds} onChange={event => update({ retry_delay_seconds: Number(event.target.value) })} /></label>
+        <button type="button" aria-label="删除绑定" title="删除绑定" onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button>
+      </div>
+      <div className="configuration-binding-input"><span>输入 <small>JSON；字符串叶子可引用 ${'{'}...{'}'} 占位符</small></span><InputJsonEditor value={binding.input} onChange={input => update({ input })} /></div>
+    </div>
+  })}<button className="configuration-add-row" type="button" onClick={() => onChange([...values, { workflow: '', project: '', input: {}, max_attempts: 1, retry_delay_seconds: 0 }])}><Plus size={15} />添加工作流</button></div>
+}
+
+function parseJSONLoose(source: string): unknown | undefined {
+  try {
+    return JSON.parse(source) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+// InputJsonEditor 是带 `${...}` 占位符一键插入的 JSON 输入框。
+function InputJsonEditor({ value, onChange }: { value: Record<string, unknown>; onChange: (value: Record<string, unknown>) => void }) {
+  const formatted = JSON.stringify(value ?? {}, null, 2)
+  const [source, setSource] = useState(formatted)
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => setSource(formatted), [formatted])
+  const insert = (name: string) => {
+    const token = `\${${name}}`
+    const el = ref.current
+    const start = el?.selectionStart ?? source.length
+    const end = el?.selectionEnd ?? source.length
+    const next = source.slice(0, start) + token + source.slice(end)
+    setSource(next)
+    const parsed = parseJSONLoose(next)
+    if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) onChange(parsed as Record<string, unknown>)
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + token.length, start + token.length) })
+  }
+  return (
+    <div className="configuration-placeholder-editor">
+      <div className="configuration-placeholder-chips">{JOB_INPUT_PLACEHOLDERS.map(name => <button type="button" key={name} onClick={() => insert(name)}>{name}</button>)}</div>
+      <textarea ref={ref} className="configuration-json-editor" rows={8} value={source} onChange={event => setSource(event.target.value)} onBlur={event => { const parsed = parseJSONLoose(source); if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) onChange(parsed as Record<string, unknown>); event.target.setCustomValidity('') }} />
+    </div>
+  )
+}
+
+// TriggerEditor 是带求值环境变量一键插入的触发表达式输入框。
+function TriggerEditor({ id, value, onChange, rows }: { id: string; value: string; onChange: (value: string) => void; rows: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const insert = (token: string) => {
+    const el = ref.current
+    const start = el?.selectionStart ?? value.length
+    const end = el?.selectionEnd ?? value.length
+    const next = value.slice(0, start) + token + value.slice(end)
+    onChange(next)
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + token.length, start + token.length) })
+  }
+  return (
+    <div className="configuration-placeholder-editor">
+      <textarea ref={ref} id={id} rows={rows} value={value} onChange={event => onChange(event.target.value)} placeholder='例如 Hour >= 9 && ExecutionsToday == 0' />
+      <div className="configuration-placeholder-chips">{JOB_TRIGGER_ENV.map(token => <button type="button" key={token} onClick={() => insert(token)}>{token}</button>)}</div>
+    </div>
+  )
 }
