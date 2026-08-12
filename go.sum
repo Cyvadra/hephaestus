@@ -6,8 +6,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/Cyvadra/GoQQBot v0.0.0-20260812085950-2a911c5b1be3 h1:Mo0ex+tBHN+1ELdLBUWIGyjDTVwVL6XhTiXjgGSgrxY=
 github.com/Cyvadra/GoQQBot v0.0.0-20260812085950-2a911c5b1be3/go.mod h1:PS1rt07iyIGmDD/B1soFTpZZ9V9XqShDfxpZhRjDNuw=
-github.com/Cyvadra/ds4 v0.0.0-20260811082235-00aa92ab7e24 h1:Lkcck+z9wby77V5UAlWIWRjpBdcI+C6cfi/8E2I34KQ=
-github.com/Cyvadra/ds4 v0.0.0-20260811082235-00aa92ab7e24/go.mod h1:LyKWfvFSKAAcFJ2XN0DXoQHh7MQCJo1X+Tq0thJHbSU=
+github.com/Cyvadra/ds4 v0.1.1-0.20260812185826-cc18b1e153ee h1:46/mWpKERizJTIzrG/3bgw4lf+96BWkYV2XMEX3VF0Y=
+github.com/Cyvadra/ds4 v0.1.1-0.20260812185826-cc18b1e153ee/go.mod h1:LyKWfvFSKAAcFJ2XN0DXoQHh7MQCJo1X+Tq0thJHbSU=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/bytedance/gopkg v0.1.4 h1:oZnQwnX82KAIWb7033bEwtxvTqXcYMxDBaQxo5JJHWM=

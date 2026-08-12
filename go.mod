@@ -5,7 +5,7 @@ go 1.26.4
 require (
 	github.com/6tail/lunar-go v1.4.6
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Cyvadra/ds4 v0.0.0-20260811082235-00aa92ab7e24
+	github.com/Cyvadra/ds4 v0.1.1-0.20260812185826-cc18b1e153ee
 	github.com/ProgramCX/GoQQBot v0.0.0
 	github.com/chromedp/chromedp v0.16.0
 	github.com/expr-lang/expr v1.17.8
