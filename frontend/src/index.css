@@ -6432,7 +6432,7 @@ body {
     opacity: .45
 }
 
-.composer-reasoning-menu {
+.composer-options-menu {
     z-index: 8;
     box-sizing: border-box;
     min-width: 124px;
@@ -6447,7 +6447,7 @@ body {
     bottom: calc(100% + 6px)
 }
 
-.composer-reasoning-menu button {
+.composer-options-menu button {
     box-sizing: border-box;
     width: 100%;
     min-height: 30px;
@@ -6465,13 +6465,19 @@ body {
     text-align: left
 }
 
-.composer-reasoning-menu button:hover,.composer-reasoning-menu button:focus-visible {
+.composer-options-menu button:hover,.composer-options-menu button:focus-visible {
     background: var(--dsw-alias-interactive-bg-hover);
     outline: 0
 }
 
-.composer-reasoning-menu button[aria-checked="true"] {
+.composer-options-menu button[aria-checked="true"] {
     color: var(--dsw-alias-button-primary-fill)
+}
+
+.composer-tools-menu {
+    min-width: 148px;
+    max-height: 240px;
+    overflow-y: auto
 }
 
 .composer-textarea {

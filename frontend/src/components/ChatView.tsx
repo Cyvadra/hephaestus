@@ -260,6 +260,30 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
   }, [commandHelp, commandHelpLoading, resolvedSessionId, streaming])
 
+  const handleToolGroupToggle = useCallback(async (toolGroup: string, active: boolean) => {
+    if (resolvedSessionId == null || streaming) return
+    try {
+      const response = await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `/${active ? 'activate' : 'deactivate'} toolgroup ${toolGroup}` }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: response.statusText }))
+        throw new Error(body.error ?? response.statusText)
+      }
+      setActiveSession(current => {
+        if (current == null) return current
+        const toolGroups = active
+          ? [...new Set([...current.Settings.tool_groups, toolGroup])]
+          : current.Settings.tool_groups.filter(currentToolGroup => currentToolGroup !== toolGroup)
+        return { ...current, Settings: { ...current.Settings, tool_groups: toolGroups } }
+      })
+    } catch (cause) {
+      setError(String(cause))
+    }
+  }, [resolvedSessionId, streaming])
+
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
     event.preventDefault()
@@ -494,6 +518,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const headerTitle = activeSession?.Title || (resolvedSessionId == null ? '新会话' : `Session #${resolvedSessionId}`)
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
   const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || '未选择 Concierge'
+  const sessionConcierge = concierges.find(concierge => concierge.name === activeSession?.SourceConcierge)
+  const toolGroups = activeSession == null ? [] : [...new Set([
+    ...(activeSession.Settings.tool_groups ?? []),
+    ...(sessionConcierge?.tool_groups ?? []),
+  ])].filter(toolGroup => toolGroup !== 'web').sort((left, right) => left.localeCompare(right))
+  const activeToolGroups = (activeSession?.Settings.tool_groups ?? []).filter(toolGroup => toolGroup !== 'web')
 
   useEffect(() => {
     setHeaderTitleDraft(headerTitle)
@@ -649,6 +679,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onFilesChange={handleFilesChange}
         generationOptions={generationOptions}
         onGenerationOptionsChange={handleGenerationOptionsChange}
+        toolGroups={toolGroups}
+        activeToolGroups={activeToolGroups}
+        onToolGroupToggle={(toolGroup, active) => { void handleToolGroupToggle(toolGroup, active) }}
       />
     </div>
   )

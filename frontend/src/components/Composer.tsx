@@ -1,5 +1,5 @@
 import { useState, useRef, type KeyboardEvent } from 'react'
-import { ArrowUp, Check, X } from 'lucide-react'
+import { ArrowUp, Check, Wrench, X } from 'lucide-react'
 import type { GenerationOptions, ReasoningEffort } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
 
@@ -14,6 +14,9 @@ interface Props {
   onFilesChange: (files: File[]) => void
   generationOptions: GenerationOptions
   onGenerationOptionsChange: (options: GenerationOptions) => void
+  toolGroups: string[]
+  activeToolGroups: string[]
+  onToolGroupToggle: (toolGroup: string, active: boolean) => void
 }
 
 const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
@@ -22,12 +25,14 @@ const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
   { value: 'none', label: '即答' },
 ]
 
-export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange }: Props) {
+export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle }: Props) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const reasoningRef = useRef<HTMLDivElement>(null)
+  const toolsRef = useRef<HTMLDivElement>(null)
   const reasoningMenu = useHoverMenu(reasoningRef)
+  const toolsMenu = useHoverMenu(toolsRef)
 
   const isCommand = text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
@@ -135,7 +140,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                   <span>{reasoningLabel}</span>
                 </button>
                 {reasoningMenu.open && (
-                  <div className="composer-reasoning-menu" role="menu" aria-label="思考强度" onMouseEnter={reasoningMenu.cancelClose} onMouseLeave={reasoningMenu.scheduleClose}>
+                  <div className="composer-options-menu" role="menu" aria-label="思考强度" onMouseEnter={reasoningMenu.cancelClose} onMouseLeave={reasoningMenu.scheduleClose}>
                     {reasoningChoices.map(choice => (
                       <button
                         type="button"
@@ -165,6 +170,49 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                 <WebIcon />
                 <span>联网</span>
               </button>
+              {toolGroups.length > 0 && (
+                <div
+                  className="composer-reasoning-control"
+                  ref={toolsRef}
+                  onMouseEnter={() => { if (!controlsDisabled) toolsMenu.openOnHover() }}
+                  onMouseLeave={toolsMenu.scheduleClose}
+                >
+                  <button
+                    type="button"
+                    className={'composer-option-btn' + (toolsMenu.open ? ' active' : '')}
+                    disabled={controlsDisabled}
+                    aria-haspopup="menu"
+                    aria-expanded={toolsMenu.open}
+                    onClick={toolsMenu.pinOpen}
+                    onFocus={() => {
+                      if (!controlsDisabled) toolsMenu.pinOpen()
+                    }}
+                    title="选择工具组"
+                  >
+                    <Wrench aria-hidden="true" size={14} />
+                    <span>工具</span>
+                  </button>
+                  {toolsMenu.open && (
+                    <div className="composer-options-menu composer-tools-menu" role="menu" aria-label="工具组" onMouseEnter={toolsMenu.cancelClose} onMouseLeave={toolsMenu.scheduleClose}>
+                      {toolGroups.map(toolGroup => {
+                        const active = activeToolGroups.includes(toolGroup)
+                        return (
+                          <button
+                            type="button"
+                            role="menuitemcheckbox"
+                            aria-checked={active}
+                            key={toolGroup}
+                            onClick={() => onToolGroupToggle(toolGroup, !active)}
+                          >
+                            <span>{toolGroup}</span>
+                            {active && <Check aria-hidden="true" size={14} />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="composer-submit-controls">
               {disabled ? (
