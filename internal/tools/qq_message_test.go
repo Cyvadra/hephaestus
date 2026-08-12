@@ -9,7 +9,7 @@ import (
 )
 
 func TestSendNotificationToolNotAvailableWithoutCredentials(t *testing.T) {
-	tool := NewSendNotificationTool(qq.Config{})
+	tool := NewSendNotificationTool(qq.New(qq.Config{}))
 	if tool.Available() {
 		t.Fatal("expected unavailable without credentials")
 	}
@@ -20,7 +20,7 @@ func TestSendNotificationToolNotAvailableWithoutCredentials(t *testing.T) {
 }
 
 func TestSendNotificationToolRejectsNonQQChannel(t *testing.T) {
-	tool := NewSendNotificationTool(qq.Config{AppID: "a", AppSecret: "s", UserOpenID: "u"})
+	tool := NewSendNotificationTool(qq.New(qq.Config{AppID: "a", AppSecret: "s", UserOpenID: "u"}))
 	result := tool.Execute(context.Background(), map[string]any{"channel": "slack", "markdown_content": "hi"})
 	if !result.IsError || !strings.Contains(result.ForLLM, "must be qq") {
 		t.Fatalf("unexpected result: %+v", result)
@@ -28,14 +28,14 @@ func TestSendNotificationToolRejectsNonQQChannel(t *testing.T) {
 }
 
 func TestSendNotificationToolRejectsEmptyContent(t *testing.T) {
-	tool := NewSendNotificationTool(qq.Config{AppID: "a", AppSecret: "s", UserOpenID: "u"})
+	tool := NewSendNotificationTool(qq.New(qq.Config{AppID: "a", AppSecret: "s", UserOpenID: "u"}))
 	result := tool.Execute(context.Background(), map[string]any{"channel": "qq", "markdown_content": "  "})
 	if !result.IsError || !strings.Contains(result.ForLLM, "markdown_content is required") {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 func TestSendNotificationToolSchemaAndAudited(t *testing.T) {
-	tool := NewSendNotificationTool(qq.Config{})
+	tool := NewSendNotificationTool(qq.New(qq.Config{}))
 	if !tool.Audited() {
 		t.Fatal("notification tool should be audited")
 	}
@@ -44,7 +44,7 @@ func TestSendNotificationToolSchemaAndAudited(t *testing.T) {
 		t.Fatalf("unexpected parameter schema: %#v", tool.Parameters())
 	}
 
-	configured := NewSendNotificationTool(qq.Config{AppID: "app", AppSecret: "secret", UserOpenID: "user"})
+	configured := NewSendNotificationTool(qq.New(qq.Config{AppID: "app", AppSecret: "secret", UserOpenID: "user"}))
 	if !configured.Available() {
 		t.Fatal("configured tool should be available")
 	}

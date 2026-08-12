@@ -16,10 +16,10 @@ type SendNotificationTool struct {
 	client *qq.Client
 }
 
-// NewSendNotificationTool builds the tool from a qq.Config. The tool is
-// Available only when QQ credentials are configured.
-func NewSendNotificationTool(config qq.Config) *SendNotificationTool {
-	return &SendNotificationTool{client: qq.New(config)}
+// NewSendNotificationTool exposes notifications through the application's
+// shared QQ client.
+func NewSendNotificationTool(client *qq.Client) *SendNotificationTool {
+	return &SendNotificationTool{client: client}
 }
 
 func (SendNotificationTool) Name() string  { return "send_notification" }

@@ -53,6 +53,8 @@ func main() {
 		log.Fatalf("bootstrap: %v", err)
 	}
 	warnIfExposed(cfg.ListenAddr)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	notifier := notify.New(cfg.WeComWebhookURL)
 
@@ -78,11 +80,19 @@ func main() {
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
-	toolReg.Register(tools.NewSendNotificationTool(qq.Config{
+	qqClient := qq.New(qq.Config{
 		AppID:      cfg.QQAppID,
 		AppSecret:  cfg.QQAppSecret,
 		UserOpenID: cfg.QQUserOpenID,
-	}))
+	})
+	toolReg.Register(tools.NewSendNotificationTool(qqClient))
+	if qqClient.Configured() {
+		go func() {
+			if err := <-qqClient.Start(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("qq websocket: %v", err)
+			}
+		}()
+	}
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
 	interactions := interaction.NewManager()
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
@@ -177,9 +187,6 @@ func main() {
 	}
 
 	srv := server.New(db, registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
 	var schedulerWG sync.WaitGroup
 	schedulerWG.Add(1)
@@ -196,6 +203,9 @@ func main() {
 	workflowSvc.Shutdown()
 	jobSvc.Shutdown()
 	stop()
+	if err := qqClient.Close(); err != nil {
+		log.Printf("qq websocket shutdown: %v", err)
+	}
 	schedulerWG.Wait()
 }
 

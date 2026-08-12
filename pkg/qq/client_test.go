@@ -3,131 +3,100 @@ package qq
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"os"
+	"errors"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
+
+	"github.com/ProgramCX/GoQQBot/pkg/message"
 )
 
-func TestClientSendMarkdownAndReusesToken(t *testing.T) {
-	var tokenRequests atomic.Int32
-	var messageRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		switch request.URL.Path {
-		case "/app/getAppAccessToken":
-			tokenRequests.Add(1)
-			var payload map[string]string
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload["appId"] != "app" || payload["clientSecret"] != "secret" {
-				t.Fatalf("unexpected token payload: %#v", payload)
-			}
-			_, _ = response.Write([]byte(`{"access_token":"token","expires_in":"7200"}`))
-		case "/v2/users/user-openid/messages":
-			messageRequests.Add(1)
-			if got := request.Header.Get("Authorization"); got != "QQBot token" {
-				t.Fatalf("Authorization = %q", got)
-			}
-			if got := request.Header.Get("X-Union-Appid"); got != "app" {
-				t.Fatalf("X-Union-Appid = %q", got)
-			}
-			var payload struct {
-				MessageType int `json:"msg_type"`
-				Markdown    struct {
-					Content string `json:"content"`
-				} `json:"markdown"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload.MessageType != 2 || payload.Markdown.Content != "# hello" {
-				t.Fatalf("unexpected message payload: %#v", payload)
-			}
-			_, _ = response.Write([]byte(`{"id":"message-1","timestamp":"2026-08-12T12:00:00+08:00"}`))
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-
-	client := New(Config{AppID: "app", AppSecret: "secret", UserOpenID: "user-openid", BaseURL: server.URL, HTTPClient: server.Client()})
-	for range 2 {
-		message, err := client.SendMarkdown(context.Background(), "# hello")
-		if err != nil {
-			t.Fatalf("SendMarkdown: %v", err)
-		}
-		if message.ID != "message-1" {
-			t.Fatalf("message id = %q", message.ID)
-		}
-	}
-	if tokenRequests.Load() != 1 || messageRequests.Load() != 2 {
-		t.Fatalf("token requests = %d, message requests = %d", tokenRequests.Load(), messageRequests.Load())
-	}
+type fakeAPIClient struct {
+	path string
+	body interface{}
+	data []byte
+	err  error
 }
 
-func TestClientRefreshesTokenOnceConcurrently(t *testing.T) {
-	var tokenRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/app/getAppAccessToken" {
-			tokenRequests.Add(1)
-			_, _ = response.Write([]byte(`{"access_token":"token","expires_in":7200}`))
-			return
-		}
-		_, _ = response.Write([]byte(`{"id":"message"}`))
-	}))
-	defer server.Close()
-
-	client := New(Config{AppID: "app", AppSecret: "secret", UserOpenID: "user", BaseURL: server.URL, HTTPClient: server.Client()})
-	var wait sync.WaitGroup
-	for range 10 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			if _, err := client.SendMarkdown(context.Background(), "hello"); err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		}()
-	}
-	wait.Wait()
-	if tokenRequests.Load() != 1 {
-		t.Fatalf("token requests = %d, want 1", tokenRequests.Load())
-	}
+func (c *fakeAPIClient) Post(_ context.Context, path string, body interface{}) ([]byte, error) {
+	c.path = path
+	c.body = body
+	return c.data, c.err
 }
 
-func TestClientRefreshesAfterUnauthorized(t *testing.T) {
-	var tokenRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/app/getAppAccessToken" {
-			requestNumber := tokenRequests.Add(1)
-			_, _ = response.Write([]byte(`{"access_token":"token-` + string(rune('0'+requestNumber)) + `","expires_in":7200}`))
-			return
-		}
-		if request.Header.Get("Authorization") == "QQBot token-1" {
-			response.WriteHeader(http.StatusUnauthorized)
-			_, _ = response.Write([]byte(`{"err_code":11243,"message":"expired","trace_id":"trace-1"}`))
-			return
-		}
-		_, _ = response.Write([]byte(`{"id":"message-after-refresh"}`))
-	}))
-	defer server.Close()
+type fakeBot struct {
+	started chan struct{}
+	stopped chan struct{}
+	once    sync.Once
+}
 
-	client := New(Config{AppID: "app", AppSecret: "secret", UserOpenID: "user", BaseURL: server.URL, HTTPClient: server.Client()})
-	message, err := client.SendMarkdown(context.Background(), "hello")
+func newFakeBot() *fakeBot {
+	return &fakeBot{started: make(chan struct{}), stopped: make(chan struct{})}
+}
+
+func (b *fakeBot) Start() error {
+	close(b.started)
+	<-b.stopped
+	return nil
+}
+
+func (b *fakeBot) Stop() error {
+	b.once.Do(func() { close(b.stopped) })
+	return nil
+}
+
+func TestClientSendMarkdownDelegatesToGoQQBot(t *testing.T) {
+	apiClient := &fakeAPIClient{data: []byte(`{"id":"message-1","timestamp":"2026-08-12T12:00:00+08:00"}`)}
+	client := &Client{
+		appID:      "app",
+		appSecret:  "secret",
+		userOpenID: "user/openid",
+		apiClient:  apiClient,
+		bot:        newFakeBot(),
+	}
+
+	response, err := client.SendMarkdown(context.Background(), "# hello")
 	if err != nil {
 		t.Fatalf("SendMarkdown: %v", err)
 	}
-	if message.ID != "message-after-refresh" {
-		t.Fatalf("message id = %q", message.ID)
+	if response.ID != "message-1" {
+		t.Fatalf("message id = %q", response.ID)
 	}
-	if tokenRequests.Load() != 2 {
-		t.Fatalf("token requests = %d, want 2", tokenRequests.Load())
+	if apiClient.path != "/v2/users/user%2Fopenid/messages" {
+		t.Fatalf("path = %q", apiClient.path)
+	}
+	body, ok := apiClient.body.(*message.PrivateSendMessage)
+	if !ok {
+		t.Fatalf("body type = %T", apiClient.body)
+	}
+	if body.MsgType != message.MARKDOWN || body.Markdown == nil || body.Markdown.Content != "# hello" {
+		t.Fatalf("unexpected message body: %#v", body)
+	}
+}
+
+func TestClientSendMarkdownReportsGoQQBotErrors(t *testing.T) {
+	client := &Client{
+		appID:      "app",
+		appSecret:  "secret",
+		userOpenID: "user",
+		apiClient:  &fakeAPIClient{err: errors.New("request failed")},
+		bot:        newFakeBot(),
+	}
+	if _, err := client.SendMarkdown(context.Background(), "hello"); err == nil || !strings.Contains(err.Error(), "request failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientRejectsInvalidGoQQBotResponse(t *testing.T) {
+	client := &Client{
+		appID:      "app",
+		appSecret:  "secret",
+		userOpenID: "user",
+		apiClient:  &fakeAPIClient{data: []byte(`not-json`)},
+		bot:        newFakeBot(),
+	}
+	if _, err := client.SendMarkdown(context.Background(), "hello"); err == nil || !strings.Contains(err.Error(), "decode QQ message response") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -141,50 +110,33 @@ func TestClientNotConfigured(t *testing.T) {
 	}
 }
 
-func TestClientReportsAPIError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/app/getAppAccessToken" {
-			_, _ = response.Write([]byte(`{"access_token":"token","expires_in":7200}`))
-			return
-		}
-		_, _ = response.Write([]byte(`{"err_code":40054013,"message":"user rejected","trace_id":"trace-rejected"}`))
-	}))
-	defer server.Close()
-
-	client := New(Config{AppID: "app", AppSecret: "secret", UserOpenID: "user", BaseURL: server.URL, HTTPClient: server.Client()})
-	_, err := client.SendMarkdown(context.Background(), "hello")
-	if err == nil || !strings.Contains(err.Error(), "40054013") || !strings.Contains(err.Error(), "trace-rejected") {
-		t.Fatalf("unexpected error: %v", err)
+func TestClientStartsAndStopsBotWithContext(t *testing.T) {
+	bot := newFakeBot()
+	client := &Client{appID: "app", appSecret: "secret", userOpenID: "user", bot: bot}
+	if err := (&Client{}).Close(); err != nil {
+		t.Fatalf("Close before Start: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := client.Start(ctx)
+	<-bot.started
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-bot.stopped:
+	default:
+		t.Fatal("bot was not stopped after context cancellation")
 	}
 }
 
-func TestClientRejectsInvalidTokenResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`not-json`))
-	}))
-	defer server.Close()
-
-	client := New(Config{AppID: "app", AppSecret: "secret", UserOpenID: "user", BaseURL: server.URL, HTTPClient: server.Client()})
-	_, err := client.SendMarkdown(context.Background(), "hello")
-	if err == nil || !strings.Contains(err.Error(), "invalid JSON response") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLiveQQNotification(t *testing.T) {
-	if os.Getenv("HEPHAESTUS_RUN_LIVE_QQ_NOTIFICATION") == "" {
-		t.Skip("set HEPHAESTUS_RUN_LIVE_QQ_NOTIFICATION=1 to send a live QQ notification")
-	}
-	client := New(Config{
-		AppID:      os.Getenv("HEPHAESTUS_QQ_APP_ID"),
-		AppSecret:  os.Getenv("HEPHAESTUS_QQ_APP_SECRET"),
-		UserOpenID: os.Getenv("HEPHAESTUS_QQ_USER_OPENID"),
-	})
-	message, err := client.SendMarkdown(context.Background(), "# Hephaestus QQ notification test\n\nLive API test sent on 2026-08-12.")
+func TestGoQQBotMessageBodyUsesExpectedJSON(t *testing.T) {
+	body := &message.PrivateSendMessage{CommonSendMessage: message.CommonSendMessage{MsgType: message.MARKDOWN}}
+	data, err := json.Marshal(body)
 	if err != nil {
-		t.Fatalf("live QQ notification failed: %v", err)
+		t.Fatal(err)
 	}
-	t.Logf("message id: %s", message.ID)
+	if !strings.Contains(string(data), `"msg_type":2`) {
+		t.Fatalf("message JSON = %s", data)
+	}
 }
