@@ -13,6 +13,7 @@ interface Props {
   isNew: boolean
   lists: ConfigurationLists
   selectionKey: string
+  refreshKey: number
   onDirtyChange: (dirty: boolean) => void
   onCreate: (kind: ConfigurationKind) => void
   onSaved: (kind: ConfigurationKind, name: string) => void
@@ -20,7 +21,7 @@ interface Props {
   onOpenNavigation: () => void
 }
 
-export default function ConfigurationWorkspace({ kind, name, isNew, lists, selectionKey, onDirtyChange, onCreate, onSaved, onDeleted, onOpenNavigation }: Props) {
+export default function ConfigurationWorkspace({ kind, name, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSaved, onDeleted, onOpenNavigation }: Props) {
   const [value, setValue] = useState<Configuration | null>(null)
   const [valueSelectionKey, setValueSelectionKey] = useState('')
   const [baseline, setBaseline] = useState('')
@@ -33,8 +34,12 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [] })
 
   useEffect(() => {
-    void getConfigurationCatalog().then(setCatalog).catch(() => undefined)
-  }, [])
+    let active = true
+    void getConfigurationCatalog().then(result => {
+      if (active) setCatalog(result)
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [refreshKey])
 
   useEffect(() => {
     if (kind == null) { setValue(null); setValueSelectionKey(''); setBaseline(''); return }

@@ -96,6 +96,23 @@ func TestBindMessageRequestParsesMultipartGenerationOptions(t *testing.T) {
 	}
 }
 
+func TestBindMessageRequestAllowsGenerationOnlyJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"reasoning_effort":"high","disabled_tools":["web_search"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+	server := &Server{}
+	var req sendMessageRequest
+
+	if _, err := server.bindMessageRequest(context, &req); err != nil {
+		t.Fatalf("bind generation-only request: %v", err)
+	}
+	if req.Text != "" || req.ReasoningEffort != "high" || len(req.DisabledTools) != 1 || req.DisabledTools[0] != "web_search" {
+		t.Fatalf("unexpected request fields: %+v", req)
+	}
+}
+
 func TestStreamTurnFlushesProgressBeforeCompletion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	release := make(chan struct{})

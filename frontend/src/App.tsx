@@ -148,6 +148,7 @@ export default function App() {
           isNew={configurationIsNew}
           lists={configurationLists}
           selectionKey={`${configurationKind ?? 'overview'}:${configurationName ?? (configurationIsNew ? 'new' : '')}`}
+          refreshKey={configurationRefreshKey}
           onDirtyChange={setConfigurationDirty}
           onCreate={handleConfigurationCreate}
           onSaved={(kind, name) => {
@@ -168,6 +169,7 @@ export default function App() {
           draftConcierge={draftConcierge}
           isChoosingConcierge={isChoosingConcierge}
           defaultConciergeId={lastConciergeId}
+          configurationRefreshKey={configurationRefreshKey}
           onChooseConcierge={handleStartDraft}
           onDefaultConciergeResolved={handleConciergeResolved}
           onSessionCreated={handleSessionCreated}

@@ -134,7 +134,7 @@ type sendMessageRequest struct {
 	// branch before the message is processed (see design doc's session
 	// branching semantics). Required for every continuation, per doc.
 	ActiveLeafMessageID *uint    `json:"active_leaf_message_id"`
-	Text                string   `json:"text" binding:"required"`
+	Text                string   `json:"text"`
 	ReasoningEffort     string   `json:"reasoning_effort"`
 	DisabledTools       []string `json:"disabled_tools"`
 }

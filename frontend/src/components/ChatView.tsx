@@ -19,6 +19,7 @@ interface Props {
   draftConcierge?: ConciergeItem | null
   isChoosingConcierge?: boolean
   defaultConciergeId?: string | null
+  configurationRefreshKey: number
   onChooseConcierge?: (concierge: ConciergeItem) => void
   onDefaultConciergeResolved?: (conciergeId: string) => void
   onSessionCreated?: (id: number) => void
@@ -101,7 +102,7 @@ async function consumeStream(
   }
 }
 
-export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated }: Props) {
+export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, configurationRefreshKey, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -179,7 +180,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         if (fallback) onDefaultConciergeResolved?.(fallback.name)
       }
     }).catch((cause: unknown) => setError(String(cause)))
-  }, [isChoosingConcierge, defaultConciergeId, onDefaultConciergeResolved])
+  }, [isChoosingConcierge, defaultConciergeId, configurationRefreshKey, onDefaultConciergeResolved])
 
   // 历史加载 / 切换会话 / 编辑完成：整段内容被替换，直接瞬间跳到最新位置，
   // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。
