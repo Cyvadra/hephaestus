@@ -15,7 +15,7 @@ import (
 // configurationCatalog godoc
 //
 //	@Summary		List available configuration references
-//	@Description	Returns names from the merged static-plus-database registry and registered tools/plugins.
+//	@Description	Returns names from the active database registry and registered tools/plugins.
 //	@Tags			configurations
 //	@Produce		json
 //	@Success		200	{object}	registry.Catalog
@@ -32,8 +32,8 @@ func (s *Server) configurationCatalog(c *gin.Context) {
 
 // listConfigurations godoc
 //
-//	@Summary		List persisted configurations
-//	@Description	Returns database-only configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.
+//	@Summary		List configurations
+//	@Description	Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.
 //	@Tags			configurations
 //	@Produce		json
 //	@Param			kind	path	string	true	"Configuration kind"
@@ -72,7 +72,7 @@ func (s *Server) getConfiguration(c *gin.Context) {
 // createConfiguration godoc
 //
 //	@Summary		Create a persisted configuration
-//	@Description	Persists a database-only configuration. The change becomes active for new requests and subsequent chat turns immediately.
+//	@Description	Persists a configuration. The change becomes active for new requests and subsequent chat turns immediately.
 //	@Tags			configurations
 //	@Accept			json
 //	@Produce		json
@@ -99,7 +99,7 @@ func (s *Server) createConfiguration(c *gin.Context) {
 // replaceConfiguration godoc
 //
 //	@Summary		Replace a persisted configuration
-//	@Description	Replaces a database-only configuration. The path and payload names must match, and the change becomes active for new requests and subsequent chat turns immediately.
+//	@Description	Replaces a configuration. The path and payload names must match, and the change becomes active for new requests and subsequent chat turns immediately.
 //	@Tags			configurations
 //	@Accept			json
 //	@Produce		json
@@ -137,7 +137,7 @@ func (s *Server) replaceConfiguration(c *gin.Context) {
 // deleteConfiguration godoc
 //
 //	@Summary		Delete a persisted configuration
-//	@Description	Deletes a database-only configuration. A same-named startup static configuration becomes active immediately.
+//	@Description	Deletes a configuration immediately. A same-named default template is restored only after the next process start.
 //	@Tags			configurations
 //	@Param			kind	path	string	true	"Configuration kind"
 //	@Param			name	path	string	true	"Configuration name"

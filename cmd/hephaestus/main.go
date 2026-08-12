@@ -140,22 +140,20 @@ func main() {
 		log.Fatalf("plugin: configure fixed plugins: %v", err)
 	}
 
-	staticRegistry, err := registry.Load(cfg.ConfigDir)
+	_, templates, err := registry.LoadTemplates(cfg.ConfigDir)
 	if err != nil {
 		log.Fatalf("registry: %v", err)
 	}
-	reg, err := registry.LoadDatabase(db, staticRegistry)
+	reg, syncResult, err := registry.SyncTemplates(db, templates, toolReg.KnownNames(), pluginReg.KnownNames())
 	if err != nil {
 		log.Fatalf("registry: %v", err)
-	}
-	if err := reg.Validate(toolReg.KnownNames(), pluginReg.KnownNames()); err != nil {
-		log.Fatalf("registry: validation failed: %v", err)
 	}
 	registryStore := registry.NewStore(reg)
-	configs, err := registry.NewService(db, staticRegistry, registryStore, toolReg.KnownNames(), pluginReg.KnownNames())
+	configs, err := registry.NewService(db, registryStore, toolReg.KnownNames(), pluginReg.KnownNames())
 	if err != nil {
 		log.Fatalf("registry: configuration service: %v", err)
 	}
+	log.Printf("registry: synchronized templates (created=%d updated=%d preserved=%d)", syncResult.Created, syncResult.Updated, syncResult.Preserved)
 	if len(reg.Workflows) > 0 || len(reg.Jobs) > 0 {
 		log.Printf("registry: loaded %d workflow(s) and %d job(s)", len(reg.Workflows), len(reg.Jobs))
 	}

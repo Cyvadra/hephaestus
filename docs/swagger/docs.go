@@ -40,7 +40,7 @@ const docTemplate = `{
         },
         "/configurations/catalog": {
             "get": {
-                "description": "Returns names from the merged static-plus-database registry and registered tools/plugins.",
+                "description": "Returns names from the active database registry and registered tools/plugins.",
                 "produces": [
                     "application/json"
                 ],
@@ -66,14 +66,14 @@ const docTemplate = `{
         },
         "/configurations/{kind}": {
             "get": {
-                "description": "Returns database-only configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.",
+                "description": "Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "configurations"
                 ],
-                "summary": "List persisted configurations",
+                "summary": "List configurations",
                 "parameters": [
                     {
                         "type": "string",
@@ -102,7 +102,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Persists a database-only configuration. The change becomes active for new requests and subsequent chat turns immediately.",
+                "description": "Persists a configuration. The change becomes active for new requests and subsequent chat turns immediately.",
                 "consumes": [
                     "application/json"
                 ],
@@ -200,7 +200,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Replaces a database-only configuration. The path and payload names must match, and the change becomes active for new requests and subsequent chat turns immediately.",
+                "description": "Replaces a configuration. The path and payload names must match, and the change becomes active for new requests and subsequent chat turns immediately.",
                 "consumes": [
                     "application/json"
                 ],
@@ -264,7 +264,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Deletes a database-only configuration. A same-named startup static configuration becomes active immediately.",
+                "description": "Deletes a configuration immediately. A same-named default template is restored only after the next process start.",
                 "tags": [
                     "configurations"
                 ],

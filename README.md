@@ -94,11 +94,19 @@ warning when applicable.
 
 ### Registry API
 
-Static identity, impression, tool-group, concierge, workflow, and job
-definitions load at startup. Persisted records replace a same-named static
-definition of the same type as a complete record. Every change is validated
-against the complete merged registry before it commits, then becomes active
-atomically for new turns. Removing an override restores the static definition.
+Static identity, impression, tool-group, concierge, workflow, and job files
+are default templates synchronized into PostgreSQL at startup. Runtime config
+is then loaded exclusively from the database. Missing records are created;
+existing records are preserved on the first migration, and later template
+content changes replace a record only when the template file is newer than the
+database record. A semantic content hash prevents checkout or file-copy mtime
+changes from causing an unnecessary replacement.
+
+Every API change is validated against the complete database registry before it
+commits, then becomes active atomically for new turns. Deleting a record takes
+effect immediately. If a same-named default template still exists, the record
+is restored at the next process start. Removing a template file does not delete
+its database record.
 
 Manage persisted records at `/api/v1/configurations/:kind`, where `:kind` is
 `identities`, `impressions`, `tool-groups`, `concierges`, `workflows`, or
@@ -107,10 +115,10 @@ Manage persisted records at `/api/v1/configurations/:kind`, where `:kind` is
 | Method | Path | Operation |
 | --- | --- | --- |
 | `GET` | `/configurations/:kind` | List persisted records. |
-| `POST` | `/configurations/:kind` | Create a record or a static override. |
+| `POST` | `/configurations/:kind` | Create a record. |
 | `GET` | `/configurations/:kind/:name` | Read a persisted record. |
 | `PUT` | `/configurations/:kind/:name` | Replace a persisted record. |
-| `DELETE` | `/configurations/:kind/:name` | Delete a persisted record or override. |
+| `DELETE` | `/configurations/:kind/:name` | Delete a record until a possible template restore at next startup. |
 
 ## Environment Reference
 
@@ -125,7 +133,7 @@ web-fetch provider.
 | `HEPHAESTUS_DEEPSEEK_API_KEY` | required unless local model URL is set | Enables DeepSeek models and LLM-based web-content condensation. |
 | `HEPHAESTUS_LOCAL_MODEL_URL` | none | Base URL of an OpenAI-compatible local model server; trailing `/` is removed. |
 | `HEPHAESTUS_LOCAL_MODEL_API_KEY` | none | Optional API key for the local model server. |
-| `HEPHAESTUS_CONFIG_DIR` | `./config` | Directory containing static registry definitions. |
+| `HEPHAESTUS_CONFIG_DIR` | `./config` | Directory containing default registry templates synchronized at startup. |
 | `HEPHAESTUS_LISTEN_ADDR` | `127.0.0.1:9016` | HTTP server bind address. |
 | `HEPHAESTUS_PROJECTS_ROOT` | `./data/projects` | Root directory for named projects and their uploads. Supports `~`. |
 | `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE` | `false` | Allows filesystem tools to access paths outside the project and system temporary directory. |

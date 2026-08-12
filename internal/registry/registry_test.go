@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeFile(t *testing.T, dir, name, content string) {
@@ -129,6 +130,49 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 	job := reg.Jobs["example-job"]
 	if len(job.Workflows) != 1 || job.Workflows[0].MaxAttempts != 3 || job.Workflows[0].RetryDelaySeconds != 60 {
 		t.Fatalf("expected field-complete example job, got %+v", job)
+	}
+}
+
+func TestLoadTemplates_UsesSemanticContentHash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "toolgroup-basic.yaml")
+	writeFile(t, dir, "toolgroup-basic.yaml", "name: basic\ntools: [shell]\n")
+	firstTime := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, firstTime, firstTime); err != nil {
+		t.Fatalf("set first mtime: %v", err)
+	}
+
+	_, first, err := LoadTemplates(dir)
+	if err != nil {
+		t.Fatalf("LoadTemplates first: %v", err)
+	}
+	if len(first) != 1 || first[0].Kind != KindToolGroup || first[0].Name != "basic" || first[0].Path != "toolgroup-basic.yaml" {
+		t.Fatalf("unexpected template metadata: %+v", first)
+	}
+	if !first[0].ModifiedAt.Equal(firstTime) {
+		t.Fatalf("expected mtime %v, got %v", firstTime, first[0].ModifiedAt)
+	}
+
+	writeFile(t, dir, "toolgroup-basic.yaml", "name: basic\ntools:\n  - shell\n")
+	secondTime := firstTime.Add(time.Hour)
+	if err := os.Chtimes(path, secondTime, secondTime); err != nil {
+		t.Fatalf("set second mtime: %v", err)
+	}
+	_, second, err := LoadTemplates(dir)
+	if err != nil {
+		t.Fatalf("LoadTemplates second: %v", err)
+	}
+	if first[0].Hash != second[0].Hash {
+		t.Fatalf("format-only change altered semantic hash: %s != %s", first[0].Hash, second[0].Hash)
+	}
+
+	writeFile(t, dir, "toolgroup-basic.yaml", "name: basic\ntools: [web_search]\n")
+	_, third, err := LoadTemplates(dir)
+	if err != nil {
+		t.Fatalf("LoadTemplates third: %v", err)
+	}
+	if second[0].Hash == third[0].Hash {
+		t.Fatal("business content change did not alter semantic hash")
 	}
 }
 

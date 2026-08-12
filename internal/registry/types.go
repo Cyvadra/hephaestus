@@ -2,6 +2,15 @@
 // toolgroup, concierge, workflow, and job configuration.
 package registry
 
+import "time"
+
+// RecordTimestamps are maintained by GORM and are not part of the editable
+// configuration document.
+type RecordTimestamps struct {
+	CreatedAt time.Time `toml:"-" yaml:"-" json:"-"`
+	UpdatedAt time.Time `toml:"-" yaml:"-" json:"-"`
+}
+
 // Message is a single {role, content} entry used by Identity's injected
 // messages and Impression's message sequence.
 type Message struct {
@@ -22,6 +31,8 @@ const (
 
 // Identity is an agent's core, developer-maintained persona.
 type Identity struct {
+	RecordTimestamps
+
 	Name        string `toml:"name" json:"name" gorm:"primaryKey;size:255"`
 	Description string `toml:"description" json:"description" gorm:"type:text"`
 
@@ -39,6 +50,8 @@ type Identity struct {
 // Impression is a named, ordered message sequence appended after Identity's
 // injected messages, toggled as a whole via Enabled.
 type Impression struct {
+	RecordTimestamps
+
 	Name        string    `toml:"name" json:"name" gorm:"primaryKey;size:255"`
 	Description string    `toml:"description" json:"description" gorm:"type:text"`
 	Enabled     bool      `toml:"enabled" json:"enabled"`
@@ -48,6 +61,8 @@ type Impression struct {
 // ToolGroup is a named collection of actual tool names, used so clients
 // select a group rather than individual tools.
 type ToolGroup struct {
+	RecordTimestamps
+
 	Name  string   `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
 	Tools []string `yaml:"tools" json:"tools" gorm:"serializer:json;type:jsonb"`
 }
@@ -55,6 +70,8 @@ type ToolGroup struct {
 // Concierge bundles an Identity with ordered lists of Impressions,
 // ToolGroups and Plugins. It is a static definition with no runtime context.
 type Concierge struct {
+	RecordTimestamps
+
 	Name        string   `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
 	Nickname    string   `yaml:"nickname" json:"nickname" gorm:"size:20"`
 	Description string   `yaml:"description" json:"description" gorm:"type:text"`
@@ -68,6 +85,8 @@ type Concierge struct {
 // via a Concierge. It is loaded and validated here; execution is provided by
 // the workflow runtime.
 type Workflow struct {
+	RecordTimestamps
+
 	Name         string         `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
 	Description  string         `yaml:"description" json:"description" gorm:"type:text"`
 	Concierge    string         `yaml:"concierge" json:"concierge" gorm:"size:255"`
@@ -93,6 +112,8 @@ type JobWorkflowBinding struct {
 // Job is a scheduling definition: a trigger condition plus the Workflows it
 // runs when that condition fires.
 type Job struct {
+	RecordTimestamps
+
 	Name        string               `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
 	Title       string               `yaml:"title" json:"title" gorm:"size:255"`
 	Description string               `yaml:"description" json:"description" gorm:"type:text"`

@@ -95,10 +95,11 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
   }
 }
 
-function MessageEditor({ values, onChange }: { values: ConfigurationMessage[]; onChange: (values: ConfigurationMessage[]) => void }) {
-  const blocks = messageBlocks(values)
-  const update = (index: number, patch: Partial<ConfigurationMessage>) => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
-  const remove = (index: number, count = 1) => onChange(values.filter((_, itemIndex) => itemIndex < index || itemIndex >= index + count))
+function MessageEditor({ values, onChange }: { values: ConfigurationMessage[] | null; onChange: (values: ConfigurationMessage[]) => void }) {
+  const messages = values ?? []
+  const blocks = messageBlocks(messages)
+  const update = (index: number, patch: Partial<ConfigurationMessage>) => onChange(messages.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
+  const remove = (index: number, count = 1) => onChange(messages.filter((_, itemIndex) => itemIndex < index || itemIndex >= index + count))
   const move = (from: number, to: number) => {
     if (from === to) return
     const next = [...blocks]
@@ -119,7 +120,7 @@ function MessageEditor({ values, onChange }: { values: ConfigurationMessage[]; o
         <AutoResizeTextArea aria-label={`消息 ${block.start + 1} 内容`} value={message.content} onChange={content => update(block.start, { content })} placeholder="输入系统指令或上下文内容" />
       </article>
     })}
-    <div className="configuration-message-actions"><button className="configuration-add-row" type="button" onClick={() => onChange([...values, { role: 'system', content: '' }])}><Plus size={15} />添加指令</button><button className="configuration-add-row" type="button" onClick={() => onChange([...values, { role: 'user', content: '' }, { role: 'assistant', content: '' }])}><Plus size={15} />添加对话</button></div>
+    <div className="configuration-message-actions"><button className="configuration-add-row" type="button" onClick={() => onChange([...messages, { role: 'system', content: '' }])}><Plus size={15} />添加指令</button><button className="configuration-add-row" type="button" onClick={() => onChange([...messages, { role: 'user', content: '' }, { role: 'assistant', content: '' }])}><Plus size={15} />添加对话</button></div>
   </div>
 }
 

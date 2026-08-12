@@ -28,11 +28,10 @@ var (
 	ErrConflict    = errors.New("registry: configuration conflict")
 )
 
-// Service manages database-backed configuration. Static is never modified;
-// every write validates the registry that will be active after a restart.
+// Service manages database-backed configuration. Every write validates the
+// complete database registry before publishing it to runtime requests.
 type Service struct {
 	db           *gorm.DB
-	static       *Registry
 	store        *Store
 	knownTools   map[string]bool
 	knownPlugins map[string]bool
@@ -52,19 +51,15 @@ type Catalog struct {
 	Plugins     []string `json:"plugins"`
 }
 
-func NewService(db *gorm.DB, static *Registry, store *Store, knownTools, knownPlugins map[string]bool) (*Service, error) {
+func NewService(db *gorm.DB, store *Store, knownTools, knownPlugins map[string]bool) (*Service, error) {
 	if db == nil {
 		return nil, fmt.Errorf("registry: database is required")
-	}
-	if static == nil {
-		return nil, fmt.Errorf("registry: static registry is required")
 	}
 	if store == nil {
 		return nil, fmt.Errorf("registry: runtime store is required")
 	}
 	return &Service{
 		db:           db,
-		static:       static.Clone(),
 		store:        store,
 		knownTools:   cloneMap(knownTools),
 		knownPlugins: cloneMap(knownPlugins),
@@ -209,7 +204,7 @@ func (s *Service) write(kind Kind, value any, replace bool) error {
 			return ErrNotFound
 		}
 		if replace {
-			if err := tx.Save(value).Error; err != nil {
+			if err := replaceRecord(tx, kind, value); err != nil {
 				return err
 			}
 		} else if err := tx.Create(value).Error; err != nil {
@@ -236,7 +231,7 @@ func (r *Registry) DefaultIdentityName() string {
 }
 
 func (s *Service) validatedRegistry(tx *gorm.DB) (*Registry, error) {
-	reg, err := LoadDatabase(tx, s.static)
+	reg, err := LoadDatabase(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +277,14 @@ var kindDescriptors = map[Kind]kindDescriptor{
 				return "", false
 			}
 			return typed.Name, true
+		},
+		normalize: func(v any) error {
+			typed, ok := v.(*Impression)
+			if !ok {
+				return wrongPayload(KindImpression)
+			}
+			normalizeImpression(typed)
+			return nil
 		},
 	},
 	KindToolGroup: {

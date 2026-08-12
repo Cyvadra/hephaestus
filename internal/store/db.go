@@ -27,8 +27,22 @@ func Open(dsn string) (*gorm.DB, error) {
 		&WorkflowRun{}, &WorkflowStepRun{}, &JobRun{}, &JobState{},
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
+		&registry.TemplateState{},
 	); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
+	}
+	for _, model := range []any{
+		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
+		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
+	} {
+		if err := db.Model(model).
+			Where("created_at IS NULL OR updated_at IS NULL").
+			Updates(map[string]any{
+				"created_at": gorm.Expr("COALESCE(created_at, CURRENT_TIMESTAMP)"),
+				"updated_at": gorm.Expr("COALESCE(updated_at, CURRENT_TIMESTAMP)"),
+			}).Error; err != nil {
+			return nil, fmt.Errorf("store: backfill registry timestamps: %w", err)
+		}
 	}
 	if err := db.Model(&registry.Concierge{}).
 		Where("nickname IS NULL OR nickname = ?", "").

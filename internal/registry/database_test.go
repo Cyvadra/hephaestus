@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestStorePublishesCompleteSnapshots(t *testing.T) {
@@ -75,6 +77,17 @@ func TestNormalizeIdentity_AppliesDefaultPrompt(t *testing.T) {
 	if identity.SystemPrompt != DefaultSystemPrompt {
 		t.Fatalf("expected default prompt %q, got %q", DefaultSystemPrompt, identity.SystemPrompt)
 	}
+	if identity.InjectedMessages == nil {
+		t.Fatal("expected nil injected messages to normalize to an empty slice")
+	}
+}
+
+func TestNormalizeImpression_InitializesMessages(t *testing.T) {
+	impression := Impression{Name: "default"}
+	normalizeImpression(&impression)
+	if impression.Messages == nil {
+		t.Fatal("expected nil messages to normalize to an empty slice")
+	}
 }
 
 func TestNormalizeConcierge_DefaultsNicknameToName(t *testing.T) {
@@ -124,5 +137,23 @@ func TestCatalogNameHelpers_SortAndFilter(t *testing.T) {
 	})
 	if len(boolNames) != 2 || boolNames[0] != "shell" || boolNames[1] != "web_search" {
 		t.Fatalf("unexpected sorted boolean names: %v", boolNames)
+	}
+}
+
+func TestRecordTimestamps_AreHiddenFromConfigurationJSON(t *testing.T) {
+	identity := Identity{
+		RecordTimestamps: RecordTimestamps{
+			CreatedAt: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 8, 12, 11, 0, 0, 0, time.UTC),
+		},
+		Name: "default",
+	}
+	data, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatalf("marshal identity: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "created_at") || strings.Contains(text, "updated_at") || strings.Contains(text, "CreatedAt") || strings.Contains(text, "UpdatedAt") {
+		t.Fatalf("configuration JSON exposed internal timestamps: %s", text)
 	}
 }
