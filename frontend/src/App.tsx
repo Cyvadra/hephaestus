@@ -1,35 +1,40 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useBlocker, useLocation, useNavigate } from 'react-router-dom'
 import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
 import ConfigurationWorkspace from './components/ConfigurationWorkspace'
 import { Settings } from 'lucide-react'
 import type { ConfigurationKind, ConciergeItem, Session } from './api/types'
 import type { ConfigurationLists } from './components/ConfigurationSidebar'
+import { parseRoute, routes } from './lib/routes'
 
-const LAST_SESSION_ID_KEY = 'hephaestus.lastSessionId'
 const LAST_CONCIERGE_ID_KEY = 'hephaestus.lastConciergeId'
-
-function readStoredSessionId(): number | null {
-  const value = Number(localStorage.getItem(LAST_SESSION_ID_KEY))
-  return Number.isInteger(value) && value > 0 ? value : null
-}
+const ACTIVE_PROJECT_KEY = 'hephaestus.activeProject'
 
 export default function App() {
-  const [project, setProject] = useState<string | null>(() => localStorage.getItem('hephaestus.activeProject'))
-  const [sessionId, setSessionId] = useState<number | null>(readStoredSessionId)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const route = parseRoute(location.pathname)
+  const [storedProject, setStoredProject] = useState<string | null>(() => localStorage.getItem(ACTIVE_PROJECT_KEY))
   const [draftConcierge, setDraftConcierge] = useState<ConciergeItem | null>(null)
   const [lastConciergeId, setLastConciergeId] = useState<string | null>(() => localStorage.getItem(LAST_CONCIERGE_ID_KEY))
-  const [isChoosingConcierge, setIsChoosingConcierge] = useState(() => readStoredSessionId() == null)
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0)
   const [sidebarSessionUpdate, setSidebarSessionUpdate] = useState<Session | null>(null)
-  const [mode, setMode] = useState<'chat' | 'configurations'>('chat')
-  const [configurationKind, setConfigurationKind] = useState<ConfigurationKind | null>(null)
-  const [configurationName, setConfigurationName] = useState<string | null>(null)
-  const [configurationIsNew, setConfigurationIsNew] = useState(false)
   const [configurationDirty, setConfigurationDirty] = useState(false)
   const [configurationRefreshKey, setConfigurationRefreshKey] = useState(0)
   const [configurationLists, setConfigurationLists] = useState<ConfigurationLists>({})
   const [configurationSidebarOpen, setConfigurationSidebarOpen] = useState(false)
+
+  const chatRoute = route.type === 'chat' || route.type === 'chat-new' ? route : null
+  const configurationRoute = route.type === 'configuration-new' || route.type === 'configuration-edit' ? route : null
+  const mode = route.type.startsWith('configuration') ? 'configurations' : 'chat'
+  const project = chatRoute?.project ?? storedProject
+  const sessionId = route.type === 'chat' ? route.sessionId : null
+  const configurationKind = configurationRoute?.kind ?? null
+  const configurationName = route.type === 'configuration-edit' ? route.name : null
+  const configurationIsNew = route.type === 'configuration-new'
+  const isChoosingConcierge = route.type === 'chat-new' && draftConcierge == null
+  const navigationBlocker = useBlocker(configurationDirty)
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -40,34 +45,44 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [configurationDirty])
 
-  const allowConfigurationNavigation = useCallback(() =>
-    !configurationDirty || window.confirm('当前配置有未保存的更改。放弃更改并继续吗？'), [configurationDirty])
+  useEffect(() => {
+    if (route.type === 'invalid') navigate('/', { replace: true })
+  }, [navigate, route.type])
 
-  const handleOpenConfigurations = useCallback(() => { setMode('configurations'); setConfigurationSidebarOpen(true) }, [])
+  useEffect(() => {
+    if (navigationBlocker.state !== 'blocked') return
+    if (window.confirm('当前配置有未保存的更改。放弃更改并继续吗？')) {
+      setConfigurationDirty(false)
+      navigationBlocker.proceed()
+    } else {
+      navigationBlocker.reset()
+    }
+  }, [navigationBlocker])
+
+  useEffect(() => {
+    if (route.type === 'chat-new') setDraftConcierge(null)
+  }, [location.pathname, route.type])
+
+  const handleOpenConfigurations = useCallback(() => {
+    navigate(routes.configurations())
+    setConfigurationSidebarOpen(true)
+  }, [navigate])
   const handleCloseConfigurations = useCallback(() => {
-    if (allowConfigurationNavigation()) setMode('chat')
-  }, [allowConfigurationNavigation])
+    if (project) navigate(routes.chatNew(project))
+    else navigate('/')
+  }, [navigate, project])
   const handleConfigurationSelect = useCallback((kind: ConfigurationKind, name: string) => {
-    if (!allowConfigurationNavigation()) return
-    setConfigurationKind(kind)
-    setConfigurationName(name)
-    setConfigurationIsNew(false)
+    navigate(routes.configurationEdit(kind, name))
     setConfigurationSidebarOpen(false)
-  }, [allowConfigurationNavigation])
+  }, [navigate])
   const handleConfigurationCreate = useCallback((kind: ConfigurationKind) => {
-    if (!allowConfigurationNavigation()) return
-    setConfigurationKind(kind)
-    setConfigurationName(null)
-    setConfigurationIsNew(true)
+    navigate(routes.configurationNew(kind))
     setConfigurationSidebarOpen(false)
-  }, [allowConfigurationNavigation])
+  }, [navigate])
 
   const handleSessionSelect = useCallback((id: number) => {
-    setDraftConcierge(null)
-    setIsChoosingConcierge(false)
-    setSessionId(id)
-    localStorage.setItem(LAST_SESSION_ID_KEY, String(id))
-  }, [])
+    if (project) navigate(routes.chat(project, id))
+  }, [navigate, project])
 
   const handleConciergeResolved = useCallback((conciergeId: string) => {
     setLastConciergeId(conciergeId)
@@ -75,44 +90,35 @@ export default function App() {
   }, [])
 
   const handleStartDraft = useCallback((concierge: ConciergeItem) => {
-    setSessionId(null)
     setDraftConcierge(concierge)
-    setIsChoosingConcierge(false)
-    localStorage.removeItem(LAST_SESSION_ID_KEY)
     handleConciergeResolved(concierge.name)
   }, [handleConciergeResolved])
 
   const handleOpenNewSession = useCallback(() => {
-    setSessionId(null)
     setDraftConcierge(null)
-    setIsChoosingConcierge(true)
-    localStorage.removeItem(LAST_SESSION_ID_KEY)
-  }, [])
+    if (project) navigate(routes.chatNew(project))
+  }, [navigate, project])
 
   const handleProjectChange = useCallback((nextProject: string) => {
-    localStorage.setItem('hephaestus.activeProject', nextProject)
-    setProject(nextProject)
-    setSessionId(null)
+    localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject)
+    setStoredProject(nextProject)
     setDraftConcierge(null)
-    setIsChoosingConcierge(true)
-    localStorage.removeItem(LAST_SESSION_ID_KEY)
-  }, [])
+    navigate(routes.chatNew(nextProject))
+  }, [navigate])
 
   const handleProjectsLoaded = useCallback((defaultProject: string) => {
-    setProject(current => {
-      if (current != null) return current
-      localStorage.setItem('hephaestus.activeProject', defaultProject)
-      return defaultProject
-    })
-  }, [])
+    if (route.type !== 'root') return
+    const nextProject = localStorage.getItem(ACTIVE_PROJECT_KEY) ?? defaultProject
+    localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject)
+    setStoredProject(nextProject)
+    navigate(routes.chatNew(nextProject), { replace: true })
+  }, [navigate, route.type])
 
   const handleSessionCreated = useCallback((id: number) => {
-    setSessionId(id)
     setDraftConcierge(null)
-    setIsChoosingConcierge(false)
     setSidebarRefreshKey(v => v + 1)
-    localStorage.setItem(LAST_SESSION_ID_KEY, String(id))
-  }, [])
+    if (project) navigate(routes.chat(project, id), { replace: true })
+  }, [navigate, project])
 
   const handleSessionUpdated = useCallback((session: Session) => {
     setSidebarSessionUpdate(session)
@@ -152,16 +158,12 @@ export default function App() {
           onDirtyChange={setConfigurationDirty}
           onCreate={handleConfigurationCreate}
           onSaved={(kind, name) => {
-            setConfigurationKind(kind)
-            setConfigurationName(name)
-            setConfigurationIsNew(false)
             setConfigurationRefreshKey(value => value + 1)
+            navigate(routes.configurationEdit(kind, name), { replace: configurationIsNew })
           }}
           onDeleted={() => {
-            setConfigurationKind(null)
-            setConfigurationName(null)
-            setConfigurationIsNew(false)
             setConfigurationRefreshKey(value => value + 1)
+            navigate(routes.configurations(), { replace: true })
           }}
           onOpenNavigation={() => setConfigurationSidebarOpen(true)}
         /> : <ChatView

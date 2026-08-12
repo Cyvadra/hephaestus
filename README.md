@@ -44,6 +44,11 @@ npm run dev
 
 The development server proxies `/api` requests to the backend.
 
+The React frontend uses browser routes for projects, chats, and configuration
+pages. In production, configure the static host or reverse proxy to return the
+frontend `index.html` for unknown non-`/api` paths. Without this SPA fallback,
+refreshing or directly opening a nested frontend URL returns 404.
+
 Preview:
 
 ![Screenshot](./docs/screenshots/chat.jpeg)

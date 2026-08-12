@@ -20,6 +20,13 @@ npm run dev
 
 Requests under `/api` are proxied to `http://localhost:9016`.
 
+## Deployment
+
+The frontend uses browser URLs for projects, chats, and configuration pages.
+Configure the production static host or reverse proxy to serve `index.html` for
+unknown non-API paths, while continuing to forward `/api` to the backend. This
+SPA fallback is required for refreshing or directly opening a nested URL.
+
 ## Checks
 
 ```sh
