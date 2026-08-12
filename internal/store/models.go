@@ -154,15 +154,19 @@ type PluginState struct {
 }
 
 // ToolAudit records externally visible tool actions even when a turn aborts.
+// Ownership is scope-relative: a chat turn sets SessionID; a workflow step
+// sets WorkflowRunID and WorkflowStepRunID. Exactly one group is set.
 type ToolAudit struct {
 	ID uint `gorm:"primaryKey;autoIncrement"`
 
-	SessionID  uint           `gorm:"index"`
-	ToolCallID string         `gorm:"size:255;index"`
-	ToolName   string         `gorm:"size:255"`
-	Arguments  datatypes.JSON `gorm:"type:jsonb"`
-	Result     string         `gorm:"type:text"`
-	IsError    bool
+	SessionID         *uint          `gorm:"index"`
+	WorkflowRunID     *uint          `gorm:"index"`
+	WorkflowStepRunID *uint          `gorm:"index"`
+	ToolCallID        string         `gorm:"size:255;index"`
+	ToolName          string         `gorm:"size:255"`
+	Arguments         datatypes.JSON `gorm:"type:jsonb"`
+	Result            string         `gorm:"type:text"`
+	IsError           bool
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

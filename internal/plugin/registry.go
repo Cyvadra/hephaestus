@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Cyvadra/hephaestus/internal/notify"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
 // Registry holds every Plugin the platform knows about, keyed by name.
@@ -88,6 +89,9 @@ func (r *Registry) Run(ctx context.Context, names []string, hook Hook, phase Pha
 		p, ok := r.byName[name]
 		if !ok {
 			r.notify.Warn("plugin: session config references unknown plugin %q", name)
+			continue
+		}
+		if !toolkit.ScopeAllows(p, turn.Scope) {
 			continue
 		}
 

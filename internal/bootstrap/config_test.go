@@ -225,6 +225,33 @@ func TestLoadRejectsPartialOCRCredentialsAndInvalidUploadLimits(t *testing.T) {
 	}
 }
 
+func TestLoadQQNotificationConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_QQ_APP_ID", " app ")
+	t.Setenv("HEPHAESTUS_QQ_APP_SECRET", " secret ")
+	t.Setenv("HEPHAESTUS_QQ_USER_OPENID", " user-openid ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QQAppID != "app" || cfg.QQAppSecret != "secret" || cfg.QQUserOpenID != "user-openid" {
+		t.Fatalf("unexpected QQ configuration: %+v", cfg)
+	}
+}
+
+func TestLoadRejectsPartialQQNotificationConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_QQ_APP_ID", "app")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected partial QQ configuration to fail")
+	}
+}
+
 func TestLoadRejectsInvalidEnvironmentContext(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")

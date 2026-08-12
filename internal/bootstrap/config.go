@@ -31,6 +31,10 @@ type Config struct {
 	// BaiduOCRAPIKey and BaiduOCRSecretKey authenticate optional image OCR.
 	BaiduOCRAPIKey    string
 	BaiduOCRSecretKey string
+	// QQ credentials and recipient configure optional proactive notifications.
+	QQAppID      string
+	QQAppSecret  string
+	QQUserOpenID string
 	// WeComWebhookURL receives Warn/Error notifications; empty disables delivery.
 	WeComWebhookURL string
 	// ListenAddr is the address the Gin HTTP server binds to.
@@ -93,6 +97,9 @@ func Load() (*Config, error) {
 		LocalModelAPIKey:         strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_API_KEY")),
 		BaiduOCRAPIKey:           strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_API_KEY")),
 		BaiduOCRSecretKey:        strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY")),
+		QQAppID:                  strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_ID")),
+		QQAppSecret:              strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_SECRET")),
+		QQUserOpenID:             strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_USER_OPENID")),
 		WeComWebhookURL:          os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
 		ListenAddr:               getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
 		ProjectsRoot:             projectsRoot,
@@ -168,6 +175,10 @@ func Load() (*Config, error) {
 	}
 	if (cfg.BaiduOCRAPIKey == "") != (cfg.BaiduOCRSecretKey == "") {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_BAIDU_OCR_API_KEY and HEPHAESTUS_BAIDU_OCR_SECRET_KEY must be set together")
+	}
+	qqConfigured := cfg.QQAppID != "" || cfg.QQAppSecret != "" || cfg.QQUserOpenID != ""
+	if qqConfigured && (cfg.QQAppID == "" || cfg.QQAppSecret == "" || cfg.QQUserOpenID == "") {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_QQ_APP_ID, HEPHAESTUS_QQ_APP_SECRET, and HEPHAESTUS_QQ_USER_OPENID must be set together")
 	}
 	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl or local")

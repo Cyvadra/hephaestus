@@ -13,14 +13,17 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	_ "github.com/Cyvadra/hephaestus/docs/swagger"
+	"github.com/Cyvadra/hephaestus/internal/agent"
 	"github.com/Cyvadra/hephaestus/internal/bootstrap"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
+	"github.com/Cyvadra/hephaestus/internal/job"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
@@ -33,7 +36,9 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/Cyvadra/hephaestus/internal/upload"
+	"github.com/Cyvadra/hephaestus/internal/workflow"
 	"github.com/Cyvadra/hephaestus/pkg/baidu/ocr"
+	"github.com/Cyvadra/hephaestus/pkg/qq"
 	"github.com/Cyvadra/hephaestus/pkg/weather"
 	"github.com/joho/godotenv"
 )
@@ -73,6 +78,11 @@ func main() {
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
+	toolReg.Register(tools.NewSendNotificationTool(qq.Config{
+		AppID:      cfg.QQAppID,
+		AppSecret:  cfg.QQAppSecret,
+		UserOpenID: cfg.QQUserOpenID,
+	}))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
 	interactions := interaction.NewManager()
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
@@ -137,10 +147,20 @@ func main() {
 		log.Fatalf("registry: configuration service: %v", err)
 	}
 	if len(reg.Workflows) > 0 || len(reg.Jobs) > 0 {
-		log.Printf("registry: loaded %d workflow(s) and %d job(s); no scheduler is implemented yet, so they will not run", len(reg.Workflows), len(reg.Jobs))
+		log.Printf("registry: loaded %d workflow(s) and %d job(s)", len(reg.Workflows), len(reg.Jobs))
 	}
 
-	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, sessions, notifier, projects, interactions)
+	agentRunner := agent.NewRunner(llmClient, pluginReg, interactions, db, notifier)
+	workflowSvc := workflow.NewService(db, registryStore, toolReg, agentRunner, projects, notifier)
+	jobSvc := job.NewService(db, registryStore, workflowSvc, notifier)
+	if err := workflowSvc.Reconcile(); err != nil {
+		log.Fatalf("workflow: reconcile stale runs: %v", err)
+	}
+	if err := jobSvc.Reconcile(); err != nil {
+		log.Fatalf("job: reconcile stale runs: %v", err)
+	}
+
+	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
 	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
 	uploads, err := upload.New(upload.Config{
 		TextExtensions:     cfg.UploadTextExtensions,
@@ -156,13 +176,27 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(db, registryStore, sessions, pipeline, commands, projects, uploads, configs)
+	srv := server.New(db, registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
+	var schedulerWG sync.WaitGroup
+	schedulerWG.Add(1)
+	go func() {
+		defer schedulerWG.Done()
+		scheduler.Run(ctx)
+	}()
+
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {
 		log.Printf("server: %v", err)
-		return
 	}
+	// The server returned after ctx was canceled: stop the scheduler, cancel
+	// any active runs, and wait for workers to finalize their statuses.
+	workflowSvc.Shutdown()
+	jobSvc.Shutdown()
+	stop()
+	schedulerWG.Wait()
 }
 
 type ocrRecognizer struct{}

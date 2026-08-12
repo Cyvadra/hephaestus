@@ -21,7 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Server exposes Hephaestus sessions and chat turns over HTTP.
+// Server exposes Hephaestus sessions, chat turns, and workflow/job runs over HTTP.
 type Server struct {
 	engine     *gin.Engine
 	db         *gorm.DB
@@ -32,20 +32,29 @@ type Server struct {
 	projects   *project.Service
 	uploads    *upload.Processor
 	configs    *registry.Service
+	workflows  workflowRunner
+	jobs       jobRunner
+	// streamDoneGrace keeps a workflow-run SSE connection open after the
+	// done event so the client can close its EventSource instead of the
+	// browser auto-reconnecting. Zero disables the grace (tests).
+	streamDoneGrace time.Duration
 }
 
 // New builds the Gin engine and registers every route.
-func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service) *Server {
+func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner) *Server {
 	s := &Server{
-		engine:     gin.Default(),
-		db:         db,
-		registries: registries,
-		sessions:   sessions,
-		pipeline:   pipeline,
-		commands:   commands,
-		projects:   projects,
-		uploads:    uploads,
-		configs:    configs,
+		engine:          gin.Default(),
+		db:              db,
+		registries:      registries,
+		sessions:        sessions,
+		pipeline:        pipeline,
+		commands:        commands,
+		projects:        projects,
+		uploads:         uploads,
+		configs:         configs,
+		workflows:       workflows,
+		jobs:            jobs,
+		streamDoneGrace: 3 * time.Second,
 	}
 
 	api := s.engine.Group("/api/v1")
@@ -70,6 +79,14 @@ func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pip
 	api.GET("/configurations/:kind/:name", s.getConfiguration)
 	api.PUT("/configurations/:kind/:name", s.replaceConfiguration)
 	api.DELETE("/configurations/:kind/:name", s.deleteConfiguration)
+	api.POST("/workflows/:name/runs", s.startWorkflowRun)
+	api.GET("/workflow-runs", s.listWorkflowRuns)
+	api.GET("/workflow-runs/:id", s.getWorkflowRun)
+	api.GET("/workflow-runs/:id/stream", s.streamWorkflowRun)
+	api.POST("/workflow-runs/:id/cancel", s.cancelWorkflowRun)
+	api.GET("/job-runs", s.listJobRuns)
+	api.GET("/job-runs/:id", s.getJobRun)
+	api.POST("/job-runs/:id/cancel", s.cancelJobRun)
 
 	s.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

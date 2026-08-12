@@ -65,23 +65,29 @@ type Concierge struct {
 }
 
 // Workflow is a named sequence of natural-language steps executed by the LLM
-// via a Concierge. It is currently loaded and validated but not yet executed
-// by any scheduler.
+// via a Concierge. It is loaded and validated here; execution is provided by
+// the workflow runtime.
 type Workflow struct {
-	Name         string   `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
-	Description  string   `yaml:"description" json:"description" gorm:"type:text"`
-	Concierge    string   `yaml:"concierge" json:"concierge" gorm:"size:255"`
-	InputSchema  any      `yaml:"input_schema" json:"input_schema" gorm:"serializer:json;type:jsonb"`
-	OutputSchema any      `yaml:"output_schema" json:"output_schema" gorm:"serializer:json;type:jsonb"`
-	Steps        []string `yaml:"steps" json:"steps" gorm:"serializer:json;type:jsonb"`
+	Name         string         `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
+	Description  string         `yaml:"description" json:"description" gorm:"type:text"`
+	Concierge    string         `yaml:"concierge" json:"concierge" gorm:"size:255"`
+	InputSchema  map[string]any `yaml:"input_schema" json:"input_schema" gorm:"serializer:json;type:jsonb"`
+	OutputSchema map[string]any `yaml:"output_schema" json:"output_schema" gorm:"serializer:json;type:jsonb"`
+	Steps        []string       `yaml:"steps" json:"steps" gorm:"serializer:json;type:jsonb"`
 }
 
-// JobWorkflowBinding configures one Workflow invocation triggered by a Job,
-// including its independent retry policy.
+// JobWorkflowBinding configures one Workflow invocation triggered by a Job:
+// the Project it runs in, the input it passes to the Workflow, and its
+// independent retry policy.
 type JobWorkflowBinding struct {
-	Workflow          string `yaml:"workflow" json:"workflow"`
-	RetryDelaySeconds int    `yaml:"retry_delay_seconds" json:"retry_delay_seconds"`
-	RetryCount        int    `yaml:"retry_count" json:"retry_count"`
+	Workflow string         `yaml:"workflow" json:"workflow"`
+	Project  string         `yaml:"project" json:"project"`
+	Input    map[string]any `yaml:"input" json:"input"`
+	// MaxAttempts is the total number of attempts including the first
+	// (1 means no retries). RetryDelaySeconds is the fixed delay between
+	// attempts.
+	MaxAttempts       int `yaml:"max_attempts" json:"max_attempts"`
+	RetryDelaySeconds int `yaml:"retry_delay_seconds" json:"retry_delay_seconds"`
 }
 
 // Job is a scheduling definition: a trigger condition plus the Workflows it

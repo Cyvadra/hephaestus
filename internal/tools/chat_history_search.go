@@ -38,6 +38,12 @@ func (ChatHistorySearchTool) Description() string {
 		"by keyword and/or regex, returning matched messages with surrounding context."
 }
 
+// Scopes restricts this tool to interactive sessions: chat history search
+// has no meaning for headless workflow runs that have no chat history.
+func (ChatHistorySearchTool) Scopes() []toolkit.Scope {
+	return []toolkit.Scope{toolkit.ScopeSession}
+}
+
 func (ChatHistorySearchTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

@@ -114,6 +114,7 @@ var loaders = []kindLoader{
 		decode: decodeYAML,
 		dest:   func(r *Registry) map[string]Job { return r.Jobs },
 		name:   func(v Job) string { return v.Name },
+		extra:  func(_ string, v *Job) error { return normalizeJob(v) },
 	}),
 }
 
@@ -201,6 +202,56 @@ func normalizeConcierge(v *Concierge) error {
 func normalizeWorkflow(v *Workflow) error {
 	if len(v.Name) < 10 || strings.ContainsAny(v.Name, " \t") {
 		return fmt.Errorf("registry: workflow name %q must be a slug of at least 10 chars with no spaces", v.Name)
+	}
+	if len(v.Steps) == 0 {
+		return fmt.Errorf("registry: workflow %q must have at least one step", v.Name)
+	}
+	for i, step := range v.Steps {
+		if strings.TrimSpace(step) == "" {
+			return fmt.Errorf("registry: workflow %q step %d is blank", v.Name, i)
+		}
+	}
+	if _, err := CompileSchema(v.InputSchema); err != nil {
+		return fmt.Errorf("registry: workflow %q input schema: %v", v.Name, err)
+	}
+	if _, err := CompileSchema(v.OutputSchema); err != nil {
+		return fmt.Errorf("registry: workflow %q output schema: %v", v.Name, err)
+	}
+	return nil
+}
+
+func normalizeJob(v *Job) error {
+	if strings.TrimSpace(v.Name) == "" {
+		return fmt.Errorf("registry: job name must not be empty")
+	}
+	if v.MaxExecutionsPerDay <= 0 {
+		return fmt.Errorf("registry: job %q: max_executions_per_day must be positive", v.Name)
+	}
+	if strings.TrimSpace(v.Trigger) == "" {
+		return fmt.Errorf("registry: job %q: trigger must not be empty", v.Name)
+	}
+	if _, err := CompileTrigger(v.Trigger); err != nil {
+		return fmt.Errorf("registry: job %q: %v", v.Name, err)
+	}
+	if len(v.Workflows) == 0 {
+		return fmt.Errorf("registry: job %q: must bind at least one workflow", v.Name)
+	}
+	for i, binding := range v.Workflows {
+		if strings.TrimSpace(binding.Workflow) == "" {
+			return fmt.Errorf("registry: job %q: binding %d workflow must not be empty", v.Name, i)
+		}
+		if strings.TrimSpace(binding.Project) == "" {
+			return fmt.Errorf("registry: job %q: binding %d (workflow %q) project must not be empty", v.Name, i, binding.Workflow)
+		}
+		if binding.MaxAttempts < 1 {
+			return fmt.Errorf("registry: job %q: binding %d (workflow %q) max_attempts must be >= 1", v.Name, i, binding.Workflow)
+		}
+		if binding.RetryDelaySeconds < 0 {
+			return fmt.Errorf("registry: job %q: binding %d (workflow %q) retry_delay_seconds must not be negative", v.Name, i, binding.Workflow)
+		}
+		if err := validatePlaceholders(binding.Input); err != nil {
+			return fmt.Errorf("registry: job %q: binding %d (workflow %q): %v", v.Name, i, binding.Workflow, err)
+		}
 	}
 	return nil
 }

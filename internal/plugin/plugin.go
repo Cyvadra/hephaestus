@@ -44,6 +44,7 @@ const (
 // own state.
 type TurnContext struct {
 	SessionID        uint
+	Scope            toolkit.Scope
 	Messages         []store.ChatMessage
 	IsFirstTurn      bool
 	FirstUserMessage string
@@ -72,6 +73,7 @@ func (t TurnContext) clone() TurnContext {
 	}
 	return TurnContext{
 		SessionID:        t.SessionID,
+		Scope:            t.Scope,
 		Messages:         messages,
 		IsFirstTurn:      t.IsFirstTurn,
 		FirstUserMessage: t.FirstUserMessage,

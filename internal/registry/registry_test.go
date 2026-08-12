@@ -3,6 +3,7 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,8 +61,10 @@ name: morning-brief
 title: Morning brief
 workflows:
   - workflow: daily-summary
+    project: default-workspace
+    input: {}
+    max_attempts: 3
     retry_delay_seconds: 60
-    retry_count: 2
 trigger: "true"
 max_executions_per_day: 1
 `)
@@ -105,6 +108,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		"chat_history_search": true,
 		"create_project":      true, "list_projects": true,
 		"web_fetch": true, "web_search": true, "shell": true,
+		"send_notification": true,
 	}
 	if err := reg.Validate(knownTools, map[string]bool{}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)
@@ -123,7 +127,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		t.Fatalf("expected field-complete example workflow, got %+v", workflow)
 	}
 	job := reg.Jobs["example-job"]
-	if len(job.Workflows) != 1 || job.Workflows[0].RetryDelaySeconds != 60 || job.Workflows[0].RetryCount != 2 {
+	if len(job.Workflows) != 1 || job.Workflows[0].MaxAttempts != 3 || job.Workflows[0].RetryDelaySeconds != 60 {
 		t.Fatalf("expected field-complete example job, got %+v", job)
 	}
 }
@@ -166,5 +170,207 @@ tools:
 	}
 	if err := reg.Validate(map[string]bool{}, map[string]bool{}); err == nil {
 		t.Fatal("expected validation error for unknown tool reference")
+	}
+}
+
+// loadRegistry builds a Registry from config files keyed by filename.
+func loadRegistry(t *testing.T, files map[string]string) *Registry {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		writeFile(t, dir, name, content)
+	}
+	reg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return reg
+}
+
+// minimalConcierge files make Validate's cross-record checks reach job logic.
+var minimalConcierge = map[string]string{
+	"identity-default.toml": `
+name = "default"
+system_prompt = "You're a helpful assistant."
+context_window_tokens = 128000
+`,
+	"concierge-coding.yaml": `
+name: coding
+identity: default
+impressions: []
+tool_groups: []
+plugins: []
+`,
+}
+
+// loadErr builds config files in a temp dir and returns the Load error.
+func loadErr(t *testing.T, files map[string]string) error {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		writeFile(t, dir, name, content)
+	}
+	_, err := Load(dir)
+	return err
+}
+
+func TestLoad_BlankWorkflowStepRejected(t *testing.T) {
+	files := map[string]string{
+		"workflow-blank-step.yaml": `
+name: blank-step-workflow
+description: bad
+concierge: coding
+steps:
+  - "   "
+`,
+	}
+	if err := loadErr(t, files); err == nil {
+		t.Fatal("expected error for blank workflow step")
+	}
+}
+
+func TestLoad_InvalidWorkflowSchemaRejected(t *testing.T) {
+	files := map[string]string{
+		"workflow-bad-schema.yaml": `
+name: bad-schema-workflow
+description: bad
+concierge: coding
+input_schema:
+  type: not-a-type
+steps:
+  - do it
+`,
+	}
+	if err := loadErr(t, files); err == nil {
+		t.Fatal("expected error for invalid workflow schema")
+	}
+}
+
+func TestLoad_JobMaxAttemptsBelowOneRejected(t *testing.T) {
+	files := map[string]string{
+		"job-bad-attempts.yaml": `
+name: bad-attempts-job
+workflows:
+  - workflow: some-workflow
+    project: default-workspace
+    input: {}
+    max_attempts: 0
+trigger: "true"
+max_executions_per_day: 1
+`,
+	}
+	if err := loadErr(t, files); err == nil {
+		t.Fatal("expected error for max_attempts < 1")
+	}
+}
+
+func TestLoad_JobInvalidTriggerRejected(t *testing.T) {
+	files := map[string]string{
+		"job-bad-trigger.yaml": `
+name: bad-trigger-job
+workflows:
+  - workflow: some-workflow
+    project: default-workspace
+    input: {}
+    max_attempts: 1
+trigger: "Hour + 1"
+max_executions_per_day: 1
+`,
+	}
+	if err := loadErr(t, files); err == nil {
+		t.Fatal("expected error for non-boolean trigger")
+	}
+}
+
+func TestLoad_JobUnknownPlaceholderRejected(t *testing.T) {
+	files := map[string]string{
+		"job-bad-placeholder.yaml": `
+name: bad-placeholder-job
+workflows:
+  - workflow: some-workflow
+    project: default-workspace
+    input:
+      topic: "${unknown.var}"
+    max_attempts: 1
+trigger: "true"
+max_executions_per_day: 1
+`,
+	}
+	if err := loadErr(t, files); err == nil {
+		t.Fatal("expected error for unknown placeholder")
+	}
+}
+
+func TestValidate_JobBindingMissingRequiredKey(t *testing.T) {
+	files := map[string]string{}
+	for name, content := range minimalConcierge {
+		files[name] = content
+	}
+	files["workflow-needs-topic.yaml"] = `
+name: needs-topic
+description: needs topic
+concierge: coding
+input_schema:
+  type: object
+  properties:
+    topic:
+      type: string
+  required:
+    - topic
+steps:
+  - do it
+`
+	files["job-missing-key.yaml"] = `
+name: missing-key
+workflows:
+  - workflow: needs-topic
+    project: default-workspace
+    input:
+      other: "${job.goal}"
+    max_attempts: 1
+trigger: "true"
+max_executions_per_day: 1
+`
+	reg := loadRegistry(t, files)
+	err := reg.Validate(map[string]bool{}, map[string]bool{})
+	if err == nil || !strings.Contains(err.Error(), "missing required key") {
+		t.Fatalf("expected missing required key error, got %v", err)
+	}
+}
+
+func TestValidate_JobBindingLiteralInputMismatch(t *testing.T) {
+	files := map[string]string{}
+	for name, content := range minimalConcierge {
+		files[name] = content
+	}
+	files["workflow-needs-topic.yaml"] = `
+name: needs-topic
+description: needs topic
+concierge: coding
+input_schema:
+  type: object
+  properties:
+    topic:
+      type: string
+  required:
+    - topic
+steps:
+  - do it
+`
+	files["job-bad-input.yaml"] = `
+name: bad-input
+workflows:
+  - workflow: needs-topic
+    project: default-workspace
+    input:
+      topic: 42
+    max_attempts: 1
+trigger: "true"
+max_executions_per_day: 1
+`
+	reg := loadRegistry(t, files)
+	err := reg.Validate(map[string]bool{}, map[string]bool{})
+	if err == nil || !strings.Contains(err.Error(), "does not satisfy input schema") {
+		t.Fatalf("expected input schema mismatch error, got %v", err)
 	}
 }

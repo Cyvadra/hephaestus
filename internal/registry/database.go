@@ -136,11 +136,14 @@ func loadDatabaseInto(db *gorm.DB, reg *Registry) error {
 	if err := db.Find(&jobs).Error; err != nil {
 		return fmt.Errorf("registry: load database jobs: %w", err)
 	}
-	for _, value := range jobs {
-		if err := validatePersistedName(KindJob, value.Name); err != nil {
+	for index := range jobs {
+		if err := validatePersistedName(KindJob, jobs[index].Name); err != nil {
 			return err
 		}
-		reg.Jobs[value.Name] = value
+		if err := normalizeJob(&jobs[index]); err != nil {
+			return err
+		}
+		reg.Jobs[jobs[index].Name] = jobs[index]
 	}
 
 	return nil

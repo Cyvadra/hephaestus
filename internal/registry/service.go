@@ -337,6 +337,13 @@ var kindDescriptors = map[Kind]kindDescriptor{
 			}
 			return typed.Name, true
 		},
+		normalize: func(v any) error {
+			typed, ok := v.(*Job)
+			if !ok {
+				return wrongPayload(KindJob)
+			}
+			return normalizeJob(typed)
+		},
 	},
 }
 

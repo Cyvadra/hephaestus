@@ -12,6 +12,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
@@ -34,6 +35,12 @@ func NewSessionSummaryPlugin(db *gorm.DB, llmClient *llm.Client, minGap time.Dur
 
 func (p *SessionSummaryPlugin) Name() string           { return "session_summary" }
 func (p *SessionSummaryPlugin) Timeout() time.Duration { return 20 * time.Second }
+
+// Scopes restricts this plugin to interactive sessions: session titles and
+// summaries have no meaning for headless workflow runs.
+func (p *SessionSummaryPlugin) Scopes() []toolkit.Scope {
+	return []toolkit.Scope{toolkit.ScopeSession}
+}
 
 type sessionSummaryState struct {
 	LastSummarizedAt time.Time `json:"last_summarized_at"`

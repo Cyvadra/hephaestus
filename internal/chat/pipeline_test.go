@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/Cyvadra/ds4"
-	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -45,16 +44,6 @@ func TestLastUserMessage_RejectsNonUserTrailingMessage(t *testing.T) {
 func TestLastUserMessage_RejectsEmpty(t *testing.T) {
 	if _, err := lastUserMessage(nil); err == nil {
 		t.Fatal("expected error for empty messages")
-	}
-}
-
-func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
-	pipeline := &Pipeline{}
-	result := pipeline.executeTool(context.Background(), 1, map[string]toolkit.Tool{}, ds4.ToolCall{
-		Function: ds4.FunctionCall{Name: "shell"},
-	}, nil)
-	if !result.IsError {
-		t.Fatal("expected disabled tool to be rejected")
 	}
 }
 
@@ -106,69 +95,6 @@ func TestNewTurnContextPreservesFirstTurnMetadata(t *testing.T) {
 	turn := newTurnContext(7, []store.ChatMessage{{Role: ds4.RoleUser, Content: "first"}}, true, "first")
 	if !turn.IsFirstTurn || turn.FirstUserMessage != "first" || turn.Metadata == nil {
 		t.Fatalf("unexpected turn context: %+v", turn)
-	}
-}
-
-func TestTrackConsecutiveToolCall_RejectsRepeatedCallWithoutInteractiveApproval(t *testing.T) {
-	pipeline := &Pipeline{}
-	lastToolName := ""
-	consecutiveToolCalls := 0
-	for range maxConsecutiveToolCalls {
-		if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "search"); err != nil {
-			t.Fatalf("expected call within limit to succeed: %v", err)
-		}
-	}
-	if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "search"); err == nil {
-		t.Fatal("expected repeated call beyond the limit to be rejected")
-	}
-}
-
-func TestTrackConsecutiveToolCall_AllowsUnlimitedAlternatingTools(t *testing.T) {
-	pipeline := &Pipeline{}
-	lastToolName := ""
-	consecutiveToolCalls := 0
-	for range maxConsecutiveToolCalls * 2 {
-		if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "search"); err != nil {
-			t.Fatalf("expected alternating call to succeed: %v", err)
-		}
-		if err := pipeline.trackConsecutiveToolCall(context.Background(), 1, &lastToolName, &consecutiveToolCalls, "read"); err != nil {
-			t.Fatalf("expected alternating call to succeed: %v", err)
-		}
-	}
-}
-
-func TestTrackConsecutiveToolCall_ApprovalResetsCounter(t *testing.T) {
-	manager := interaction.NewManager()
-	pipeline := &Pipeline{interactions: manager}
-	events := make(chan *interaction.Request, 1)
-	ctx := withInteractionReporter(context.Background(), func(request *interaction.Request) {
-		events <- request
-	})
-	lastToolName := "shell"
-	consecutiveToolCalls := maxConsecutiveToolCalls
-	done := make(chan error, 1)
-
-	go func() {
-		done <- pipeline.trackConsecutiveToolCall(ctx, 7, &lastToolName, &consecutiveToolCalls, "shell")
-	}()
-
-	request := <-events
-	if request.SessionID != 7 || request.Title != "Continue repeated tool calls?" {
-		t.Fatalf("unexpected permission request: %+v", request)
-	}
-	if err := manager.Respond(7, true); err != nil {
-		t.Fatalf("approve repeated calls: %v", err)
-	}
-	if err := <-done; err != nil {
-		t.Fatalf("expected approved call to succeed: %v", err)
-	}
-	if consecutiveToolCalls != 1 {
-		t.Fatalf("expected approval to reset counter to 1, got %d", consecutiveToolCalls)
-	}
-	for range maxConsecutiveToolCalls - 1 {
-		if err := pipeline.trackConsecutiveToolCall(ctx, 7, &lastToolName, &consecutiveToolCalls, "shell"); err != nil {
-			t.Fatalf("expected fresh limit window after approval: %v", err)
-		}
 	}
 }
 
@@ -334,20 +260,5 @@ func TestKeepRegisteredDropsUnknownNames(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "known" || got[1] != "known2" {
 		t.Fatalf("expected only known names kept in order, got %v", got)
-	}
-}
-
-func TestShellAndCreateProjectAreAudited(t *testing.T) {
-	shell := namedTool{name: "shell"}
-	if _, ok := any(shell).(toolkit.Audited); ok {
-		t.Fatal("namedTool must not be audited; this test relies on real tools")
-	}
-	// The capability is exercised through the real implementations in
-	// internal/tools; here we only assert the pipeline rejects non-audited
-	// tools without recording. beginToolAudit with a non-audited tool must
-	// return 0.
-	pipeline := &Pipeline{}
-	if id := pipeline.beginToolAudit(1, shell, ds4.ToolCall{}, map[string]any{}); id != 0 {
-		t.Fatalf("expected non-audited tool to skip audit, got audit id %d", id)
 	}
 }

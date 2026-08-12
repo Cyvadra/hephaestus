@@ -24,6 +24,7 @@ func Open(dsn string) (*gorm.DB, error) {
 
 	if err := db.AutoMigrate(
 		&Project{}, &ChatMessage{}, &Compression{}, &PluginState{}, &ToolAudit{},
+		&WorkflowRun{}, &WorkflowStepRun{}, &JobRun{}, &JobState{},
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
 	); err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
@@ -33,6 +34,12 @@ func NewStorylineStatusPlugin(db *gorm.DB, llmClient *llm.Client) *StorylineStat
 
 func (p *StorylineStatusPlugin) Name() string           { return "storyline_status" }
 func (p *StorylineStatusPlugin) Timeout() time.Duration { return 20 * time.Second }
+
+// Scopes restricts this plugin to interactive sessions: the storyline status
+// line is a session experience and has no meaning for headless workflow runs.
+func (p *StorylineStatusPlugin) Scopes() []toolkit.Scope {
+	return []toolkit.Scope{toolkit.ScopeSession}
+}
 
 type storylineState struct {
 	StatusLine string `json:"status_line"`

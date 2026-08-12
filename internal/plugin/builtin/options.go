@@ -8,6 +8,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/transform"
 )
 
@@ -24,6 +25,12 @@ func NewOptionsPlugin(llmClient *llm.Client) *OptionsPlugin {
 
 func (p *OptionsPlugin) Name() string           { return "options" }
 func (p *OptionsPlugin) Timeout() time.Duration { return 15 * time.Second }
+
+// Scopes restricts this plugin to interactive sessions: suggested next-user
+// replies are meaningless for headless workflow runs.
+func (p *OptionsPlugin) Scopes() []toolkit.Scope {
+	return []toolkit.Scope{toolkit.ScopeSession}
+}
 
 func (p *OptionsPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plugin.Phase, turn plugin.TurnContext) (plugin.TurnContext, error) {
 	if hook != plugin.HookAssistantMessageCompletion || phase != plugin.PhaseAfter || len(turn.Messages) == 0 {
