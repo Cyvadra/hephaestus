@@ -91,6 +91,15 @@ func IsCommand(text string) bool {
 	return strings.HasPrefix(strings.TrimSpace(text), "/")
 }
 
+// Names returns every supported slash command without the leading slash.
+// External channel adapters use this to register platform command routing.
+func Names() []string {
+	return []string{
+		"help", "ping", "stop", "status", "list", "detail",
+		"switch", "activate", "deactivate", "clear", "new", "interact",
+	}
+}
+
 // RegisterCancel records cancel as the way to interrupt sessionID's
 // in-flight turn, so a later /stop can invoke it. Callers must call
 // UnregisterCancel once the turn finishes.

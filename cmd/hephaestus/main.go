@@ -20,6 +20,7 @@ import (
 	_ "github.com/Cyvadra/hephaestus/docs/swagger"
 	"github.com/Cyvadra/hephaestus/internal/agent"
 	"github.com/Cyvadra/hephaestus/internal/bootstrap"
+	channelruntime "github.com/Cyvadra/hephaestus/internal/channel"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
@@ -38,7 +39,8 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/Cyvadra/hephaestus/internal/workflow"
 	"github.com/Cyvadra/hephaestus/pkg/baidu/ocr"
-	"github.com/Cyvadra/hephaestus/pkg/qq"
+	"github.com/Cyvadra/hephaestus/pkg/channels"
+	channelqq "github.com/Cyvadra/hephaestus/pkg/channels/qq"
 	"github.com/Cyvadra/hephaestus/pkg/weather"
 	"github.com/joho/godotenv"
 )
@@ -80,19 +82,6 @@ func main() {
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
-	qqClient := qq.New(qq.Config{
-		AppID:      cfg.QQAppID,
-		AppSecret:  cfg.QQAppSecret,
-		UserOpenID: cfg.QQUserOpenID,
-	})
-	toolReg.Register(tools.NewSendNotificationTool(qqClient))
-	if qqClient.Configured() {
-		go func() {
-			if err := <-qqClient.Start(ctx); err != nil && ctx.Err() == nil {
-				log.Printf("qq websocket: %v", err)
-			}
-		}()
-	}
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
 	interactions := interaction.NewManager()
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
@@ -171,6 +160,20 @@ func main() {
 
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
 	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
+	var configuredChannels []channels.Channel
+	if cfg.QQAppID != "" {
+		qqChannel, err := channels.New("qq", channelqq.Config{
+			AppID: cfg.QQAppID, AppSecret: cfg.QQAppSecret, UserOpenID: cfg.QQUserOpenID,
+		})
+		if err != nil {
+			log.Fatalf("channel: configure qq: %v", err)
+		}
+		configuredChannels = append(configuredChannels, qqChannel)
+	}
+	channelService := channelruntime.New(db, registryStore, sessions, pipeline, commands, projects, interactions, configuredChannels...)
+	if err := channelService.Start(ctx); err != nil {
+		log.Fatalf("channel: %v", err)
+	}
 	uploads, err := upload.New(upload.Config{
 		TextExtensions:     cfg.UploadTextExtensions,
 		ImageExtensions:    cfg.UploadImageExtensions,
@@ -202,8 +205,8 @@ func main() {
 	workflowSvc.Shutdown()
 	jobSvc.Shutdown()
 	stop()
-	if err := qqClient.Close(); err != nil {
-		log.Printf("qq websocket shutdown: %v", err)
+	if err := channelService.Stop(context.Background()); err != nil {
+		log.Printf("channel shutdown: %v", err)
 	}
 	schedulerWG.Wait()
 }
