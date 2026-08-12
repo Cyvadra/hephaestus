@@ -1310,9 +1310,6 @@ const docTemplate = `{
         "github_com_Cyvadra_hephaestus_internal_store.JobRun": {
             "type": "object",
             "properties": {
-                "cancelled": {
-                    "type": "boolean"
-                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -1463,10 +1460,6 @@ const docTemplate = `{
                 "bindingIndex": {
                     "type": "integer"
                 },
-                "cancelled": {
-                    "description": "Cancelled records that cancellation was requested for this run.",
-                    "type": "boolean"
-                },
                 "concierge": {
                     "type": "string"
                 },
@@ -1604,13 +1597,13 @@ const docTemplate = `{
                 "interrupted"
             ],
             "x-enum-varnames": [
-                "WorkflowStepPending",
-                "WorkflowStepRunning",
-                "WorkflowStepSucceeded",
-                "WorkflowStepFailed",
-                "WorkflowStepFatal",
-                "WorkflowStepCancelled",
-                "WorkflowStepInterrupted"
+                "WorkflowRunPending",
+                "WorkflowRunRunning",
+                "WorkflowRunSucceeded",
+                "WorkflowRunFailed",
+                "WorkflowRunFatal",
+                "WorkflowRunCancelled",
+                "WorkflowRunInterrupted"
             ]
         },
         "internal_server.conciergeItem": {
