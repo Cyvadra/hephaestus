@@ -108,7 +108,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 	knownTools := map[string]bool{
 		"chat_history_search": true,
 		"create_project":      true, "list_projects": true,
-		"web_fetch": true, "web_search": true, "shell": true,
+		"web_fetch": true, "web_search": true, "shell": true, "send_file": true,
 		"send_notification": true,
 	}
 	if err := reg.Validate(knownTools, map[string]bool{}); err != nil {

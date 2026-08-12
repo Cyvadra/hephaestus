@@ -74,6 +74,18 @@ type echoTool struct {
 	execs  *[]string
 }
 
+type deliveryTool struct {
+	name     string
+	delivery toolkit.FileDelivery
+}
+
+func (t deliveryTool) Name() string             { return t.name }
+func (deliveryTool) Description() string        { return "" }
+func (deliveryTool) Parameters() map[string]any { return nil }
+func (t deliveryTool) Execute(context.Context, map[string]any) *toolkit.ToolResult {
+	return &toolkit.ToolResult{Deliveries: []toolkit.FileDelivery{t.delivery}}
+}
+
 func (t echoTool) Name() string               { return t.name }
 func (t echoTool) Description() string        { return "" }
 func (t echoTool) Parameters() map[string]any { return nil }
@@ -174,6 +186,30 @@ func TestRun_ToolCallCycle(t *testing.T) {
 	}
 	if result.Messages[2].Role != ds4.RoleAssistant || result.Messages[2].Content != "final answer" {
 		t.Fatalf("expected final assistant message, got %+v", result.Messages[2])
+	}
+}
+
+func TestRun_CollectsUniqueDeliveriesInToolCallOrder(t *testing.T) {
+	fake := &fakeLLM{responses: []*ds4.ChatResponse{
+		respWith([]ds4.ToolCall{
+			toolCall("call-1", "first", "{}"),
+			toolCall("call-2", "duplicate", "{}"),
+			toolCall("call-3", "third", "{}"),
+		}, ""),
+		respWith(nil, "final answer"),
+	}}
+	runner := testRunner(fake, nil)
+	turn := plugin.TurnContext{SessionID: 7, Messages: []store.ChatMessage{{Role: ds4.RoleUser, Content: "go"}}, Metadata: map[string]any{}}
+	result, err := runner.Run(context.Background(), sessionRequest(fake, []toolkit.Tool{
+		deliveryTool{name: "first", delivery: toolkit.FileDelivery{Path: "first.md", Name: "first.md"}},
+		deliveryTool{name: "duplicate", delivery: toolkit.FileDelivery{Path: "first.md", Name: "first.md"}},
+		deliveryTool{name: "third", delivery: toolkit.FileDelivery{Path: "third.txt", Name: "third.txt"}},
+	}, turn))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(result.Deliveries) != 2 || result.Deliveries[0].Path != "first.md" || result.Deliveries[1].Path != "third.txt" {
+		t.Fatalf("deliveries = %+v, want ordered de-duplicated files", result.Deliveries)
 	}
 }
 

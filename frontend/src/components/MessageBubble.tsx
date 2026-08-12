@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Check, Copy, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
+import { Check, Copy, Download, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
+import { attachmentDownloadURL } from '../api/client'
 import { siblings, descendToLeaf } from '../lib/tree'
 import { parseAttachmentPrefix } from '../lib/attachments'
 
@@ -28,6 +29,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const [reasoningHovered, setReasoningHovered] = useState(false)
   const isUser = msg.Role === 'user'
   const isAssistant = msg.Role === 'assistant'
+	const attachments = msg.Attachments ?? []
   const parsedUserContent = isUser ? parseAttachmentPrefix(msg.Content) : null
   const attachmentPrefix = parsedUserContent ? msg.Content.slice(0, msg.Content.length - parsedUserContent.body.length) : ''
 
@@ -194,12 +196,32 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   )}
                 </div>
               )}
-              {msg.Content && (
+              {(msg.Content || attachments.length > 0) && (
                 <div className="message-card assistant">
                   {msg.Status === 'incomplete' && <span className="message-status incomplete">异常终止</span>}
-                  <div className="message-body">
-                    <Markdown>{msg.Content}</Markdown>
-                  </div>
+          {msg.Content && (
+            <div className="message-body">
+              <Markdown>{msg.Content}</Markdown>
+            </div>
+          )}
+          {attachments.length > 0 && (
+            <div className="assistant-attachments" aria-label="已发送文件">
+              {attachments.map(attachment => (
+                <a
+                  className="assistant-attachment"
+                  download={attachment.Name}
+                  href={attachmentDownloadURL(msg.SessionID, attachment.ID)}
+                  key={attachment.ID}
+                  title={`下载 ${attachment.Name}`}
+                >
+                  <FileText aria-hidden="true" size={16} />
+                  <span>{attachment.Name}</span>
+                  <small>{formatAttachmentSize(attachment.Size)}</small>
+                  <Download aria-hidden="true" size={15} />
+                </a>
+              ))}
+            </div>
+          )}
                 </div>
               )}
               <div className="message-actions assistant-message-actions">
@@ -264,6 +286,10 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
       <div className="message-card system">[{msg.Role}] {msg.Content.slice(0, 200)}</div>
     </div>
   )
+}
+
+function formatAttachmentSize(size: number) {
+  return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`
 }
 
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void | Promise<void>; children: React.ReactNode }) {

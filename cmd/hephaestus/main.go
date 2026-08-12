@@ -121,6 +121,7 @@ func main() {
 	}
 	shellTool.SetInteractionManager(interactions)
 	toolReg.Register(shellTool)
+	toolReg.Register(tools.NewSendFileTool(cfg.ShellBackend == "local" || cfg.ShellBackend == ""))
 
 	pluginReg := plugin.NewRegistry(notifier)
 	weatherClient, err := weather.NewClient(nil, cfg.WeatherProviders)

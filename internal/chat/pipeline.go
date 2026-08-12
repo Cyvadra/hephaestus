@@ -298,7 +298,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	if err != nil {
 		return nil, err
 	}
-	result, err := p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
+	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
 	p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 	return result, err
 }
@@ -459,7 +459,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 		return nil, err
 	}
 
-	return p.runFrom(ctx, sessionID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, opts.OnDelta)
+	return p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, opts.OnDelta)
 }
 
 // runFrom runs converse and persists its output as a single chain parented
@@ -467,8 +467,8 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 // persisted as a new user message (Run's case); when nil, the chain is
 // parented directly onto an already-persisted user message (Regenerate's
 // case) and no new user message is created.
-func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
-	toPersist, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
+func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
+	toPersist, deliveries, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
 	if converseErr != nil {
 		toPersist = incompleteMessages(toPersist, converseErr)
 	}
@@ -481,12 +481,12 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID uint, settings store.S
 		return nil, converseErr
 	}
 
-	saved, err := p.sessions.AppendMessagesAtLeaf(sessionID, parentID, expectedLeaf, persistMessages)
+	saved, err := p.sessions.AppendMessagesAtLeafWithDeliveries(sessionID, projectID, parentID, expectedLeaf, persistMessages, deliveries)
 	if errors.Is(err, session.ErrStaleActiveLeaf) {
 		// The active branch moved under us mid-turn. Keep the already
 		// generated output as a reachable-but-inactive branch instead of
 		// discarding it, and tell the caller the branch was not activated.
-		detached, detachErr := p.sessions.AppendMessagesDetached(sessionID, parentID, persistMessages)
+		detached, detachErr := p.sessions.AppendMessagesDetachedWithDeliveries(sessionID, projectID, parentID, persistMessages, deliveries)
 		if detachErr != nil {
 			return nil, detachErr
 		}
@@ -710,7 +710,7 @@ func estimateMessageLength(m store.ChatMessage) int {
 // ran (carrying any Metadata plugins attached, and any content mutation the
 // completion hook made to the final assistant message). The reusable loop
 // lives in internal/agent; this wrapper adapts the session's turn state.
-func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, plugin.TurnContext, error) {
+func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, []toolkit.FileDelivery, plugin.TurnContext, error) {
 	result, err := p.agent.Run(ctx, agent.Request{
 		Identity: identity,
 		Toolset:  toolset,
@@ -731,9 +731,9 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		},
 	})
 	if err != nil {
-		return result.Messages, result.Turn, err
+		return result.Messages, result.Deliveries, result.Turn, err
 	}
-	return result.Messages, result.Turn, nil
+	return result.Messages, result.Deliveries, result.Turn, nil
 }
 
 // lastUserMessage returns the trailing message of messages, which must be

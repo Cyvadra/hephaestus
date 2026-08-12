@@ -15,9 +15,22 @@ type ToolResult struct {
 	ForLLM string
 	// IsError marks this result as a failure.
 	IsError bool
+	// Deliveries are files the tool explicitly asked the host to attach to
+	// the final assistant message. They are not exposed to the LLM context.
+	Deliveries []FileDelivery
 	// ArtifactTags exposes local artifact paths back to the LLM when a
 	// tool produced a reusable artifact but did not deliver it yet.
 	ArtifactTags []string
+}
+
+// FileDelivery identifies a file that may be delivered to the user. Path is
+// relative to the session's Project root and must be revalidated before it is
+// persisted or downloaded.
+type FileDelivery struct {
+	Path string
+	Name string
+	Size int64
+	MIME string
 }
 
 // ContentForLLM returns the normalized text to append to the conversation

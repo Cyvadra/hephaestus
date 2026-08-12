@@ -338,6 +338,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       ReasoningContent: '',
       ToolCalls: null,
       ToolCallID: '',
+	  Attachments: [],
     })
 
     const controller = new AbortController()

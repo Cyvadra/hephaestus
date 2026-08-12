@@ -2,6 +2,9 @@ import type { ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, Conc
 
 const BASE = '/api/v1'
 
+export const attachmentDownloadURL = (sessionId: number, attachmentId: number) =>
+  `${BASE}/sessions/${sessionId}/attachments/${attachmentId}/download`
+
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {

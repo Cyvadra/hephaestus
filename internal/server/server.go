@@ -63,6 +63,7 @@ func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pip
 	api.PATCH("/sessions/:id", s.updateSession)
 	api.DELETE("/sessions/:id", s.deleteSession)
 	api.GET("/sessions/:id/history", s.getHistory)
+	api.GET("/sessions/:id/attachments/:attachmentID/download", s.downloadAttachment)
 	api.POST("/sessions/:id/messages", s.sendMessage)
 	api.POST("/sessions/:id/messages/:messageID/edit", s.editAssistantMessage)
 	api.POST("/sessions/:id/messages/stream", s.streamMessage)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -108,7 +109,23 @@ func (s *Service) AppendMessagesAtLeaf(sessionID uint, parentID, expectedLeaf *u
 	return s.appendMessages(sessionID, parentID, expectedLeaf, true, msgs)
 }
 
+// AppendMessagesAtLeafWithDeliveries is AppendMessagesAtLeaf with explicit
+// assistant file deliveries atomically attached to the final message.
+func (s *Service) AppendMessagesAtLeafWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
+	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, expectedLeaf, true, msgs, deliveries)
+}
+
+// AppendMessagesDetachedWithDeliveries persists an inactive branch and its
+// final-message attachments without changing the active leaf.
+func (s *Service) AppendMessagesDetachedWithDeliveries(sessionID, projectID uint, parentID *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
+	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, nil, false, msgs, deliveries)
+}
+
 func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
+	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, expectedLeaf, checkActiveLeaf, msgs, nil)
+}
+
+func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
 	if len(msgs) == 0 {
 		return nil, nil
 	}
@@ -119,6 +136,23 @@ func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, c
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := insertChain(tx, sessionID, parentID, out); err != nil {
 			return err
+		}
+		if len(deliveries) > 0 {
+			final := &out[len(out)-1]
+			if final.Role != "assistant" {
+				return fmt.Errorf("session: final message must be an assistant to attach files")
+			}
+			attachments := make([]store.MessageAttachment, 0, len(deliveries))
+			for _, delivery := range deliveries {
+				attachments = append(attachments, store.MessageAttachment{
+					SessionID: sessionID, MessageID: final.ID, ProjectID: projectID,
+					Path: delivery.Path, Name: delivery.Name, Size: delivery.Size, MIME: delivery.MIME,
+				})
+			}
+			if err := tx.Create(&attachments).Error; err != nil {
+				return fmt.Errorf("session: attach files: %w", err)
+			}
+			final.Attachments = attachments
 		}
 		result := tx.Model(&store.Session{}).Where("id = ?", sessionID)
 		if checkActiveLeaf {
@@ -266,6 +300,21 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 		if err := tx.Create(&edited).Error; err != nil {
 			return fmt.Errorf("session: create edited assistant message: %w", err)
 		}
+		var attachments []store.MessageAttachment
+		if err := tx.Where("message_id = ?", target.ID).Find(&attachments).Error; err != nil {
+			return fmt.Errorf("session: load assistant attachments for edit: %w", err)
+		}
+		for index := range attachments {
+			attachments[index].ID = 0
+			attachments[index].MessageID = edited.ID
+			attachments[index].CreatedAt = time.Now()
+		}
+		if len(attachments) > 0 {
+			if err := tx.Create(&attachments).Error; err != nil {
+				return fmt.Errorf("session: copy assistant attachments for edit: %w", err)
+			}
+			edited.Attachments = attachments
+		}
 		updated := tx.Model(&store.Session{}).Where("id = ?", sessionID)
 		if previousLeaf == nil {
 			updated = updated.Where("active_leaf_message_id IS NULL")
@@ -371,7 +420,7 @@ func (s *Service) ActivePath(sess store.Session) ([]store.ChatMessage, error) {
 // walked in memory rather than queried hop-by-hop.
 func loadMessages(db *gorm.DB, sessionID uint) ([]store.ChatMessage, error) {
 	var all []store.ChatMessage
-	if err := db.Where("session_id = ?", sessionID).Order("id").Find(&all).Error; err != nil {
+	if err := db.Preload("Attachments").Where("session_id = ?", sessionID).Order("id").Find(&all).Error; err != nil {
 		return nil, fmt.Errorf("session: load messages for session %d: %w", sessionID, err)
 	}
 	return all, nil

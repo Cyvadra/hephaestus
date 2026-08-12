@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -127,6 +129,62 @@ func (s *Server) getHistory(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, historyResponse{Session: sess, Messages: messages, ReasoningEffort: identity.ReasoningEffort})
+}
+
+// downloadAttachment godoc
+//
+//	@Summary		Download an assistant attachment
+//	@Description	Downloads a file explicitly delivered by an assistant message. The referenced Project file is revalidated at download time.
+//	@Tags			sessions
+//	@Produce		application/octet-stream
+//	@Param			id			path	int	true	"Session ID"
+//	@Param			attachmentID	path	int	true	"Attachment ID"
+//	@Success		200	{file}	binary
+//	@Failure		404	{object}	errorResponse
+//	@Failure		410	{object}	errorResponse
+//	@Router			/sessions/{id}/attachments/{attachmentID}/download [get]
+func (s *Server) downloadAttachment(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	attachmentID, err := parseUintParam(c, "attachmentID", "attachment id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	var sess store.Session
+	if err := s.db.First(&sess, sessionID).Error; err != nil {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		return
+	}
+	var attachment store.MessageAttachment
+	if err := s.db.Where("id = ? AND session_id = ?", attachmentID, sessionID).First(&attachment).Error; err != nil {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "attachment not found"})
+		return
+	}
+	if attachment.ProjectID != sess.ProjectID {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "attachment not found"})
+		return
+	}
+	boundProject, err := s.projects.Get(sess.ProjectID)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	path, delivery, err := tools.ResolveProjectFile(s.projects.Path(*boundProject), attachment.Path)
+	if err != nil {
+		if errors.Is(err, tools.ErrDeliveryFileNotFound) {
+			c.JSON(http.StatusGone, errorResponse{Error: "attachment source file is no longer available"})
+			return
+		}
+		c.JSON(http.StatusNotFound, errorResponse{Error: "attachment is no longer available"})
+		return
+	}
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name}))
+	c.Header("Content-Type", delivery.MIME)
+	c.File(path)
 }
 
 type sendMessageRequest struct {

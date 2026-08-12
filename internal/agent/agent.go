@@ -73,6 +73,10 @@ type Result struct {
 	// order (assistant tool-call message, tool results, final assistant
 	// message).
 	Messages []store.ChatMessage
+	// Deliveries are explicit file attachments collected from successful tool
+	// calls in model-call order. The chat pipeline binds them to the final
+	// assistant message when it persists the turn.
+	Deliveries []toolkit.FileDelivery
 	// Turn is the final plugin.TurnContext carrying metadata and any
 	// completion-hook content mutation.
 	Turn plugin.TurnContext
@@ -103,6 +107,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	turn.Scope = req.Scope
 	messages := append([]store.ChatMessage(nil), turn.Messages...)
 	var toPersist []store.ChatMessage
+	var deliveries []toolkit.FileDelivery
 	toolset := toolkit.FilterScope(req.Toolset, req.Scope)
 	allowedTools := make(map[string]toolkit.Tool, len(toolset))
 	for _, tool := range toolset {
@@ -139,7 +144,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	messages = turn.Messages
 	resp, err := callLLM()
 	if err != nil {
-		return Result{Messages: toPersist, Turn: turn}, err
+		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
 	}
 	turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantFirstCallLLM, plugin.PhaseAfter, turn)
 	messages = turn.Messages
@@ -149,7 +154,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	for resp.FinishReason() == ds4.FinishReasonToolCalls {
 		assistantMsg, err := StoreMessageFromDS4(*resp.FirstMessage())
 		if err != nil {
-			return Result{Messages: toPersist, Turn: turn}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
 		}
 		messages = append(messages, assistantMsg)
 		toPersist = append(toPersist, assistantMsg)
@@ -158,7 +163,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		toolCalls := resp.ToolCalls()
 		for _, tc := range toolCalls {
 			if err := r.trackConsecutiveToolCall(ctx, req, &lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
-				return Result{Messages: toPersist, Turn: turn}, err
+				return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
 			}
 			turn.ToolCall = &tc
 			turn.ToolResult = nil
@@ -166,13 +171,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 			turn.ToolCall = nil
 		}
 
-		messages, toPersist, turn = r.runToolCalls(ctx, req, callIndex, allowedTools, toolCalls, messages, toPersist, turn)
+		var batchDeliveries []toolkit.FileDelivery
+		messages, toPersist, turn, batchDeliveries = r.runToolCalls(ctx, req, callIndex, allowedTools, toolCalls, messages, toPersist, turn)
+		deliveries = appendUniqueDeliveries(deliveries, batchDeliveries)
 
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseBefore, turn)
 		messages = turn.Messages
 		resp, err = callLLM()
 		if err != nil {
-			return Result{Messages: toPersist, Turn: turn}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
 		}
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseAfter, turn)
 		messages = turn.Messages
@@ -180,7 +187,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 
 	final, err := StoreMessageFromDS4(*resp.FirstMessage())
 	if err != nil {
-		return Result{Messages: toPersist, Turn: turn}, err
+		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
 	}
 	toPersist = append(toPersist, final)
 
@@ -194,14 +201,14 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		toPersist[len(toPersist)-1].Content = turn.Messages[n-1].Content
 	}
 
-	return Result{Messages: toPersist, Turn: turn}, nil
+	return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, nil
 }
 
 // runToolCalls executes a single model response's independent tool calls
 // concurrently, runs the after-phase ToolCall hook for each with its
 // outcome, and appends the resulting tool messages to messages/toPersist in
 // the model's original order for deterministic persistence.
-func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext) {
+func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext, []toolkit.FileDelivery) {
 	results := make([]*toolkit.ToolResult, len(toolCalls))
 	var wg sync.WaitGroup
 	for i, tc := range toolCalls {
@@ -224,8 +231,12 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 	}
 	wg.Wait()
 
+	var deliveries []toolkit.FileDelivery
 	for toolIndex, tc := range toolCalls {
 		result := results[toolIndex]
+		if !result.IsError {
+			deliveries = appendUniqueDeliveries(deliveries, result.Deliveries)
+		}
 		turn.ToolCall = &tc
 		turn.ToolResult = result
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookToolCall, plugin.PhaseAfter, turn)
@@ -253,7 +264,22 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 		toPersist = append(toPersist, toolMsg)
 		turn.Messages = messages
 	}
-	return messages, toPersist, turn
+	return messages, toPersist, turn, deliveries
+}
+
+func appendUniqueDeliveries(existing, additions []toolkit.FileDelivery) []toolkit.FileDelivery {
+	seen := make(map[string]bool, len(existing)+len(additions))
+	for _, delivery := range existing {
+		seen[delivery.Path] = true
+	}
+	for _, delivery := range additions {
+		if delivery.Path == "" || seen[delivery.Path] {
+			continue
+		}
+		seen[delivery.Path] = true
+		existing = append(existing, delivery)
+	}
+	return existing
 }
 
 func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall, reportOutput func(string)) *toolkit.ToolResult {

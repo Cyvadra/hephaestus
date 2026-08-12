@@ -107,6 +107,28 @@ type ChatMessage struct {
 	// ToolCallID links a tool-role message back to the assistant
 	// message's tool_calls entry it answers.
 	ToolCallID string `gorm:"size:255"`
+
+	// Attachments are files explicitly delivered by the assistant. They are
+	// loaded for API responses and never included in LLM context messages.
+	Attachments []MessageAttachment `gorm:"foreignKey:MessageID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+}
+
+// MessageAttachment is a project-relative reference to a file delivered by
+// an assistant message. The source file is not copied: it is revalidated when
+// downloaded, so its contents may change or become unavailable later.
+type MessageAttachment struct {
+	ID uint `gorm:"primaryKey;autoIncrement"`
+
+	SessionID uint `gorm:"not null;index"`
+	MessageID uint `gorm:"not null;index"`
+	ProjectID uint `gorm:"not null;index"`
+
+	Path string `gorm:"size:2048;not null"`
+	Name string `gorm:"size:1024;not null"`
+	Size int64
+	MIME string `gorm:"size:255"`
+
+	CreatedAt time.Time
 }
 
 // Compression is a compacted replacement for a contiguous message range,

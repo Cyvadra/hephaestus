@@ -6354,6 +6354,41 @@ body {
     color: var(--dsw-alias-label-tertiary)
 }
 
+.assistant-attachments {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px
+}
+
+.assistant-attachment {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 7px 8px;
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-specific-input-major);
+    border-radius: 4px;
+    font-size: 12px;
+    text-decoration: none
+}
+
+.assistant-attachment:hover {
+    background: var(--dsw-specific-input-major-hover)
+}
+
+.assistant-attachment span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.assistant-attachment small {
+    color: var(--dsw-alias-label-tertiary);
+    white-space: nowrap
+}
+
 .upload-warning-block {
     margin: 8px var(--message-list-padding-horizontal);
     padding: 8px 10px;

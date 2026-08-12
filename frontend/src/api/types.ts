@@ -45,6 +45,19 @@ export interface ChatMessage {
   ReasoningContent: string
   ToolCalls: ToolCall[] | null
   ToolCallID: string
+  Attachments: MessageAttachment[]
+}
+
+export interface MessageAttachment {
+  ID: number
+  SessionID: number
+  MessageID: number
+  ProjectID: number
+  Path: string
+  Name: string
+  Size: number
+  MIME: string
+  CreatedAt: string
 }
 
 export interface ToolCall {
