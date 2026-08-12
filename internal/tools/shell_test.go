@@ -97,6 +97,19 @@ func TestStreamingOutputWriterRetainsBoundedTail(t *testing.T) {
 	}
 }
 
+func TestStreamingOutputWriterDropsCarriageReturnProgressFromFinalOutput(t *testing.T) {
+	writer := &streamingOutputWriter{ctx: context.Background()}
+	for _, chunk := range []string{"first\r\nprogress 10%", "\rprogress 100%\nnext", "\rcomplete"} {
+		if _, err := writer.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got, want := writer.String(), "first\nprogress 100%\ncomplete"; got != want {
+		t.Fatalf("final output = %q, want %q", got, want)
+	}
+}
+
 func TestShellToolTimeoutOutOfRangeFallsBackToDefault(t *testing.T) {
 	ctx, _ := projectTestContext(t)
 	tool := NewShellTool(true, 0)

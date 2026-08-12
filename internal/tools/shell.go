@@ -51,10 +51,38 @@ func (w *streamingOutputWriter) Write(chunk []byte) (int, error) {
 func (w *streamingOutputWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	output := normalizeCarriageReturns(string(w.retained))
 	if w.truncated {
-		return "[earlier output omitted]\n" + string(w.retained)
+		return "[earlier output omitted]\n" + output
 	}
-	return string(w.retained)
+	return output
+}
+
+// normalizeCarriageReturns removes transient progress text overwritten by a
+// carriage return. Chunks are still reported unchanged so the client can
+// render terminal updates as they arrive; this normalization is only for the
+// final tool result that is sent to the LLM and persisted.
+func normalizeCarriageReturns(output string) string {
+	normalized := make([]byte, 0, len(output))
+	lineStart := 0
+	for index := 0; index < len(output); index++ {
+		switch output[index] {
+		case '\r':
+			if index+1 < len(output) && output[index+1] == '\n' {
+				normalized = append(normalized, '\n')
+				lineStart = len(normalized)
+				index++
+				continue
+			}
+			normalized = normalized[:lineStart]
+		case '\n':
+			normalized = append(normalized, '\n')
+			lineStart = len(normalized)
+		default:
+			normalized = append(normalized, output[index])
+		}
+	}
+	return string(normalized)
 }
 
 var _ io.Writer = (*streamingOutputWriter)(nil)
