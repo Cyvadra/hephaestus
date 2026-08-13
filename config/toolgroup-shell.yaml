@@ -1,4 +1,3 @@
 name: shell
 tools:
   - shell
-  - send_file

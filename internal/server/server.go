@@ -18,13 +18,11 @@ import (
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"gorm.io/gorm"
 )
 
 // Server exposes Hephaestus sessions, chat turns, and workflow/job runs over HTTP.
 type Server struct {
 	engine     *gin.Engine
-	db         *gorm.DB
 	registries *registry.Store
 	sessions   *session.Service
 	pipeline   *chat.Pipeline
@@ -41,10 +39,9 @@ type Server struct {
 }
 
 // New builds the Gin engine and registers every route.
-func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner) *Server {
+func New(registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner) *Server {
 	s := &Server{
 		engine:          gin.Default(),
-		db:              db,
 		registries:      registries,
 		sessions:        sessions,
 		pipeline:        pipeline,

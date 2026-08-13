@@ -59,6 +59,13 @@ func main() {
 	defer stop()
 
 	notifier := notify.New(cfg.WeComWebhookURL)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := notifier.Shutdown(shutdownCtx); err != nil {
+			log.Printf("notify shutdown: %v", err)
+		}
+	}()
 
 	toolReg := toolkit.NewRegistry()
 
@@ -70,15 +77,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("project: %v", err)
 	}
-	defaultProject, err := projects.EnsureDefault()
-	if err != nil {
+	if _, err := projects.EnsureDefault(); err != nil {
 		log.Fatalf("project: ensure default: %v", err)
 	}
 	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey)
 	sessions := session.New(db)
-	if err := session.BindUnscopedSessions(db, defaultProject.ID); err != nil {
-		log.Fatalf("session: bind default project: %v", err)
-	}
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
@@ -188,7 +191,7 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(db, registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc)
+	srv := server.New(registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc)
 	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
 	var schedulerWG sync.WaitGroup
 	schedulerWG.Add(1)

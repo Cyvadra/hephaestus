@@ -1,4 +1,4 @@
-import { useState, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useState, useRef, type KeyboardEvent } from 'react'
 import { ArrowUp, Check, Wrench, X } from 'lucide-react'
 import type { GenerationOptions, ReasoningEffort } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
@@ -29,6 +29,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const firstMatchedCommandRef = useRef<HTMLButtonElement>(null)
   const reasoningRef = useRef<HTMLDivElement>(null)
   const toolsRef = useRef<HTMLDivElement>(null)
   const reasoningMenu = useHoverMenu(reasoningRef)
@@ -41,7 +42,14 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   const commandSuggestions = commandHelp
     ?.split('\n')
     .filter(line => line.trimStart().startsWith('/'))
-    .filter(line => commandQuery === '/' || line.toLowerCase().startsWith(commandQuery)) ?? []
+    .sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' })) ?? []
+  const matchedCommands = commandQuery === '/'
+    ? []
+    : commandSuggestions.filter(command => command.toLowerCase().startsWith(commandQuery))
+
+  useEffect(() => {
+    firstMatchedCommandRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [commandQuery, commandHelp])
 
   const handleTextChange = (value: string) => {
     setText(value)
@@ -58,7 +66,9 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   }
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    const isModifiedSubmit = e.ctrlKey || e.metaKey
+    const isCommandSubmit = isCommand && !e.shiftKey && !e.altKey
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing && (isModifiedSubmit || isCommandSubmit)) {
       e.preventDefault()
       submit()
     }
@@ -87,10 +97,15 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
             {commandHelpLoading ? <span className="command-suggestions-status">正在加载命令…</span> : commandSuggestions.length > 0 ? (
               commandSuggestions.map(command => {
                 const [name, ...description] = command.split(' - ')
+                const isMatch = matchedCommands.includes(command)
+                const isFirstMatch = command === matchedCommands[0]
                 return (
                   <button
                     type="button"
                     role="option"
+                    aria-selected={isMatch}
+                    className={isMatch ? 'matched' : undefined}
+                    ref={isFirstMatch ? firstMatchedCommandRef : undefined}
                     key={command}
                     onClick={() => {
                       setText(name)
@@ -102,7 +117,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                   </button>
                 )
               })
-            ) : commandHelp ? <span className="command-suggestions-status">没有匹配的命令</span> : <span className="command-suggestions-status">当前会话创建后将加载命令</span>}
+            ) : commandHelp ? <span className="command-suggestions-status">没有可用命令</span> : <span className="command-suggestions-status">当前会话创建后将加载命令</span>}
           </div>
         )}
         <div className="composer-input-row">

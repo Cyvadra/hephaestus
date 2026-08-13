@@ -4,6 +4,7 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ const (
 	retryInterval = 15 * time.Second
 	maxRetries    = 6
 	ringSize      = 10
+	queueSize     = 32
 )
 
 // Entry is a single recorded warning or error.
@@ -30,6 +32,10 @@ type Entry struct {
 type Notifier struct {
 	webhookURL string
 	httpClient *http.Client
+	queue      chan Entry
+	cancel     context.CancelFunc
+	workers    sync.WaitGroup
+	stopOnce   sync.Once
 
 	mu   sync.Mutex
 	ring []Entry
@@ -38,10 +44,18 @@ type Notifier struct {
 // New creates a Notifier. webhookURL may be empty, in which case messages
 // are only logged locally and kept in the ring buffer.
 func New(webhookURL string) *Notifier {
-	return &Notifier{
+	n := &Notifier{
 		webhookURL: webhookURL,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
+	if webhookURL != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		n.cancel = cancel
+		n.queue = make(chan Entry, queueSize)
+		n.workers.Add(1)
+		go n.run(ctx)
+	}
+	return n
 }
 
 // Warn records a warning-level message.
@@ -66,7 +80,42 @@ func (n *Notifier) record(level, message string) {
 	n.mu.Unlock()
 
 	if n.webhookURL != "" {
-		go n.send(entry)
+		select {
+		case n.queue <- entry:
+		default:
+			log.Printf("[notify] dropped WeCom notification: queue full")
+		}
+	}
+}
+
+// Shutdown stops webhook delivery and waits for the worker to exit.
+func (n *Notifier) Shutdown(ctx context.Context) error {
+	if n.cancel == nil {
+		return nil
+	}
+	n.stopOnce.Do(n.cancel)
+	done := make(chan struct{})
+	go func() {
+		n.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (n *Notifier) run(ctx context.Context) {
+	defer n.workers.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case entry := <-n.queue:
+			n.send(ctx, entry)
+		}
 	}
 }
 
@@ -86,7 +135,7 @@ type wecomTextPayload struct {
 	} `json:"text"`
 }
 
-func (n *Notifier) send(entry Entry) {
+func (n *Notifier) send(ctx context.Context, entry Entry) {
 	payload := wecomTextPayload{MsgType: "text"}
 	payload.Text.Content = fmt.Sprintf("[%s] %s\n%s", entry.Level, entry.Time.Format(time.RFC3339), entry.Message)
 	body, err := json.Marshal(payload)
@@ -97,9 +146,13 @@ func (n *Notifier) send(entry Entry) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(retryInterval)
+			select {
+			case <-time.After(retryInterval):
+			case <-ctx.Done():
+				return
+			}
 		}
-		req, err := http.NewRequest(http.MethodPost, n.webhookURL, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhookURL, bytes.NewReader(body))
 		if err != nil {
 			lastErr = err
 			continue

@@ -105,8 +105,8 @@ func (s *Server) getHistory(c *gin.Context) {
 		return
 	}
 
-	var sess store.Session
-	if err := s.db.First(&sess, sessionID).Error; err != nil {
+	sess, err := s.sessions.Get(sessionID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
@@ -128,7 +128,7 @@ func (s *Server) getHistory(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusOK, historyResponse{Session: sess, Messages: messages, ReasoningEffort: identity.ReasoningEffort})
+	c.JSON(http.StatusOK, historyResponse{Session: *sess, Messages: messages, ReasoningEffort: identity.ReasoningEffort})
 }
 
 // downloadAttachment godoc
@@ -154,18 +154,9 @@ func (s *Server) downloadAttachment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
-	var sess store.Session
-	if err := s.db.First(&sess, sessionID).Error; err != nil {
+	sess, attachment, err := s.sessions.Attachment(sessionID, attachmentID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
-		return
-	}
-	var attachment store.MessageAttachment
-	if err := s.db.Where("id = ? AND session_id = ?", attachmentID, sessionID).First(&attachment).Error; err != nil {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "attachment not found"})
-		return
-	}
-	if attachment.ProjectID != sess.ProjectID {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "attachment not found"})
 		return
 	}
 	boundProject, err := s.projects.Get(sess.ProjectID)
@@ -446,8 +437,8 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 		c.JSON(http.StatusServiceUnavailable, errorResponse{Error: "file uploads are not configured"})
 		return 0, sendMessageRequest{}, nil, false
 	}
-	var sess store.Session
-	if err := s.db.First(&sess, sessionID).Error; err != nil {
+	sess, err := s.sessions.Get(sessionID)
+	if err != nil {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
 		return 0, sendMessageRequest{}, nil, false
 	}
@@ -744,8 +735,8 @@ func (s *Server) listSessions(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	var sessions []store.Session
-	if err := s.db.Where("project_id = ?", boundProject.ID).Order("updated_at desc").Find(&sessions).Error; err != nil {
+	sessions, err := s.sessions.ListByProject(boundProject.ID)
+	if err != nil {
 		internalError(c, err)
 		return
 	}

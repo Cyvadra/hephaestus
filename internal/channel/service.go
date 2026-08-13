@@ -49,6 +49,7 @@ type Service struct {
 	mu       sync.Mutex
 	queues   map[string]chan channels.InboundMessage
 	pending  map[string]pendingApproval
+	stopped  bool
 	workers  sync.WaitGroup
 	stopOnce sync.Once
 }
@@ -90,6 +91,15 @@ func (s *Service) Stop(ctx context.Context) error {
 		for _, external := range s.channels {
 			joined = errors.Join(joined, external.Stop(ctx))
 		}
+		s.mu.Lock()
+		s.stopped = true
+		for key, queue := range s.queues {
+			close(queue)
+			delete(s.queues, key)
+		}
+		s.pending = map[string]pendingApproval{}
+		s.mu.Unlock()
+		s.workers.Wait()
 	})
 	return joined
 }
@@ -101,6 +111,10 @@ func (s *Service) handleInbound(ctx context.Context, message channels.InboundMes
 		delete(s.pending, key)
 		s.mu.Unlock()
 		_ = s.interactions.Respond(pending.sessionID, isApproval(message.Content))
+		return
+	}
+	if s.stopped {
+		s.mu.Unlock()
 		return
 	}
 	queue := s.queues[key]
@@ -160,8 +174,8 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		s.commands.UnregisterCancel(sessionID, registrationID)
 		cancel()
 	}()
-	var sessionRow store.Session
-	if err := s.db.Select("active_leaf_message_id").First(&sessionRow, sessionID).Error; err != nil {
+	sessionRow, err := s.sessions.Get(sessionID)
+	if err != nil {
 		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: fmt.Sprintf("channel: load active session: %v", err)})
 		return
 	}
@@ -191,8 +205,8 @@ func (s *Service) persistInboundAttachments(sessionID uint, attachments []channe
 	if len(attachments) == 0 {
 		return nil
 	}
-	var sessionRow store.Session
-	if s.db.First(&sessionRow, sessionID).Error != nil {
+	sessionRow, err := s.sessions.Get(sessionID)
+	if err != nil {
 		return nil
 	}
 	projectRow, err := s.projects.Get(sessionRow.ProjectID)
@@ -325,16 +339,16 @@ func (s *Service) sendAttachments(ctx context.Context, external channels.Channel
 	if !ok {
 		return
 	}
-	var sessionRow store.Session
-	if s.db.First(&sessionRow, sessionID).Error != nil {
+	sessionRow, err := s.sessions.Get(sessionID)
+	if err != nil {
 		return
 	}
 	projectRow, err := s.projects.Get(sessionRow.ProjectID)
 	if err != nil {
 		return
 	}
-	var attachments []store.MessageAttachment
-	if s.db.Where("message_id = ?", messageID).Find(&attachments).Error != nil {
+	attachments, err := s.sessions.MessageAttachments(messageID)
+	if err != nil {
 		return
 	}
 	for _, attachment := range attachments {

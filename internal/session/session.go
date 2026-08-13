@@ -52,6 +52,50 @@ func (e ValidationError) Error() string { return string(e) }
 // New creates a Service backed by db.
 func New(db *gorm.DB) *Service { return &Service{db: db} }
 
+// Get loads one Session by id.
+func (s *Service) Get(sessionID uint) (*store.Session, error) {
+	var sess store.Session
+	if err := s.db.First(&sess, sessionID).Error; err != nil {
+		return nil, err
+	}
+	return &sess, nil
+}
+
+// ListByProject returns sessions in one Project ordered for chat lists.
+func (s *Service) ListByProject(projectID uint) ([]store.Session, error) {
+	var sessions []store.Session
+	if err := s.db.Where("project_id = ?", projectID).Order("updated_at desc").Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+// Attachment loads one delivered attachment after validating that it belongs
+// to sessionID and that the attachment's Project matches the Session Project.
+func (s *Service) Attachment(sessionID, attachmentID uint) (*store.Session, *store.MessageAttachment, error) {
+	sess, err := s.Get(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var attachment store.MessageAttachment
+	if err := s.db.Where("id = ? AND session_id = ?", attachmentID, sessionID).First(&attachment).Error; err != nil {
+		return sess, nil, err
+	}
+	if attachment.ProjectID != sess.ProjectID {
+		return sess, nil, gorm.ErrRecordNotFound
+	}
+	return sess, &attachment, nil
+}
+
+// MessageAttachments returns delivered attachments for one message.
+func (s *Service) MessageAttachments(messageID uint) ([]store.MessageAttachment, error) {
+	var attachments []store.MessageAttachment
+	if err := s.db.Where("message_id = ?", messageID).Find(&attachments).Error; err != nil {
+		return nil, err
+	}
+	return attachments, nil
+}
+
 // CreateFromConcierge creates a new Session whose initial Settings are a
 // snapshot of concierge's identity/impressions/tool groups/plugins, with
 // the initial runtime state (reasoning effort and web-search availability)
@@ -447,34 +491,6 @@ func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store
 		return nil, fmt.Errorf("session: replace %d: %w", sessionID, err)
 	}
 	return next, nil
-}
-
-// BindUnscopedSessions assigns ProjectID to sessions created before projects
-// were a required database-level relationship. It is intended to run at startup.
-func BindUnscopedSessions(db *gorm.DB, defaultProjectID uint) error {
-	if defaultProjectID == 0 {
-		return fmt.Errorf("session: default project id is required")
-	}
-	var sessions []store.Session
-	if err := db.Where("project_id = ?", 0).Find(&sessions).Error; err != nil {
-		return fmt.Errorf("session: list sessions for default project: %w", err)
-	}
-	for index := range sessions {
-		settings := sessions[index].Settings.Data()
-		projectID := defaultProjectID
-		if settings.Project != "" {
-			var project store.Project
-			if err := db.Where("name = ?", settings.Project).First(&project).Error; err == nil {
-				projectID = project.ID
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("session: load legacy project %q: %w", settings.Project, err)
-			}
-		}
-		if err := db.Model(&sessions[index]).Update("project_id", projectID).Error; err != nil {
-			return fmt.Errorf("session: bind default project to %d: %w", sessions[index].ID, err)
-		}
-	}
-	return nil
 }
 
 // Messages returns every ChatMessage of sessionID in ascending id order.

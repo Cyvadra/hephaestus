@@ -6604,6 +6604,11 @@ body {
     outline: 0
 }
 
+.command-suggestions button.matched {
+    background: var(--dsw-alias-interactive-bg-hover);
+    box-shadow: inset 3px 0 0 var(--dsw-alias-button-primary-fill)
+}
+
 .command-suggestions code {
     color: var(--dsw-alias-button-primary-fill);
     font-family: var(--ds-font-family-code);
