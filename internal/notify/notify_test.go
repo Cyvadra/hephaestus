@@ -8,6 +8,27 @@ import (
 	"time"
 )
 
+func TestNotifierRecentConsumesEntries(t *testing.T) {
+	n := New("")
+	n.Warn("first warning")
+	n.Error("second error")
+
+	entries := n.Recent()
+	if len(entries) != 2 {
+		t.Fatalf("len(Recent()) = %d, want 2", len(entries))
+	}
+	if entries[0].Message != "first warning" {
+		t.Errorf("first entry message = %q, want %q", entries[0].Message, "first warning")
+	}
+	if entries[1].Message != "second error" {
+		t.Errorf("second entry message = %q, want %q", entries[1].Message, "second error")
+	}
+
+	if entries := n.Recent(); len(entries) != 0 {
+		t.Errorf("second Recent() returned %d entries, want 0", len(entries))
+	}
+}
+
 func TestNotifierDeliversThroughWorker(t *testing.T) {
 	received := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

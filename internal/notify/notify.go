@@ -119,12 +119,13 @@ func (n *Notifier) run(ctx context.Context) {
 	}
 }
 
-// Recent returns up to ringSize most recent entries, oldest first.
+// Recent returns and clears up to ringSize most recent entries, oldest first.
 func (n *Notifier) Recent() []Entry {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	out := make([]Entry, len(n.ring))
 	copy(out, n.ring)
+	n.ring = nil
 	return out
 }
 

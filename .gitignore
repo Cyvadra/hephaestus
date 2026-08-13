@@ -48,3 +48,6 @@ swagger.yaml
 # config/
 # *.yaml
 # *.toml
+
+
+tmp/
