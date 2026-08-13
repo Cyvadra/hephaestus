@@ -71,7 +71,7 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
           const values = lists[meta.kind] ?? []
           const label = t(`${meta.translationKey}.label`)
           const visible = values.filter(value => `${value.name} ${renderDescriptor(t, configurationSummary(meta.kind, value))}`.toLowerCase().includes(query.trim().toLowerCase()))
-          const isCollapsed = collapsed.includes(meta.kind)
+          const isCollapsed = collapsed.includes(meta.kind) && !(query.trim() && visible.length > 0)
           return (
             <section className="configuration-sidebar-group" key={meta.kind}>
               <div className="configuration-group-heading">
