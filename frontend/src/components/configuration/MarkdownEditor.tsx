@@ -1,6 +1,7 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { EditorView } from '@codemirror/view'
 import { Bold, Code2, Eye, Italic, Maximize2, PanelsTopLeft, Type } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import Markdown from '../Markdown'
@@ -75,7 +76,7 @@ export default function MarkdownEditor({ value, onChange }: { value: string; onC
             value={value}
             height="100%"
             theme={isDark ? oneDark : 'light'}
-            extensions={[markdown()]}
+            extensions={[markdown(), EditorView.lineWrapping]}
             onChange={onChange}
             basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }}
           />
