@@ -30,6 +30,7 @@ export interface Project {
   ID: number
   Name: string
   Description: string
+  AvailableConciergeList: string[]
   CreatedAt: string
   is_default: boolean
 }
@@ -181,6 +182,7 @@ export interface ConciergeConfiguration {
   impressions: string[]
   tool_groups: string[]
   plugins: string[]
+  available_projects: string[]
 }
 
 export interface WorkflowConfiguration {

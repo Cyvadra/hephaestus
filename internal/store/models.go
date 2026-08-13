@@ -155,8 +155,9 @@ type Compression struct {
 type Project struct {
 	ID uint `gorm:"primaryKey;autoIncrement"`
 
-	Name        string `gorm:"size:255;uniqueIndex"`
-	Description string `gorm:"size:1024"`
+	Name                   string   `gorm:"size:255;uniqueIndex"`
+	Description            string   `gorm:"size:1024"`
+	AvailableConciergeList []string `json:"available_concierge_list" gorm:"serializer:json;type:jsonb"`
 
 	CreatedAt time.Time
 }

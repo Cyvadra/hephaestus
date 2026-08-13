@@ -41,8 +41,10 @@ export const deleteProject = async (name: string, deleteDirectory = false) => {
   }
 }
 
-export const listConcierges = () =>
-  fetchJSON<ConciergeItem[]>(`${BASE}/concierges`)
+export const listConcierges = (project?: string) => {
+  const query = project ? `?project=${encodeURIComponent(project)}` : ''
+  return fetchJSON<ConciergeItem[]>(`${BASE}/concierges${query}`)
+}
 
 export const createSession = (concierge: string, project: string) =>
   fetchJSON<Session>(`${BASE}/sessions`, {

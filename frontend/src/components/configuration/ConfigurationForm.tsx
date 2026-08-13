@@ -74,6 +74,9 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
           <Field label="Tool Groups" wide hint="为助理启用成组工具"><TagsInput values={concierge.tool_groups} suggestions={catalog.tool_groups} onChange={tool_groups => set({ ...concierge, tool_groups })} placeholder="搜索 Tool Group" /></Field>
           <Field label="Plugins" wide hint="系统运行时已注册的插件"><TagsInput values={concierge.plugins} suggestions={catalog.plugins} onChange={plugins => set({ ...concierge, plugins })} placeholder="搜索 Plugin" /></Field>
         </Section>
+        <Section title="以下 Project 可用" description="只有列出的 Project 在新建会话时可以选择此助理。">
+          <Field label="Projects" wide hint={`${projects.length} 个 Project 可选`}><TagsInput values={concierge.available_projects} suggestions={projects} onChange={available_projects => set({ ...concierge, available_projects })} placeholder="搜索并添加 Project" /></Field>
+        </Section>
       </>
     }
     case 'workflows': {

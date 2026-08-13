@@ -68,6 +68,10 @@ func (s *Server) createSession(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	if !s.projects.IsConciergeAvailable(*boundProject, concierge.Name) {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "concierge is not available for project: " + projectName})
+		return
+	}
 
 	reasoningEffort := ""
 	if identity, ok := reg.Identities[concierge.Identity]; ok {
@@ -923,8 +927,25 @@ type conciergeItem struct {
 //	@Router			/concierges [get]
 func (s *Server) listConcierges(c *gin.Context) {
 	reg := s.registries.Current()
+	projectName := strings.TrimSpace(c.Query("project"))
+	var boundProject *store.Project
+	if projectName != "" {
+		var err error
+		boundProject, err = s.projects.GetByName(projectName)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
+				return
+			}
+			internalError(c, err)
+			return
+		}
+	}
 	items := make([]conciergeItem, 0, len(reg.Concierges))
 	for _, cg := range reg.Concierges {
+		if boundProject != nil && !s.projects.IsConciergeAvailable(*boundProject, cg.Name) {
+			continue
+		}
 		identity := reg.Identities[cg.Identity]
 		items = append(items, conciergeItem{
 			Name:            cg.Name,

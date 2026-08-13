@@ -173,14 +173,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   }, [resolvedSessionId, loadHistory])
 
   useEffect(() => {
-    void listConcierges().then(items => {
+    void listConcierges(project ?? undefined).then(items => {
       setConcierges(items)
       if (isChoosingConcierge && !items.some(concierge => concierge.name === defaultConciergeId)) {
         const fallback = items[0]
         if (fallback) onDefaultConciergeResolved?.(fallback.name)
       }
     }).catch((cause: unknown) => setError(String(cause)))
-  }, [isChoosingConcierge, defaultConciergeId, configurationRefreshKey, onDefaultConciergeResolved])
+  }, [project, isChoosingConcierge, defaultConciergeId, configurationRefreshKey, onDefaultConciergeResolved])
 
   // 历史加载 / 切换会话 / 编辑完成：整段内容被替换，直接瞬间跳到最新位置，
   // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。

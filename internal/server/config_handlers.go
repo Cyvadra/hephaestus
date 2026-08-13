@@ -41,12 +41,18 @@ func (s *Server) configurationCatalog(c *gin.Context) {
 //	@Failure		400	{object}	errorResponse
 //	@Router			/configurations/{kind} [get]
 func (s *Server) listConfigurations(c *gin.Context) {
-	values, err := s.configs.List(configurationKind(c))
+	kind := configurationKind(c)
+	values, err := s.configs.List(kind)
 	if err != nil {
 		configurationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, values)
+	response, err := s.withConciergeAvailability(kind, values)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // getConfiguration godoc
@@ -61,12 +67,18 @@ func (s *Server) listConfigurations(c *gin.Context) {
 //	@Failure		404	{object}	errorResponse
 //	@Router			/configurations/{kind}/{name} [get]
 func (s *Server) getConfiguration(c *gin.Context) {
-	value, err := s.configs.Get(configurationKind(c), c.Param("name"))
+	kind := configurationKind(c)
+	value, err := s.configs.Get(kind, c.Param("name"))
 	if err != nil {
 		configurationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, value)
+	response, err := s.withConciergeAvailability(kind, value)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // createConfiguration godoc
@@ -84,16 +96,34 @@ func (s *Server) getConfiguration(c *gin.Context) {
 //	@Router			/configurations/{kind} [post]
 func (s *Server) createConfiguration(c *gin.Context) {
 	kind := configurationKind(c)
-	value, err := decodeConfiguration(c, kind)
+	value, availableProjects, err := decodeConfiguration(c, kind)
 	if err != nil {
 		configurationError(c, err)
 		return
+	}
+	if kind == registry.KindConcierge {
+		if err := s.projects.ValidateNames(availableProjects); err != nil {
+			configurationError(c, err)
+			return
+		}
 	}
 	if err := s.configs.Create(kind, value); err != nil {
 		configurationError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, value)
+	if kind == registry.KindConcierge {
+		name, _ := registry.ValueName(kind, value)
+		if err := s.projects.SetConciergeAvailability(name, availableProjects); err != nil {
+			internalError(c, err)
+			return
+		}
+	}
+	response, err := s.withConciergeAvailability(kind, value)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, response)
 }
 
 // replaceConfiguration godoc
@@ -113,7 +143,7 @@ func (s *Server) createConfiguration(c *gin.Context) {
 //	@Router			/configurations/{kind}/{name} [put]
 func (s *Server) replaceConfiguration(c *gin.Context) {
 	kind := configurationKind(c)
-	value, err := decodeConfiguration(c, kind)
+	value, availableProjects, err := decodeConfiguration(c, kind)
 	if err != nil {
 		configurationError(c, err)
 		return
@@ -127,11 +157,28 @@ func (s *Server) replaceConfiguration(c *gin.Context) {
 		configurationError(c, fmt.Errorf("configuration name must match path name"))
 		return
 	}
+	if kind == registry.KindConcierge {
+		if err := s.projects.ValidateNames(availableProjects); err != nil {
+			configurationError(c, err)
+			return
+		}
+	}
 	if err := s.configs.Replace(kind, value); err != nil {
 		configurationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, value)
+	if kind == registry.KindConcierge {
+		if err := s.projects.SetConciergeAvailability(name, availableProjects); err != nil {
+			internalError(c, err)
+			return
+		}
+	}
+	response, err := s.withConciergeAvailability(kind, value)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // deleteConfiguration godoc
@@ -147,9 +194,17 @@ func (s *Server) replaceConfiguration(c *gin.Context) {
 //	@Failure		409	{object}	errorResponse
 //	@Router			/configurations/{kind}/{name} [delete]
 func (s *Server) deleteConfiguration(c *gin.Context) {
-	if err := s.configs.Delete(configurationKind(c), c.Param("name")); err != nil {
+	kind := configurationKind(c)
+	name := c.Param("name")
+	if err := s.configs.Delete(kind, name); err != nil {
 		configurationError(c, err)
 		return
+	}
+	if kind == registry.KindConcierge {
+		if err := s.projects.RemoveConciergeFromProjects(name); err != nil {
+			internalError(c, err)
+			return
+		}
 	}
 	c.Status(http.StatusNoContent)
 }
@@ -158,20 +213,68 @@ func configurationKind(c *gin.Context) registry.Kind {
 	return registry.Kind(c.Param("kind"))
 }
 
-func decodeConfiguration(c *gin.Context, kind registry.Kind) (any, error) {
+type conciergeConfigurationPayload struct {
+	registry.Concierge
+	AvailableProjects []string `json:"available_projects"`
+}
+
+func decodeConfiguration(c *gin.Context, kind registry.Kind) (any, []string, error) {
+	if kind == registry.KindConcierge {
+		var payload conciergeConfigurationPayload
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			return nil, nil, fmt.Errorf("invalid configuration payload: %w", err)
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return nil, nil, fmt.Errorf("invalid configuration payload: expected one JSON value")
+		}
+		return &payload.Concierge, payload.AvailableProjects, nil
+	}
 	value, err := registry.NewValue(kind)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		return nil, fmt.Errorf("invalid configuration payload: %w", err)
+		return nil, nil, fmt.Errorf("invalid configuration payload: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("invalid configuration payload: expected one JSON value")
+		return nil, nil, fmt.Errorf("invalid configuration payload: expected one JSON value")
 	}
-	return value, nil
+	return value, nil, nil
+}
+
+func (s *Server) withConciergeAvailability(kind registry.Kind, value any) (any, error) {
+	if kind != registry.KindConcierge {
+		return value, nil
+	}
+	projects, err := s.projects.List()
+	if err != nil {
+		return nil, err
+	}
+	availableProjects := func(name string) []string {
+		result := make([]string, 0)
+		for _, p := range projects {
+			if s.projects.IsConciergeAvailable(p, name) {
+				result = append(result, p.Name)
+			}
+		}
+		return result
+	}
+	switch typed := value.(type) {
+	case *registry.Concierge:
+		return conciergeConfigurationPayload{Concierge: *typed, AvailableProjects: availableProjects(typed.Name)}, nil
+	case []registry.Concierge:
+		result := make([]conciergeConfigurationPayload, 0, len(typed))
+		for _, concierge := range typed {
+			result = append(result, conciergeConfigurationPayload{Concierge: concierge, AvailableProjects: availableProjects(concierge.Name)})
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("configuration: unexpected concierge payload %T", value)
+	}
 }
 
 func configurationError(c *gin.Context, err error) {
@@ -184,7 +287,7 @@ func configurationError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case errors.Is(err, registry.ErrConflict):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
-	case strings.HasPrefix(err.Error(), "registry:") || strings.HasPrefix(err.Error(), "invalid configuration") || strings.HasPrefix(err.Error(), "configuration name"):
+	case strings.HasPrefix(err.Error(), "registry:") || strings.HasPrefix(err.Error(), "project:") || strings.HasPrefix(err.Error(), "invalid configuration") || strings.HasPrefix(err.Error(), "configuration name"):
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 	default:
 		internalError(c, err)

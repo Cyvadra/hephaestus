@@ -177,3 +177,72 @@ func TestEnsureDefault_CreatesAndReusesSystemWorkspace(t *testing.T) {
 		t.Fatalf("expected default AGENTS.md: %v", err)
 	}
 }
+
+func TestSetConciergeAvailability_UpdatesSelectedProjects(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatalf("project.New: %v", err)
+	}
+	for _, name := range []string{"test-availability-a", "test-availability-b"} {
+		if _, err := svc.Create(name, ""); err != nil {
+			t.Fatalf("Create %q: %v", name, err)
+		}
+		t.Cleanup(func() { db.Where("name = ?", name).Delete(&store.Project{}) })
+	}
+
+	if err := svc.SetConciergeAvailability("coding", []string{"test-availability-b", " test-availability-b "}); err != nil {
+		t.Fatalf("SetConciergeAvailability: %v", err)
+	}
+	selected, err := svc.GetByName("test-availability-b")
+	if err != nil {
+		t.Fatalf("GetByName selected: %v", err)
+	}
+	if !svc.IsConciergeAvailable(*selected, "coding") {
+		t.Fatalf("expected coding to be available in selected project: %+v", selected.AvailableConciergeList)
+	}
+	unselected, err := svc.GetByName("test-availability-a")
+	if err != nil {
+		t.Fatalf("GetByName unselected: %v", err)
+	}
+	if svc.IsConciergeAvailable(*unselected, "coding") {
+		t.Fatalf("did not expect coding in unselected project: %+v", unselected.AvailableConciergeList)
+	}
+
+	if err := svc.RemoveConciergeFromProjects("coding"); err != nil {
+		t.Fatalf("RemoveConciergeFromProjects: %v", err)
+	}
+	selected, err = svc.GetByName("test-availability-b")
+	if err != nil {
+		t.Fatalf("GetByName after remove: %v", err)
+	}
+	if svc.IsConciergeAvailable(*selected, "coding") {
+		t.Fatalf("expected coding to be removed: %+v", selected.AvailableConciergeList)
+	}
+}
+
+func TestSetConciergeAvailability_RejectsUnknownProjectWithoutChanges(t *testing.T) {
+	db := openTestDB(t)
+	root := t.TempDir()
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatalf("project.New: %v", err)
+	}
+	p, err := svc.Create("test-availability-unchanged", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { db.Where("name = ?", p.Name).Delete(&store.Project{}) })
+
+	if err := svc.SetConciergeAvailability("coding", []string{p.Name, "missing-project"}); err == nil {
+		t.Fatal("expected unknown project to be rejected")
+	}
+	reloaded, err := svc.GetByName(p.Name)
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if svc.IsConciergeAvailable(*reloaded, "coding") {
+		t.Fatalf("unknown project request changed availability: %+v", reloaded.AvailableConciergeList)
+	}
+}

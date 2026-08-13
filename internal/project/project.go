@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"gorm.io/gorm"
@@ -120,6 +122,93 @@ func (s *Service) List() ([]store.Project, error) {
 	return projects, nil
 }
 
+// SetConciergeAvailability makes conciergeName available only to the named
+// Projects. The complete update is transactional so a Concierge form save
+// cannot leave Projects partially updated.
+func (s *Service) SetConciergeAvailability(conciergeName string, projectNames []string) error {
+	conciergeName = strings.TrimSpace(conciergeName)
+	if conciergeName == "" {
+		return errors.New("project: concierge name must not be empty")
+	}
+	desired := normalizedNames(projectNames)
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var projects []store.Project
+		if err := tx.Order("id").Find(&projects).Error; err != nil {
+			return fmt.Errorf("project: list availability targets: %w", err)
+		}
+		known := make(map[string]struct{}, len(projects))
+		for _, p := range projects {
+			known[p.Name] = struct{}{}
+		}
+		for name := range desired {
+			if _, ok := known[name]; !ok {
+				return fmt.Errorf("project: %q not found", name)
+			}
+		}
+		for index := range projects {
+			p := &projects[index]
+			available := removeName(p.AvailableConciergeList, conciergeName)
+			if _, ok := desired[p.Name]; ok {
+				available = append(available, conciergeName)
+			}
+			available = sortedNames(available)
+			if sameNames(p.AvailableConciergeList, available) {
+				continue
+			}
+			if err := tx.Model(p).Update("available_concierge_list", available).Error; err != nil {
+				return fmt.Errorf("project: update availability for %q: %w", p.Name, err)
+			}
+		}
+		return nil
+	})
+}
+
+// ValidateNames confirms every supplied Project name exists without changing
+// availability state.
+func (s *Service) ValidateNames(projectNames []string) error {
+	desired := normalizedNames(projectNames)
+	if len(desired) == 0 {
+		return nil
+	}
+	var count int64
+	if err := s.db.Model(&store.Project{}).Where("name IN ?", mapKeys(desired)).Count(&count).Error; err != nil {
+		return fmt.Errorf("project: validate names: %w", err)
+	}
+	if count != int64(len(desired)) {
+		var projects []store.Project
+		if err := s.db.Select("name").Where("name IN ?", mapKeys(desired)).Find(&projects).Error; err != nil {
+			return fmt.Errorf("project: list validated names: %w", err)
+		}
+		found := make(map[string]struct{}, len(projects))
+		for _, p := range projects {
+			found[p.Name] = struct{}{}
+		}
+		for name := range desired {
+			if _, ok := found[name]; !ok {
+				return fmt.Errorf("project: %q not found", name)
+			}
+		}
+	}
+	return nil
+}
+
+// RemoveConciergeFromProjects removes a deleted Concierge from every Project.
+func (s *Service) RemoveConciergeFromProjects(conciergeName string) error {
+	return s.SetConciergeAvailability(conciergeName, nil)
+}
+
+// IsConciergeAvailable reports whether a Project explicitly allows the
+// Concierge. An empty list intentionally allows no Concierges.
+func (s *Service) IsConciergeAvailable(p store.Project, conciergeName string) bool {
+	for _, available := range p.AvailableConciergeList {
+		if available == conciergeName {
+			return true
+		}
+	}
+	return false
+}
+
 // Delete removes an empty non-default Project. Its on-disk directory is
 // preserved unless deleteDirectory is true.
 func (s *Service) Delete(name string, deleteDirectory bool) error {
@@ -171,4 +260,46 @@ func agentsSkeleton(name, description string) string {
 		description = "(no description provided)"
 	}
 	return fmt.Sprintf("# %s\n\n%s\n\n## Index\n\n(nothing here yet)\n", name, description)
+}
+
+func normalizedNames(values []string) map[string]struct{} {
+	names := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			names[value] = struct{}{}
+		}
+	}
+	return names
+}
+
+func removeName(values []string, name string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" && value != name {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func sortedNames(values []string) []string {
+	seen := normalizedNames(values)
+	result := make([]string, 0, len(seen))
+	for value := range seen {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func sameNames(left, right []string) bool {
+	return strings.Join(sortedNames(left), "\x00") == strings.Join(sortedNames(right), "\x00")
+}
+
+func mapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for value := range values {
+		keys = append(keys, value)
+	}
+	return keys
 }
