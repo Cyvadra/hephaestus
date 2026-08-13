@@ -52,6 +52,25 @@ type Result struct {
 	Prefix      string       `json:"-"`
 	Attachments []Attachment `json:"attachments"`
 	Warnings    []string     `json:"warnings,omitempty"`
+	created     []string
+}
+
+// Rollback removes files newly created for this result. Reused files are not
+// removed, so callers can defer it until the containing request commits.
+func (r *Result) Rollback() error {
+	var rollbackErr error
+	for _, path := range r.created {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) && rollbackErr == nil {
+			rollbackErr = err
+		}
+	}
+	r.created = nil
+	return rollbackErr
+}
+
+// Commit releases rollback ownership after the containing request persists.
+func (r *Result) Commit() {
+	r.created = nil
 }
 
 // Processor stores uploaded files below a project's uploads directory.
@@ -110,11 +129,16 @@ func (p *Processor) Process(ctx context.Context, projectDir string, files []*mul
 	for _, file := range files {
 		name, err := safeName(file.Filename)
 		if err != nil {
+			_ = result.Rollback()
 			return Result{}, err
 		}
-		path, err := p.persist(directory, name, file)
+		path, created, err := p.persist(directory, name, file)
 		if err != nil {
+			_ = result.Rollback()
 			return Result{}, err
+		}
+		if created {
+			result.created = append(result.created, path)
 		}
 		relativePath := filepath.ToSlash(filepath.Join("uploads", filepath.Base(directory), filepath.Base(path)))
 		attachment := Attachment{Path: relativePath, Size: file.Size}
@@ -131,26 +155,26 @@ func (p *Processor) Process(ctx context.Context, projectDir string, files []*mul
 	return result, nil
 }
 
-func (p *Processor) persist(directory, name string, file *multipart.FileHeader) (string, error) {
+func (p *Processor) persist(directory, name string, file *multipart.FileHeader) (string, bool, error) {
 	source, err := file.Open()
 	if err != nil {
-		return "", fmt.Errorf("upload: open %q: %w", file.Filename, err)
+		return "", false, fmt.Errorf("upload: open %q: %w", file.Filename, err)
 	}
 	defer source.Close()
 
 	temporary, err := os.CreateTemp(directory, ".upload-*")
 	if err != nil {
-		return "", fmt.Errorf("upload: create temporary file: %w", err)
+		return "", false, fmt.Errorf("upload: create temporary file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	hash := md5.New()
 	if _, err := io.Copy(io.MultiWriter(temporary, hash), source); err != nil {
 		temporary.Close()
-		return "", fmt.Errorf("upload: write %q: %w", file.Filename, err)
+		return "", false, fmt.Errorf("upload: write %q: %w", file.Filename, err)
 	}
 	if err := temporary.Close(); err != nil {
-		return "", fmt.Errorf("upload: close temporary file: %w", err)
+		return "", false, fmt.Errorf("upload: close temporary file: %w", err)
 	}
 
 	p.mu.Lock()
@@ -159,14 +183,14 @@ func (p *Processor) persist(directory, name string, file *multipart.FileHeader) 
 		candidate := filepath.Join(directory, numberedName(name, index))
 		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
 			if err := os.Rename(temporaryPath, candidate); err != nil {
-				return "", fmt.Errorf("upload: store %q: %w", file.Filename, err)
+				return "", false, fmt.Errorf("upload: store %q: %w", file.Filename, err)
 			}
-			return candidate, nil
+			return candidate, true, nil
 		} else if err != nil {
-			return "", fmt.Errorf("upload: inspect %q: %w", candidate, err)
+			return "", false, fmt.Errorf("upload: inspect %q: %w", candidate, err)
 		}
 		if sameDigest(candidate, hash.Sum(nil)) {
-			return candidate, nil
+			return candidate, false, nil
 		}
 	}
 }

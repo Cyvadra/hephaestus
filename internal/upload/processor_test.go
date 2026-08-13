@@ -64,6 +64,31 @@ func TestProcessReusesDigestAndRenamesConflicts(t *testing.T) {
 	}
 }
 
+func TestResultRollbackRemovesOnlyNewFiles(t *testing.T) {
+	project := t.TempDir()
+	processor := newProcessor(t, nil)
+	first, err := processor.Process(context.Background(), project, multipartFiles(t, filePart{name: "report.txt", content: "one"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := processor.Process(context.Background(), project, multipartFiles(t,
+		filePart{name: "report.txt", content: "one"},
+		filePart{name: "draft.txt", content: "two"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(first.Attachments[0].Path))); err != nil {
+		t.Fatalf("reused file was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(second.Attachments[1].Path))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new file remains after rollback: %v", err)
+	}
+}
+
 func TestProcessDegradesOCRAndRejectsLimits(t *testing.T) {
 	processor := newProcessor(t, nil)
 	result, err := processor.Process(context.Background(), t.TempDir(), multipartFiles(t, filePart{name: "scan.jpg", content: "image"}))
