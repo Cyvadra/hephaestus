@@ -31,7 +31,7 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
   const [lists, setLists] = useState<ConfigurationLists>({})
   const [errors, setErrors] = useState<Partial<Record<ConfigurationKind, string>>>({})
   const [loading, setLoading] = useState<ConfigurationKind[]>([])
-  const [collapsed, setCollapsed] = useState<ConfigurationKind[]>([])
+  const [collapsed, setCollapsed] = useState<ConfigurationKind[]>(() => CONFIGURATION_META.map(item => item.kind))
   const [query, setQuery] = useState('')
 
   useEffect(() => onListsChange(lists), [lists, onListsChange])
