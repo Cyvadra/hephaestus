@@ -33,7 +33,10 @@ func NewSessionSummaryPlugin(db *gorm.DB, llmClient *llm.Client, minGap time.Dur
 	return &SessionSummaryPlugin{db: db, llm: llmClient, minGap: minGap, maxInput: 4000}
 }
 
-func (p *SessionSummaryPlugin) Name() string           { return "session_summary" }
+func (p *SessionSummaryPlugin) Name() string { return "session_summary" }
+func (p *SessionSummaryPlugin) Description() string {
+	return "自动生成并定期更新会话标题和摘要。"
+}
 func (p *SessionSummaryPlugin) Timeout() time.Duration { return 20 * time.Second }
 
 // Scopes restricts this plugin to interactive sessions: session titles and

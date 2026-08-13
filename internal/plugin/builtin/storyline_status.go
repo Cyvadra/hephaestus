@@ -32,7 +32,10 @@ func NewStorylineStatusPlugin(db *gorm.DB, llmClient *llm.Client) *StorylineStat
 	return &StorylineStatusPlugin{db: db, llm: llmClient}
 }
 
-func (p *StorylineStatusPlugin) Name() string           { return "storyline_status" }
+func (p *StorylineStatusPlugin) Name() string { return "storyline_status" }
+func (p *StorylineStatusPlugin) Description() string {
+	return "在每条助手回复后追加当前剧情状态。"
+}
 func (p *StorylineStatusPlugin) Timeout() time.Duration { return 20 * time.Second }
 
 // Scopes restricts this plugin to interactive sessions: the storyline status

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
 import { UploadCloud, Zap } from 'lucide-react'
-import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
+import { createSession, editAssistantMessage, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -121,6 +121,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [dragDepth, setDragDepth] = useState(0)
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
+  const [availablePlugins, setAvailablePlugins] = useState<string[]>([])
+  const [pluginDescriptions, setPluginDescriptions] = useState<Record<string, string>>({})
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const [activeSession, setActiveSession] = useState<Session | null>(null)
   const [headerTitleDraft, setHeaderTitleDraft] = useState('')
@@ -182,6 +184,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       }
     }).catch((cause: unknown) => setError(String(cause)))
   }, [project, isChoosingConcierge, defaultConciergeId, configurationRefreshKey, onDefaultConciergeResolved])
+
+  useEffect(() => {
+    void getConfigurationCatalog().then(catalog => {
+      setAvailablePlugins(catalog.plugins)
+      setPluginDescriptions(catalog.plugin_descriptions ?? {})
+    }).catch(() => undefined)
+  }, [configurationRefreshKey])
 
   // 历史加载 / 切换会话 / 编辑完成：整段内容被替换，直接瞬间跳到最新位置，
   // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。
@@ -279,6 +288,30 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           ? [...new Set([...current.Settings.tool_groups, toolGroup])]
           : current.Settings.tool_groups.filter(currentToolGroup => currentToolGroup !== toolGroup)
         return { ...current, Settings: { ...current.Settings, tool_groups: toolGroups } }
+      })
+    } catch (cause) {
+      setError(String(cause))
+    }
+  }, [resolvedSessionId, streaming])
+
+  const handlePluginToggle = useCallback(async (plugin: string, active: boolean) => {
+    if (resolvedSessionId == null || streaming) return
+    try {
+      const response = await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `/${active ? 'activate' : 'deactivate'} plugin ${plugin}` }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: response.statusText }))
+        throw new Error(body.error ?? response.statusText)
+      }
+      setActiveSession(current => {
+        if (current == null) return current
+        const plugins = active
+          ? [...new Set([...current.Settings.plugins, plugin])]
+          : current.Settings.plugins.filter(currentPlugin => currentPlugin !== plugin)
+        return { ...current, Settings: { ...current.Settings, plugins } }
       })
     } catch (cause) {
       setError(String(cause))
@@ -535,6 +568,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     ...(sessionConcierge?.tool_groups ?? []),
   ])].filter(toolGroup => toolGroup !== 'web').sort((left, right) => left.localeCompare(right))
   const activeToolGroups = (activeSession?.Settings.tool_groups ?? []).filter(toolGroup => toolGroup !== 'web')
+  const plugins = [...new Set([...availablePlugins, ...(activeSession?.Settings.plugins ?? [])])]
+    .sort((left, right) => left.localeCompare(right))
+  const activePlugins = activeSession?.Settings.plugins ?? []
 
   useEffect(() => {
     setHeaderTitleDraft(headerTitle)
@@ -693,6 +729,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         toolGroups={toolGroups}
         activeToolGroups={activeToolGroups}
         onToolGroupToggle={(toolGroup, active) => { void handleToolGroupToggle(toolGroup, active) }}
+        plugins={plugins}
+        pluginDescriptions={pluginDescriptions}
+        activePlugins={activePlugins}
+        onPluginToggle={(plugin, active) => { void handlePluginToggle(plugin, active) }}
       />
     </div>
   )

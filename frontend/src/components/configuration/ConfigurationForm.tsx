@@ -23,7 +23,7 @@ interface Props {
   onChange: (value: Configuration) => void
 }
 
-const EMPTY_CATALOG: ConfigurationCatalog = { identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [] }
+const EMPTY_CATALOG: ConfigurationCatalog = { identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [], plugin_descriptions: {} }
 
 export default function ConfigurationForm({ kind, value, errors, isNew, catalog = EMPTY_CATALOG, onChange }: Props) {
   const set = <T extends Configuration>(next: T) => onChange(next)

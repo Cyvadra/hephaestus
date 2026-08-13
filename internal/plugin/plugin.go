@@ -97,3 +97,9 @@ type Plugin interface {
 	// discarded for this invocation; the chain continues unaffected.
 	Handle(ctx context.Context, hook Hook, phase Phase, turn TurnContext) (TurnContext, error)
 }
+
+// Describer is an optional Plugin capability that supplies a concise
+// user-facing explanation for configuration surfaces.
+type Describer interface {
+	Description() string
+}

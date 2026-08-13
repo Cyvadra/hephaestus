@@ -6543,10 +6543,16 @@ body {
     color: var(--dsw-alias-button-primary-fill)
 }
 
-.composer-tools-menu {
-    min-width: 148px;
+.composer-selection-menu {
+    width: max-content;
+    min-width: 124px;
+    max-width: calc(100vw - 24px);
     max-height: 240px;
-    overflow-y: auto
+    overflow-x: auto
+}
+
+.composer-selection-menu button {
+    white-space: nowrap
 }
 
 .composer-textarea {

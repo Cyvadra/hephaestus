@@ -57,6 +57,18 @@ func (r *Registry) KnownNames() map[string]bool {
 	return out
 }
 
+// Descriptions returns concise user-facing descriptions for registered
+// Plugins that expose the optional Describer capability.
+func (r *Registry) Descriptions() map[string]string {
+	out := make(map[string]string, len(r.byName))
+	for name, registered := range r.byName {
+		if describer, ok := registered.(Describer); ok {
+			out[name] = describer.Description()
+		}
+	}
+	return out
+}
+
 // Has reports whether name is registered by the platform.
 func (r *Registry) Has(name string) bool {
 	_, ok := r.byName[name]

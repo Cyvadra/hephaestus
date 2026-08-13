@@ -31,7 +31,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteName, setDeleteName] = useState('')
   const [notice, setNotice] = useState('')
-  const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [] })
+  const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [], plugin_descriptions: {} })
 
   useEffect(() => {
     let active = true

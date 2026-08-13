@@ -31,38 +31,45 @@ var (
 // Service manages database-backed configuration. Every write validates the
 // complete database registry before publishing it to runtime requests.
 type Service struct {
-	db           *gorm.DB
-	store        *Store
-	knownTools   map[string]bool
-	knownPlugins map[string]bool
-	mu           sync.Mutex
+	db                 *gorm.DB
+	store              *Store
+	knownTools         map[string]bool
+	knownPlugins       map[string]bool
+	pluginDescriptions map[string]string
+	mu                 sync.Mutex
 }
 
 // Catalog is the complete set of names available for configuration references.
 // It includes the static baseline, database overlays, and registered tools/plugins.
 type Catalog struct {
-	Identities  []string `json:"identities"`
-	Impressions []string `json:"impressions"`
-	ToolGroups  []string `json:"tool_groups"`
-	Concierges  []string `json:"concierges"`
-	Workflows   []string `json:"workflows"`
-	Jobs        []string `json:"jobs"`
-	Tools       []string `json:"tools"`
-	Plugins     []string `json:"plugins"`
+	Identities         []string          `json:"identities"`
+	Impressions        []string          `json:"impressions"`
+	ToolGroups         []string          `json:"tool_groups"`
+	Concierges         []string          `json:"concierges"`
+	Workflows          []string          `json:"workflows"`
+	Jobs               []string          `json:"jobs"`
+	Tools              []string          `json:"tools"`
+	Plugins            []string          `json:"plugins"`
+	PluginDescriptions map[string]string `json:"plugin_descriptions"`
 }
 
-func NewService(db *gorm.DB, store *Store, knownTools, knownPlugins map[string]bool) (*Service, error) {
+func NewService(db *gorm.DB, store *Store, knownTools, knownPlugins map[string]bool, descriptions ...map[string]string) (*Service, error) {
 	if db == nil {
 		return nil, fmt.Errorf("registry: database is required")
 	}
 	if store == nil {
 		return nil, fmt.Errorf("registry: runtime store is required")
 	}
+	pluginDescriptions := map[string]string{}
+	if len(descriptions) > 0 {
+		pluginDescriptions = descriptions[0]
+	}
 	return &Service{
-		db:           db,
-		store:        store,
-		knownTools:   cloneMap(knownTools),
-		knownPlugins: cloneMap(knownPlugins),
+		db:                 db,
+		store:              store,
+		knownTools:         cloneMap(knownTools),
+		knownPlugins:       cloneMap(knownPlugins),
+		pluginDescriptions: cloneStringMap(pluginDescriptions),
 	}, nil
 }
 
@@ -74,15 +81,24 @@ func (s *Service) Catalog() (Catalog, error) {
 
 	reg := s.store.Current()
 	return Catalog{
-		Identities:  sortedMapKeys(reg.Identities),
-		Impressions: sortedMapKeys(reg.Impressions),
-		ToolGroups:  sortedMapKeys(reg.ToolGroups),
-		Concierges:  sortedMapKeys(reg.Concierges),
-		Workflows:   sortedMapKeys(reg.Workflows),
-		Jobs:        sortedMapKeys(reg.Jobs),
-		Tools:       sortedBoolKeys(s.knownTools),
-		Plugins:     sortedBoolKeys(s.knownPlugins),
+		Identities:         sortedMapKeys(reg.Identities),
+		Impressions:        sortedMapKeys(reg.Impressions),
+		ToolGroups:         sortedMapKeys(reg.ToolGroups),
+		Concierges:         sortedMapKeys(reg.Concierges),
+		Workflows:          sortedMapKeys(reg.Workflows),
+		Jobs:               sortedMapKeys(reg.Jobs),
+		Tools:              sortedBoolKeys(s.knownTools),
+		Plugins:            sortedBoolKeys(s.knownPlugins),
+		PluginDescriptions: cloneStringMap(s.pluginDescriptions),
 	}, nil
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func sortedMapKeys[T any](values map[string]T) []string {

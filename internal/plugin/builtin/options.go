@@ -23,7 +23,10 @@ func NewOptionsPlugin(llmClient *llm.Client) *OptionsPlugin {
 	return &OptionsPlugin{llm: llmClient}
 }
 
-func (p *OptionsPlugin) Name() string           { return "options" }
+func (p *OptionsPlugin) Name() string { return "options" }
+func (p *OptionsPlugin) Description() string {
+	return "在回复后生成可选的下一条用户消息建议。"
+}
 func (p *OptionsPlugin) Timeout() time.Duration { return 15 * time.Second }
 
 // Scopes restricts this plugin to interactive sessions: suggested next-user

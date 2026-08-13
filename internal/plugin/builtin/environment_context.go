@@ -40,6 +40,10 @@ func NewEnvironmentContextPlugin(config EnvironmentContextConfig) *EnvironmentCo
 
 func (p *EnvironmentContextPlugin) Name() string { return "environment_context" }
 
+func (p *EnvironmentContextPlugin) Description() string {
+	return "在首条消息中注入时间、地点、天气和农历环境信息。"
+}
+
 func (p *EnvironmentContextPlugin) Timeout() time.Duration { return 10 * time.Second }
 
 func (p *EnvironmentContextPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plugin.Phase, turn plugin.TurnContext) (plugin.TurnContext, error) {

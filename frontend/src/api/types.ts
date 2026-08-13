@@ -370,4 +370,5 @@ export interface ConfigurationCatalog {
   jobs: string[]
   tools: string[]
   plugins: string[]
+	plugin_descriptions: Record<string, string>
 }

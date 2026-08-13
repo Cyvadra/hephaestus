@@ -143,7 +143,7 @@ func main() {
 		log.Fatalf("registry: %v", err)
 	}
 	registryStore := registry.NewStore(reg)
-	configs, err := registry.NewService(db, registryStore, toolReg.KnownNames(), pluginReg.KnownNames())
+	configs, err := registry.NewService(db, registryStore, toolReg.KnownNames(), pluginReg.KnownNames(), pluginReg.Descriptions())
 	if err != nil {
 		log.Fatalf("registry: configuration service: %v", err)
 	}

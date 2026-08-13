@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef, type KeyboardEvent } from 'react'
-import { ArrowUp, Check, Wrench, X } from 'lucide-react'
+import { useEffect, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { ArrowUp, Blocks, Check, Wrench, X } from 'lucide-react'
 import type { GenerationOptions, ReasoningEffort } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
 
@@ -17,6 +17,10 @@ interface Props {
   toolGroups: string[]
   activeToolGroups: string[]
   onToolGroupToggle: (toolGroup: string, active: boolean) => void
+  plugins: string[]
+  pluginDescriptions: Record<string, string>
+  activePlugins: string[]
+  onPluginToggle: (plugin: string, active: boolean) => void
 }
 
 const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
@@ -25,15 +29,13 @@ const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
   { value: 'none', label: '即答' },
 ]
 
-export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle }: Props) {
+export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle }: Props) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const firstMatchedCommandRef = useRef<HTMLButtonElement>(null)
   const reasoningRef = useRef<HTMLDivElement>(null)
-  const toolsRef = useRef<HTMLDivElement>(null)
   const reasoningMenu = useHoverMenu(reasoningRef)
-  const toolsMenu = useHoverMenu(toolsRef)
 
   const isCommand = text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
@@ -186,47 +188,29 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                 <span>联网</span>
               </button>
               {toolGroups.length > 0 && (
-                <div
-                  className="composer-reasoning-control"
-                  ref={toolsRef}
-                  onMouseEnter={() => { if (!controlsDisabled) toolsMenu.openOnHover() }}
-                  onMouseLeave={toolsMenu.scheduleClose}
-                >
-                  <button
-                    type="button"
-                    className={'composer-option-btn' + (toolsMenu.open ? ' active' : '')}
-                    disabled={controlsDisabled}
-                    aria-haspopup="menu"
-                    aria-expanded={toolsMenu.open}
-                    onClick={toolsMenu.pinOpen}
-                    onFocus={() => {
-                      if (!controlsDisabled) toolsMenu.pinOpen()
-                    }}
-                    title="选择工具组"
-                  >
-                    <Wrench aria-hidden="true" size={14} />
-                    <span>工具</span>
-                  </button>
-                  {toolsMenu.open && (
-                    <div className="composer-options-menu composer-tools-menu" role="menu" aria-label="工具组" onMouseEnter={toolsMenu.cancelClose} onMouseLeave={toolsMenu.scheduleClose}>
-                      {toolGroups.map(toolGroup => {
-                        const active = activeToolGroups.includes(toolGroup)
-                        return (
-                          <button
-                            type="button"
-                            role="menuitemcheckbox"
-                            aria-checked={active}
-                            key={toolGroup}
-                            onClick={() => onToolGroupToggle(toolGroup, !active)}
-                          >
-                            <span>{toolGroup}</span>
-                            {active && <Check aria-hidden="true" size={14} />}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
+                <SelectableOptionsControl
+                  label="工具"
+                  menuLabel="工具组"
+                  title="选择工具组"
+                  icon={<Wrench aria-hidden="true" size={14} />}
+                  options={toolGroups}
+                  activeOptions={activeToolGroups}
+                  disabled={controlsDisabled}
+                  onToggle={onToolGroupToggle}
+                />
+              )}
+              {plugins.length > 0 && (
+                <SelectableOptionsControl
+                  label="插件"
+                  menuLabel="插件"
+                  title="选择插件"
+                  icon={<Blocks aria-hidden="true" size={14} />}
+                  options={plugins}
+                  activeOptions={activePlugins}
+                  descriptions={pluginDescriptions}
+                  disabled={controlsDisabled}
+                  onToggle={onPluginToggle}
+                />
               )}
             </div>
             <div className="composer-submit-controls">
@@ -261,6 +245,68 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+interface SelectableOptionsControlProps {
+  label: string
+  menuLabel: string
+  title: string
+  icon: ReactNode
+  options: string[]
+  activeOptions: string[]
+  descriptions?: Record<string, string>
+  disabled: boolean
+  onToggle: (option: string, active: boolean) => void
+}
+
+function SelectableOptionsControl({ label, menuLabel, title, icon, options, activeOptions, descriptions = {}, disabled, onToggle }: SelectableOptionsControlProps) {
+  const controlRef = useRef<HTMLDivElement>(null)
+  const menu = useHoverMenu(controlRef)
+
+  return (
+    <div
+      className="composer-reasoning-control"
+      ref={controlRef}
+      onMouseEnter={() => { if (!disabled) menu.openOnHover() }}
+      onMouseLeave={menu.scheduleClose}
+    >
+      <button
+        type="button"
+        className={'composer-option-btn' + (menu.open ? ' active' : '')}
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={menu.open}
+        onClick={menu.pinOpen}
+        onFocus={() => {
+          if (!disabled) menu.pinOpen()
+        }}
+        title={title}
+      >
+        {icon}
+        <span>{label}</span>
+      </button>
+      {menu.open && (
+        <div className="composer-options-menu composer-selection-menu" role="menu" aria-label={menuLabel} onMouseEnter={menu.cancelClose} onMouseLeave={menu.scheduleClose}>
+          {options.map(option => {
+            const active = activeOptions.includes(option)
+            return (
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={active}
+                key={option}
+                title={descriptions[option]}
+                onClick={() => onToggle(option, !active)}
+              >
+                <span>{option}</span>
+                {active && <Check aria-hidden="true" size={14} />}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
