@@ -53,6 +53,9 @@ export const createSession = (concierge: string, project: string) =>
     body: JSON.stringify({ concierge, project }),
   })
 
+export const forkSessionAtMessage = (sessionId: number, messageId: number) =>
+  fetchJSON<Session>(`${BASE}/sessions/${sessionId}/messages/${messageId}/fork`, { method: 'POST' })
+
 export const updateSession = (sessionId: number, changes: { title?: string; archived?: boolean; pinned?: boolean; reasoningEffort?: string; enableWebSearch?: boolean }) =>
   fetchJSON<Session>(`${BASE}/sessions/${sessionId}`, {
     method: 'PATCH',

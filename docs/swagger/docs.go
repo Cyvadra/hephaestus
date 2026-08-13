@@ -638,6 +638,54 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/{id}/attachments/{attachmentID}/download": {
+            "get": {
+                "description": "Downloads a file explicitly delivered by an assistant message. The referenced Project file is revalidated at download time.",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Download an assistant attachment",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Attachment ID",
+                        "name": "attachmentID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "Gone",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sessions/{id}/history": {
             "get": {
                 "description": "Returns the session row plus every message in its (unpruned) tree, so the client can reconstruct and switch between branches itself.",
@@ -876,6 +924,54 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/sessions/{id}/messages/{messageID}/fork": {
+            "post": {
+                "description": "Creates a new session from the source session's conversation path ending at the selected assistant message.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Fork a session from an assistant message",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Assistant message ID",
+                        "name": "messageID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Session"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/internal_server.errorResponse"
                         }
@@ -1211,6 +1307,17 @@ const docTemplate = `{
         "datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_store_SessionSettings": {
             "type": "object"
         },
+        "github_com_Cyvadra_hephaestus_internal_command.SessionTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "project": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_Cyvadra_hephaestus_internal_registry.Catalog": {
             "type": "object",
             "properties": {
@@ -1235,6 +1342,12 @@ const docTemplate = `{
                 "jobs": {
                     "type": "array",
                     "items": {
+                        "type": "string"
+                    }
+                },
+                "plugin_descriptions": {
+                    "type": "object",
+                    "additionalProperties": {
                         "type": "string"
                     }
                 },
@@ -1267,6 +1380,13 @@ const docTemplate = `{
         "github_com_Cyvadra_hephaestus_internal_store.ChatMessage": {
             "type": "object",
             "properties": {
+                "attachments": {
+                    "description": "Attachments are files explicitly delivered by the assistant. They are\nloaded for API responses and never included in LLM context messages.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.MessageAttachment"
+                    }
+                },
                 "content": {
                     "type": "string"
                 },
@@ -1368,9 +1488,48 @@ const docTemplate = `{
                 "JobRunInterrupted"
             ]
         },
+        "github_com_Cyvadra_hephaestus_internal_store.MessageAttachment": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "messageID": {
+                    "type": "integer"
+                },
+                "mime": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "projectID": {
+                    "type": "integer"
+                },
+                "sessionID": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "integer",
+                    "format": "int64"
+                }
+            }
+        },
         "github_com_Cyvadra_hephaestus_internal_store.Project": {
             "type": "object",
             "properties": {
+                "available_concierge_list": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -1767,6 +1926,14 @@ const docTemplate = `{
                     "description": "Metadata carries any plugin-attached data for this turn (e.g.\nsuggested next-user-message alternatives).",
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "session_target": {
+                    "description": "SessionTarget asks the client to navigate to another existing session.\nIt is set only by slash commands and does not represent a session write.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_command.SessionTarget"
+                        }
+                    ]
                 }
             }
         },

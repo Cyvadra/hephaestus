@@ -493,6 +493,152 @@ func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store
 	return next, nil
 }
 
+// ForkAt creates an independent session from the path ending at assistant
+// messageID. The message must belong to sessionID and can be on any retained
+// branch, not only the session's currently active one.
+func (s *Service) ForkAt(sessionID, messageID uint) (*store.Session, error) {
+	return s.fork(sessionID, &messageID)
+}
+
+func (s *Service) fork(sessionID uint, leafID *uint) (*store.Session, error) {
+	var fork store.Session
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var source store.Session
+		if err := tx.First(&source, sessionID).Error; err != nil {
+			return err
+		}
+
+		path, err := forkPath(tx, source, leafID)
+		if err != nil {
+			return fmt.Errorf("session: load fork path: %w", err)
+		}
+
+		fork = store.Session{
+			ProjectID:       source.ProjectID,
+			SourceConcierge: source.SourceConcierge,
+			Settings:        datatypes.NewJSONType(copySettings(source.Settings.Data())),
+			ReasoningEffort: source.ReasoningEffort,
+			EnableWebSearch: copyBool(source.EnableWebSearch),
+			Title:           forkTitle(source.Title),
+		}
+		if err := tx.Create(&fork).Error; err != nil {
+			return fmt.Errorf("session: create fork: %w", err)
+		}
+
+		var parentID *uint
+		for _, sourceMessage := range path {
+			message := store.ChatMessage{
+				SessionID:        fork.ID,
+				ParentMessageID:  parentID,
+				Timestamp:        sourceMessage.Timestamp,
+				Role:             sourceMessage.Role,
+				Content:          sourceMessage.Content,
+				Status:           sourceMessage.Status,
+				ReasoningContent: sourceMessage.ReasoningContent,
+				ToolCalls:        append(datatypes.JSON(nil), sourceMessage.ToolCalls...),
+				ToolCallID:       sourceMessage.ToolCallID,
+			}
+			if err := tx.Create(&message).Error; err != nil {
+				return fmt.Errorf("session: copy fork message %d: %w", sourceMessage.ID, err)
+			}
+
+			if len(sourceMessage.Attachments) > 0 {
+				attachments := make([]store.MessageAttachment, 0, len(sourceMessage.Attachments))
+				for _, sourceAttachment := range sourceMessage.Attachments {
+					attachments = append(attachments, store.MessageAttachment{
+						SessionID: fork.ID,
+						MessageID: message.ID,
+						ProjectID: fork.ProjectID,
+						Path:      sourceAttachment.Path,
+						Name:      sourceAttachment.Name,
+						Size:      sourceAttachment.Size,
+						MIME:      sourceAttachment.MIME,
+					})
+				}
+				if err := tx.Create(&attachments).Error; err != nil {
+					return fmt.Errorf("session: copy fork attachments for message %d: %w", sourceMessage.ID, err)
+				}
+			}
+
+			parentID = &message.ID
+		}
+		if parentID != nil {
+			if err := tx.Model(&fork).Update("active_leaf_message_id", *parentID).Error; err != nil {
+				return fmt.Errorf("session: set fork active leaf: %w", err)
+			}
+			fork.ActiveLeafMessageID = parentID
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("session: fork %d: %w", sessionID, err)
+	}
+	return &fork, nil
+}
+
+func forkPath(db *gorm.DB, sess store.Session, leafID *uint) ([]store.ChatMessage, error) {
+	if leafID == nil {
+		return nil, nil
+	}
+	var leaf store.ChatMessage
+	if err := db.Where("id = ? AND session_id = ?", *leafID, sess.ID).First(&leaf).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrMessageNotFound
+		}
+		return nil, err
+	}
+	if leaf.Role != "assistant" {
+		return nil, ErrNotAssistant
+	}
+	all, err := loadMessages(db, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	return walkActivePath(all, leafID)
+}
+
+func activePath(db *gorm.DB, sess store.Session) ([]store.ChatMessage, error) {
+	if sess.ActiveLeafMessageID == nil {
+		return nil, nil
+	}
+	all, err := loadMessages(db, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	return walkActivePath(all, sess.ActiveLeafMessageID)
+}
+
+func copySettings(settings store.SessionSettings) store.SessionSettings {
+	return store.SessionSettings{
+		Identity:    settings.Identity,
+		Impressions: append([]string(nil), settings.Impressions...),
+		ToolGroups:  append([]string(nil), settings.ToolGroups...),
+		Plugins:     append([]string(nil), settings.Plugins...),
+		Project:     settings.Project,
+	}
+}
+
+func copyBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func forkTitle(sourceTitle string) string {
+	if sourceTitle == "" {
+		return ""
+	}
+	const suffix = " (fork)"
+	const maxRunes = 64
+	runes := []rune(sourceTitle)
+	if len(runes) > maxRunes-len([]rune(suffix)) {
+		runes = runes[:maxRunes-len([]rune(suffix))]
+	}
+	return string(runes) + suffix
+}
+
 // Messages returns every ChatMessage of sessionID in ascending id order.
 func (s *Service) Messages(sessionID uint) ([]store.ChatMessage, error) {
 	return loadMessages(s.db, sessionID)

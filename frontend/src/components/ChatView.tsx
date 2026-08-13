@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
 import { UploadCloud, Zap } from 'lucide-react'
-import { createSession, editAssistantMessage, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
+import { createSession, editAssistantMessage, forkSessionAtMessage, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -113,6 +113,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<number | null>(null)
   const [continuingMessageId, setContinuingMessageId] = useState<number | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
+  const [forking, setForking] = useState(false)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
   const [commandHelp, setCommandHelp] = useState<string | null>(readCommandHelpCache)
   const [commandHelpLoading, setCommandHelpLoading] = useState(false)
@@ -544,6 +545,20 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
   }, [resolvedSessionId])
 
+  const handleForkAtMessage = useCallback(async (messageId: number) => {
+    if (resolvedSessionId == null || streaming || forking) return
+    setForking(true)
+    setError(null)
+    try {
+      const fork = await forkSessionAtMessage(resolvedSessionId, messageId)
+      onSessionCreated?.(fork.ID)
+    } catch (cause) {
+      setError(String(cause))
+    } finally {
+      setForking(false)
+    }
+  }, [forking, onSessionCreated, resolvedSessionId, streaming])
+
   const handlePermissionResponse = useCallback(async (_request: import('../api/types').InteractionRequest, approved: boolean): Promise<boolean> => {
   if (resolvedSessionId == null) return false
   try {
@@ -681,6 +696,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               onEditAssistant={(content, reasoningContent) => handleEditAssistant(item.message.ID, content, reasoningContent)}
               editSaving={editingMessageId === item.message.ID}
               editDisabled={streaming || editingMessageId != null}
+              forkDisabled={streaming || forking}
+              onFork={idx === lastAssistantIdx ? undefined : () => void handleForkAtMessage(item.message.ID)}
               onRegenerate={idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
               onContinue={idx === lastAssistantIdx && !streaming && item.message.Status === 'incomplete' && item.message.Content.trim()
                 ? () => handleContinue(item.message.ID)

@@ -85,6 +85,45 @@ func (s *Server) createSession(c *gin.Context) {
 	c.JSON(http.StatusCreated, sess)
 }
 
+// forkSessionAtMessage godoc
+//
+//	@Summary		Fork a session from an assistant message
+//	@Description	Creates a new session from the source session's conversation path ending at the selected assistant message.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id			path	int	true	"Session ID"
+//	@Param			messageID	path	int	true	"Assistant message ID"
+//	@Success		201		{object}	store.Session
+//	@Failure		400		{object}	errorResponse
+//	@Failure		404		{object}	errorResponse
+//	@Router			/sessions/{id}/messages/{messageID}/fork [post]
+func (s *Server) forkSessionAtMessage(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	messageID, err := strconv.ParseUint(c.Param("messageID"), 10, 64)
+	if err != nil || messageID == 0 {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "message ID must be a positive integer"})
+		return
+	}
+
+	fork, err := s.sessions.ForkAt(sessionID, uint(messageID))
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound), errors.Is(err, session.ErrMessageNotFound):
+			c.JSON(http.StatusNotFound, errorResponse{Error: "session or assistant message not found"})
+		case errors.Is(err, session.ErrNotAssistant):
+			c.JSON(http.StatusBadRequest, errorResponse{Error: "message must be an assistant message"})
+		default:
+			internalError(c, err)
+		}
+		return
+	}
+	c.JSON(http.StatusCreated, fork)
+}
+
 type historyResponse struct {
 	Session         store.Session       `json:"session"`
 	Messages        []store.ChatMessage `json:"messages"`

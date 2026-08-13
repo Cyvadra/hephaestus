@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Cyvadra/hephaestus/internal/store"
@@ -45,5 +46,33 @@ func TestWalkActivePath_MissingMessage(t *testing.T) {
 	_, err := walkActivePath([]store.ChatMessage{{ID: 1}}, idPtr(99))
 	if err == nil {
 		t.Fatal("expected error for missing message id")
+	}
+}
+
+func TestForkTitle(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "empty", source: "", want: ""},
+		{name: "ordinary", source: "Research notes", want: "Research notes (fork)"},
+		{
+			name:   "truncates runes",
+			source: strings.Repeat("界", 70),
+			want:   strings.Repeat("界", 57) + " (fork)",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := forkTitle(test.source)
+			if got != test.want {
+				t.Errorf("forkTitle(%q) = %q, want %q", test.source, got, test.want)
+			}
+			if len([]rune(got)) > 64 {
+				t.Errorf("fork title has %d runes, want at most 64", len([]rune(got)))
+			}
+		})
 	}
 }

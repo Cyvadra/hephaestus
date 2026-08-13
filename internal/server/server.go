@@ -62,6 +62,7 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 	api.GET("/sessions/:id/history", s.getHistory)
 	api.GET("/sessions/:id/attachments/:attachmentID/download", s.downloadAttachment)
 	api.POST("/sessions/:id/messages", s.sendMessage)
+	api.POST("/sessions/:id/messages/:messageID/fork", s.forkSessionAtMessage)
 	api.POST("/sessions/:id/messages/:messageID/edit", s.editAssistantMessage)
 	api.POST("/sessions/:id/messages/stream", s.streamMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)

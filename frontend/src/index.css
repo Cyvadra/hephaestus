@@ -6089,6 +6089,20 @@ body {
     padding-left: 8px
 }
 
+.message-fork-btn {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s var(--ds-ease-in-out)
+}
+
+.message-row.assistant:hover .message-fork-btn,
+.message-row.assistant:focus-within .message-fork-btn {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto
+}
+
 .message-action-btn,.branch-switcher button {
     color: var(--dsw-alias-label-secondary);
     border-radius: 6px;

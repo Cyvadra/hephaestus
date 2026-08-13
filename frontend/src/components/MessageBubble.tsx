@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { Check, Copy, Download, FileText, Pencil, RefreshCw, StepForward } from 'lucide-react'
+import { Check, Copy, Download, FileText, GitFork, Pencil, RefreshCw, StepForward } from 'lucide-react'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
 import { attachmentDownloadURL } from '../api/client'
@@ -16,11 +16,13 @@ interface Props {
   onEditAssistant: (content: string, reasoningContent: string) => Promise<void>
   editSaving?: boolean
   editDisabled?: boolean
+  forkDisabled?: boolean
+  onFork?: () => void
   onRegenerate?: () => void
   onContinue?: () => void
 }
 
-export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, onRegenerate, onContinue }: Props) {
+export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, onFork, onRegenerate, onContinue }: Props) {
   const [editing, setEditing] = useState(false)
   const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
   const [editText, setEditText] = useState(msg.Content)
@@ -272,6 +274,17 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                     title="继续生成"
                   >
                     <StepForward />
+                  </button>
+                )}
+                {onFork && (
+                  <button
+                    onClick={onFork}
+                    className="message-action-btn message-icon-btn message-fork-btn"
+                    disabled={forkDisabled}
+                    aria-label="创建会话分支"
+                    title="创建会话分支"
+                  >
+                    <GitFork />
                   </button>
                 )}
               </div>
