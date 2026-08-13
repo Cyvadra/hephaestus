@@ -107,7 +107,7 @@ func TestIntegration_SchedulerEnvReflectsState(t *testing.T) {
 		t.Fatalf("create state: %v", err)
 	}
 
-	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, now)
+	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, reg.Jobs[jobName], now)
 	if err != nil {
 		t.Fatalf("buildEnv: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestIntegration_SchedulerEnvAllowsMissingState(t *testing.T) {
 	s := newServices(t, reg, &fakeRunner{})
 	now := time.Now()
 
-	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, now)
+	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, reg.Jobs[jobName], now)
 	if err != nil {
 		t.Fatalf("buildEnv without state: %v", err)
 	}
@@ -162,11 +162,55 @@ func TestIntegration_SchedulerEnvResetsExecutionsOnNewDay(t *testing.T) {
 		t.Fatalf("create state: %v", err)
 	}
 
-	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, now)
+	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, reg.Jobs[jobName], now)
 	if err != nil {
 		t.Fatalf("buildEnv: %v", err)
 	}
 	if env.ExecutionsToday != 0 {
 		t.Fatalf("expected stale counter to read as zero on a new day, got %d", env.ExecutionsToday)
+	}
+}
+
+func TestIntegration_SchedulerEnvUsesOnlyJobProjects(t *testing.T) {
+	jobName := uniqueJobName("scoped")
+	projectName := uniqueJobName("target-project")
+	unrelatedProjectName := uniqueJobName("other-project")
+	reg := baseRegistry()
+	job := morningJob(jobName, 1)
+	job.Workflows[0].Project = projectName
+	reg.Jobs[jobName] = job
+	s := newServices(t, reg, &fakeRunner{})
+	now := time.Now().Truncate(time.Microsecond)
+
+	target := store.Project{Name: projectName}
+	unrelated := store.Project{Name: unrelatedProjectName}
+	if err := s.db.Create(&target).Error; err != nil {
+		t.Fatalf("create target project: %v", err)
+	}
+	if err := s.db.Create(&unrelated).Error; err != nil {
+		t.Fatalf("create unrelated project: %v", err)
+	}
+	targetSession := store.Session{ProjectID: target.ID}
+	unrelatedSession := store.Session{ProjectID: unrelated.ID}
+	if err := s.db.Create(&targetSession).Error; err != nil {
+		t.Fatalf("create target session: %v", err)
+	}
+	if err := s.db.Create(&unrelatedSession).Error; err != nil {
+		t.Fatalf("create unrelated session: %v", err)
+	}
+	targetAt := now.Add(-2 * time.Hour)
+	if err := s.db.Create(&store.ChatMessage{SessionID: targetSession.ID, Timestamp: targetAt, Role: "user", Content: "target"}).Error; err != nil {
+		t.Fatalf("create target message: %v", err)
+	}
+	if err := s.db.Create(&store.ChatMessage{SessionID: unrelatedSession.ID, Timestamp: now.Add(-time.Minute), Role: "user", Content: "unrelated"}).Error; err != nil {
+		t.Fatalf("create unrelated message: %v", err)
+	}
+
+	env, err := newScheduler(s, reg, func() time.Time { return now }).buildEnv(jobName, job, now)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	if !env.LastMessageAt.Equal(targetAt) || env.IdleSeconds != 2*60*60 {
+		t.Fatalf("expected target-project activity only, got %+v", env)
 	}
 }

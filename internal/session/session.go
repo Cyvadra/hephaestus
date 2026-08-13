@@ -35,6 +35,20 @@ var (
 	ErrEmptyContent     = errors.New("session: message content cannot be empty")
 )
 
+// Patch describes user-editable session metadata. Nil fields are unchanged.
+type Patch struct {
+	Title           *string
+	Archived        *bool
+	Pinned          *bool
+	ReasoningEffort *string
+	EnableWebSearch *bool
+}
+
+// ValidationError reports a rejected session metadata change.
+type ValidationError string
+
+func (e ValidationError) Error() string { return string(e) }
+
 // New creates a Service backed by db.
 func New(db *gorm.DB) *Service { return &Service{db: db} }
 
@@ -55,6 +69,75 @@ func (s *Service) CreateFromConcierge(concierge registry.Concierge, projectID ui
 		return nil, fmt.Errorf("session: create: %w", err)
 	}
 	return sess, nil
+}
+
+// Update applies a validated metadata patch atomically and returns the
+// current session row.
+func (s *Service) Update(sessionID uint, patch Patch) (*store.Session, error) {
+	var updated store.Session
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&updated, sessionID).Error; err != nil {
+			return err
+		}
+		if patch.Title != nil {
+			title := strings.TrimSpace(*patch.Title)
+			if title == "" {
+				return ValidationError("session title cannot be empty")
+			}
+			if len([]rune(title)) > 64 {
+				return ValidationError("session title must be 64 characters or fewer")
+			}
+			updated.Title = title
+		}
+		if patch.ReasoningEffort != nil {
+			switch *patch.ReasoningEffort {
+			case registry.ReasoningNone, registry.ReasoningLow, registry.ReasoningHigh, registry.ReasoningMax:
+				updated.ReasoningEffort = *patch.ReasoningEffort
+			default:
+				return ValidationError("reasoning_effort must be none, low, high, or max")
+			}
+		}
+		if patch.Archived != nil {
+			updated.FlagArchived = *patch.Archived
+			if updated.FlagArchived {
+				updated.FlagPinned = 0
+			}
+		}
+		if patch.Pinned != nil {
+			if *patch.Pinned && updated.FlagArchived {
+				return ValidationError("an archived session cannot be pinned")
+			}
+			if *patch.Pinned {
+				updated.FlagPinned = 1
+			} else {
+				updated.FlagPinned = 0
+			}
+		}
+		if patch.EnableWebSearch != nil {
+			updated.EnableWebSearch = patch.EnableWebSearch
+		}
+		return tx.Save(&updated).Error
+	})
+	if err != nil {
+		return nil, fmt.Errorf("session: update %d: %w", sessionID, err)
+	}
+	return &updated, nil
+}
+
+// Delete removes a session and its dependent conversation records atomically.
+func (s *Service) Delete(sessionID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var sess store.Session
+		if err := tx.First(&sess, sessionID).Error; err != nil {
+			return err
+		}
+		for _, model := range []any{&store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
+			if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Delete(&sess).Error
+	})
 }
 
 // SettingsFromConcierge copies a concierge's mutable session settings.

@@ -78,7 +78,7 @@ func (s *Scheduler) evaluate(ctx context.Context) {
 			s.notify.Error("job: %q trigger compile: %v", jobName, err)
 			continue
 		}
-		env, err := s.buildEnv(jobName, now)
+		env, err := s.buildEnv(jobName, job, now)
 		if err != nil {
 			s.notify.Error("job: %q trigger env: %v", jobName, err)
 			continue
@@ -118,8 +118,9 @@ func (s *Scheduler) compileTrigger(src string) (*registry.Trigger, error) {
 }
 
 // buildEnv assembles the trigger environment from the host-local clock, the
-// latest persisted chat message, and the job's durable state.
-func (s *Scheduler) buildEnv(jobName string, now time.Time) (registry.TriggerEnv, error) {
+// latest persisted chat message in a Project targeted by the Job, and the
+// job's durable state.
+func (s *Scheduler) buildEnv(jobName string, job registry.Job, now time.Time) (registry.TriggerEnv, error) {
 	localDate := now.Format("2006-01-02")
 	env := registry.TriggerEnv{
 		Now:     now,
@@ -129,8 +130,13 @@ func (s *Scheduler) buildEnv(jobName string, now time.Time) (registry.TriggerEnv
 		Weekday: int(now.Weekday()),
 	}
 
+	projectNames := jobProjectNames(job)
 	var last store.ChatMessage
-	switch err := s.db.Order("timestamp DESC, id DESC").First(&last).Error; {
+	query := s.db.Joins("JOIN sessions ON sessions.id = chat_messages.session_id")
+	if len(projectNames) > 0 {
+		query = query.Joins("JOIN projects ON projects.id = sessions.project_id").Where("projects.name IN ?", projectNames)
+	}
+	switch err := query.Order("chat_messages.timestamp DESC, chat_messages.id DESC").First(&last).Error; {
 	case err == nil:
 		env.HasMessages = true
 		env.LastMessageAt = last.Timestamp
@@ -160,4 +166,20 @@ func (s *Scheduler) buildEnv(jobName string, now time.Time) (registry.TriggerEnv
 		}
 	}
 	return env, nil
+}
+
+func jobProjectNames(job registry.Job) []string {
+	seen := make(map[string]struct{}, len(job.Workflows))
+	projects := make([]string, 0, len(job.Workflows))
+	for _, binding := range job.Workflows {
+		if binding.Project == "" {
+			continue
+		}
+		if _, exists := seen[binding.Project]; exists {
+			continue
+		}
+		seen[binding.Project] = struct{}{}
+		projects = append(projects, binding.Project)
+	}
+	return projects
 }

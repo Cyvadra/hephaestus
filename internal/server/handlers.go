@@ -345,7 +345,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
 	result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(nil))
-	if err != nil {
+	if err != nil && result == nil {
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
 			writeStaleLeaf(c)
 			return
@@ -637,8 +637,11 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 	c.Writer.Flush()
 
 	deltas := make(chan chat.StreamEvent, 16)
-	resultCh := make(chan *chat.TurnResult, 1)
-	errCh := make(chan error, 1)
+	type turnOutcome struct {
+		result *chat.TurnResult
+		err    error
+	}
+	outcomes := make(chan turnOutcome, 1)
 
 	go func() {
 		defer close(deltas)
@@ -648,11 +651,7 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 			case <-ctx.Done():
 			}
 		})
-		if err != nil {
-			errCh <- err
-			return
-		}
-		resultCh <- result
+		outcomes <- turnOutcome{result: result, err: err}
 	}()
 
 	sequence := uint64(0)
@@ -673,20 +672,20 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 		}
 	}
 
-	select {
-	case err := <-errCh:
-		if errors.Is(err, session.ErrStaleActiveLeaf) {
+	outcome := <-outcomes
+	if outcome.err != nil && outcome.result == nil {
+		if errors.Is(outcome.err, session.ErrStaleActiveLeaf) {
 			streamEvent("error", staleLeafMessage)
 		} else {
-			streamEvent("error", err.Error())
+			streamEvent("error", outcome.err.Error())
 		}
-	case result := <-resultCh:
-		streamEvent("done", sendMessageResponse{
-			Message:            result.Message,
-			Metadata:           result.Metadata,
-			BranchNotActivated: result.Metadata["stale_active_leaf"] == true,
-		})
+		return
 	}
+	streamEvent("done", sendMessageResponse{
+		Message:            outcome.result.Message,
+		Metadata:           outcome.result.Metadata,
+		BranchNotActivated: outcome.result.Metadata["stale_active_leaf"] == true,
+	})
 }
 
 type errorResponse struct {
@@ -861,75 +860,23 @@ func (s *Server) updateSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: "no session changes provided"})
 		return
 	}
-	if req.ReasoningEffort != nil {
-		switch *req.ReasoningEffort {
-		case registry.ReasoningNone, registry.ReasoningLow, registry.ReasoningHigh, registry.ReasoningMax:
-		default:
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "reasoning_effort must be none, low, high, or max"})
-			return
-		}
-	}
-
-	var title string
-	if req.Title != nil {
-		title = strings.TrimSpace(*req.Title)
-		if title == "" {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "session title cannot be empty"})
-			return
-		}
-		if len([]rune(title)) > 64 {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "session title must be 64 characters or fewer"})
-			return
-		}
-	}
-	var sess store.Session
-	if err := s.db.First(&sess, sessionID).Error; err != nil {
+	sess, err := s.sessions.Update(sessionID, session.Patch{
+		Title:           req.Title,
+		Archived:        req.Archived,
+		Pinned:          req.Pinned,
+		ReasoningEffort: req.ReasoningEffort,
+		EnableWebSearch: req.EnableWebSearch,
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
-	willBeArchived := sess.FlagArchived
-	if req.Archived != nil {
-		willBeArchived = *req.Archived
-	}
-	if req.Pinned != nil && *req.Pinned && willBeArchived {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "an archived session cannot be pinned"})
-		return
-	}
-	if req.Title != nil {
-		if err := s.db.Model(&sess).Update("title", title).Error; err != nil {
-			internalError(c, err)
+	if err != nil {
+		var validation session.ValidationError
+		if errors.As(err, &validation) {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: validation.Error()})
 			return
 		}
-	}
-	metadataChanges := map[string]any{}
-	if req.Archived != nil {
-		metadataChanges["flag_archived"] = *req.Archived
-		if *req.Archived {
-			metadataChanges["flag_pinned"] = uint8(0)
-		}
-	}
-	// The willBeArchived check above already rejects pinning an archived
-	// session, so a pin request here always wins over the zeroing above.
-	if req.Pinned != nil {
-		pinned := uint8(0)
-		if *req.Pinned {
-			pinned = 1
-		}
-		metadataChanges["flag_pinned"] = pinned
-	}
-	if req.ReasoningEffort != nil {
-		metadataChanges["reasoning_effort"] = *req.ReasoningEffort
-	}
-	if req.EnableWebSearch != nil {
-		metadataChanges["enable_web_search"] = *req.EnableWebSearch
-	}
-	if len(metadataChanges) > 0 {
-		if err := s.db.Model(&sess).UpdateColumns(metadataChanges).Error; err != nil {
-			internalError(c, err)
-			return
-		}
-	}
-	if err := s.db.First(&sess, sessionID).Error; err != nil {
 		internalError(c, err)
 		return
 	}
@@ -951,18 +898,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 		return
 	}
 
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		var sess store.Session
-		if err := tx.First(&sess, sessionID).Error; err != nil {
-			return err
-		}
-		for _, model := range []any{&store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
-			if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
-				return err
-			}
-		}
-		return tx.Delete(&sess).Error
-	})
+	err = s.sessions.Delete(sessionID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
 		return

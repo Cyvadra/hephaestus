@@ -125,6 +125,12 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		p.notify.Error("chat: session %d: %v; message not persisted", sessionID, err)
 		return prep, err
 	}
+	if prep.sess.EnableWebSearch != nil && !*prep.sess.EnableWebSearch {
+		toolset = filterTools(toolset, map[string]struct{}{
+			"web_search": {},
+			"web_fetch":  {},
+		})
+	}
 	prep.toolset = toolset
 
 	proj, err := p.projects.Get(prep.sess.ProjectID)
@@ -230,13 +236,17 @@ func applyTurnOptions(identity registry.Identity, toolset []toolkit.Tool, opts T
 	for _, name := range opts.DisabledTools {
 		disabled[name] = struct{}{}
 	}
+	return identity, filterTools(toolset, disabled)
+}
+
+func filterTools(toolset []toolkit.Tool, disabled map[string]struct{}) []toolkit.Tool {
 	filtered := make([]toolkit.Tool, 0, len(toolset))
 	for _, tool := range toolset {
 		if _, blocked := disabled[tool.Name()]; !blocked {
 			filtered = append(filtered, tool)
 		}
 	}
-	return identity, filtered
+	return filtered
 }
 
 // prepareTurn performs the shared per-turn setup every entry point needs:
@@ -502,10 +512,16 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 	if err != nil {
 		return nil, err
 	}
-	if converseErr != nil {
-		return nil, converseErr
-	}
 	final := saved[len(saved)-1]
+	if converseErr != nil {
+		turn.Messages[len(turn.Messages)-1] = final
+		if turn.Metadata == nil {
+			turn.Metadata = map[string]any{}
+		}
+		turn.Metadata["incomplete"] = true
+		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+		return &TurnResult{Message: &final, Metadata: turn.Metadata}, converseErr
+	}
 
 	turn.Messages[len(turn.Messages)-1] = final
 	go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
