@@ -48,6 +48,8 @@ npm run dev
 
 The development server proxies `/api` requests to the backend.
 
+Usually you can access site on `http://127.0.0.1:5173`.
+
 The React frontend uses browser routes for projects, chats, and configuration
 pages. In production, configure the static host or reverse proxy to return the
 frontend `index.html` for unknown non-`/api` paths. Without this SPA fallback,
