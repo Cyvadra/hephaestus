@@ -8,12 +8,12 @@ import (
 )
 
 func TestIsApproval(t *testing.T) {
-	for _, input := range []string{"确认", "好的，确认执行", "YES", "yes please", "y", "reply: y", "1"} {
+	for _, input := range []string{"确认", "YES", " y ", "1"} {
 		if !isApproval(input) {
 			t.Errorf("isApproval(%q) = false", input)
 		}
 	}
-	for _, input := range []string{"no", "deny", "maybe", "10", ""} {
+	for _, input := range []string{"好的，确认执行", "yes please", "reply: y", "no", "deny", "maybe", "10", ""} {
 		if isApproval(input) {
 			t.Errorf("isApproval(%q) = true", input)
 		}

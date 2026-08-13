@@ -112,6 +112,28 @@ func TestIntegration_AppendMessagesAndActivePath(t *testing.T) {
 	}
 }
 
+func TestIntegration_DeleteSessionRemovesChannelBindings(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-delete-binding")
+	binding := store.ChannelBinding{Channel: "test-channel", ChatID: "delete-binding", SessionID: sess.ID}
+	if err := db.Create(&binding).Error; err != nil {
+		t.Fatalf("create channel binding: %v", err)
+	}
+
+	if err := svc.Delete(sess.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&store.ChannelBinding{}).Where("id = ?", binding.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count channel bindings: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected deleted session binding to be removed, found %d", count)
+	}
+}
+
 func TestIntegration_EditAssistantAtLeaf(t *testing.T) {
 	db := openTestDB(t)
 	svc := session.New(db)

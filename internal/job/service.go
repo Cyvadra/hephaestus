@@ -142,6 +142,7 @@ func (s *Service) executeJob(ctx context.Context, reg *registry.Registry, run *s
 	run.StartedAt = &now
 	if err := s.db.Model(run).Updates(map[string]any{"status": store.JobRunRunning, "started_at": &now}).Error; err != nil {
 		s.notify.Error("job: mark run %d running: %v", runID, err)
+		s.releaseClaim(run)
 		return
 	}
 
@@ -163,19 +164,31 @@ func (s *Service) executeJob(ctx context.Context, reg *registry.Registry, run *s
 
 	finalStatus := s.finalizeStatus(runCtx, firstErr, completed, len(job.Workflows))
 	finished := time.Now()
-	if err := s.db.Model(run).Updates(map[string]any{
-		"status": finalStatus, "finished_at": &finished,
-		"error": errorString(firstErr),
-	}).Error; err != nil {
-		s.notify.Error("job: persist run %d final status: %v", runID, err)
-	}
-
 	updateState := map[string]any{"active_run_id": nil}
 	if finalStatus == store.JobRunSucceeded {
 		updateState["last_succeeded_at"] = &finished
 	}
-	if err := s.db.Model(&store.JobState{}).Where("job_name = ?", run.JobName).Updates(updateState).Error; err != nil {
-		s.notify.Error("job: persist state for %q: %v", run.JobName, err)
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(run).Updates(map[string]any{
+			"status": finalStatus, "finished_at": &finished,
+			"error": errorString(firstErr),
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&store.JobState{}).Where("job_name = ? AND active_run_id = ?", run.JobName, runID).Updates(updateState).Error
+	}); err != nil {
+		s.notify.Error("job: finalize run %d: %v", runID, err)
+	}
+}
+
+// releaseClaim clears a claim when no executor was successfully started. The
+// run remains pending for startup reconciliation if the database is still
+// unavailable; the conditional update never clears a newer claim.
+func (s *Service) releaseClaim(run *store.JobRun) {
+	if err := s.db.Model(&store.JobState{}).
+		Where("job_name = ? AND active_run_id = ?", run.JobName, run.ID).
+		Update("active_run_id", nil).Error; err != nil {
+		s.notify.Error("job: release failed start claim for run %d: %v", run.ID, err)
 	}
 }
 

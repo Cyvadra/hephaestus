@@ -185,6 +185,7 @@ func (s *Service) execute(ctx context.Context, runID uint, reg *registry.Registr
 	}
 	if err := s.db.Model(&run).Updates(update).Error; err != nil {
 		s.notify.Error("workflow: persist run %d final status: %v", runID, err)
+		return store.WorkflowRunInterrupted, fmt.Errorf("workflow: persist run %d final status: %w", runID, err)
 	}
 	finalSnapshot := run
 	s.publish(runID, ProgressEvent{Type: ProgressRun, Run: &finalSnapshot})

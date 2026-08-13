@@ -367,15 +367,10 @@ func bindingKey(channelName, chatID string) string { return channelName + "\x00"
 
 func isApproval(text string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(text))
-	if strings.Contains(normalized, "确认") || strings.Contains(normalized, "yes") {
+	switch normalized {
+	case "确认", "yes", "y", "1":
 		return true
+	default:
+		return false
 	}
-	for _, token := range strings.FieldsFunc(normalized, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
-	}) {
-		if token == "y" || token == "1" {
-			return true
-		}
-	}
-	return false
 }

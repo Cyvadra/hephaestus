@@ -175,6 +175,9 @@ func (s *Service) Delete(sessionID uint) error {
 		if err := tx.First(&sess, sessionID).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("session_id = ?", sessionID).Delete(&store.ChannelBinding{}).Error; err != nil {
+			return fmt.Errorf("session: delete channel bindings: %w", err)
+		}
 		for _, model := range []any{&store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
 			if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
 				return err

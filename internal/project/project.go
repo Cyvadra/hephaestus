@@ -48,9 +48,8 @@ func (s *Service) Path(p store.Project) string {
 	return filepath.Join(s.root, p.Name)
 }
 
-// Create makes a new Project: its directory and skeleton AGENTS.md are
-// written before the database row is inserted, so a failed insert (e.g. a
-// duplicate name) never leaves an orphaned, undiscoverable directory.
+// Create makes a new Project and its on-disk directory. If persistence fails
+// after this call creates the directory, it removes that directory again.
 func (s *Service) Create(name, description string) (*store.Project, error) {
 	if !nameRe.MatchString(name) {
 		return nil, fmt.Errorf("project: invalid name %q: must match %s", name, nameRe.String())
@@ -65,6 +64,12 @@ func (s *Service) Create(name, description string) (*store.Project, error) {
 	}
 
 	dir := filepath.Join(s.root, name)
+	createdDir := false
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		createdDir = true
+	} else if err != nil {
+		return nil, fmt.Errorf("project: inspect directory %q: %w", dir, err)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("project: create directory %q: %w", dir, err)
 	}
@@ -74,6 +79,9 @@ func (s *Service) Create(name, description string) (*store.Project, error) {
 
 	p := &store.Project{Name: name, Description: description}
 	if err := s.db.Create(p).Error; err != nil {
+		if createdDir {
+			_ = os.RemoveAll(dir)
+		}
 		return nil, fmt.Errorf("project: persist %q: %w", name, err)
 	}
 	return p, nil

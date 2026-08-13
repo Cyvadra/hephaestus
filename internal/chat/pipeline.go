@@ -290,11 +290,9 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
-	summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
 
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, turn)
 	if err != nil {
-		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 		return nil, err
 	}
 
@@ -309,7 +307,10 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 		return nil, err
 	}
 	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
-	p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
+	if result != nil && err == nil {
+		summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
+		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
+	}
 	return result, err
 }
 

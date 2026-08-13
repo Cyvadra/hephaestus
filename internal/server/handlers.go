@@ -383,6 +383,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 
 	result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(nil))
 	if err != nil && result == nil {
+		rollbackUpload(uploadResult)
 		if errors.Is(err, session.ErrStaleActiveLeaf) {
 			writeStaleLeaf(c)
 			return
@@ -394,6 +395,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	commitUpload(uploadResult)
 
 	c.JSON(http.StatusOK, sendMessageResponse{
 		Message:            result.Message,
@@ -423,11 +425,26 @@ func (s *Server) streamMessage(c *gin.Context) {
 
 	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
 		result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(onDelta))
-		if result != nil {
-			result.Metadata = mergeMetadata(result.Metadata, uploadResult)
+		if result == nil {
+			rollbackUpload(uploadResult)
+			return nil, err
 		}
+		commitUpload(uploadResult)
+		result.Metadata = mergeMetadata(result.Metadata, uploadResult)
 		return result, err
 	})
+}
+
+func rollbackUpload(result *upload.Result) {
+	if result != nil {
+		_ = result.Rollback()
+	}
+}
+
+func commitUpload(result *upload.Result) {
+	if result != nil {
+		result.Commit()
+	}
 }
 
 // prepareMessage performs the shared request parsing, active-branch switch,
