@@ -107,6 +107,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 
 	knownTools := map[string]bool{
 		"chat_history_search": true,
+		"chat_history_read":   true,
 		"create_project":      true, "list_projects": true,
 		"web_fetch": true, "web_search": true, "shell": true, "send_file": true,
 		"send_notification": true,

@@ -1,4 +1,5 @@
 name: basic
 tools:
   - chat_history_search
+  - chat_history_read
   - send_file

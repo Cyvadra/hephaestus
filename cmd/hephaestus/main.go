@@ -83,6 +83,7 @@ func main() {
 	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey)
 	sessions := session.New(db)
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
+	toolReg.Register(tools.NewChatHistoryReadTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
