@@ -83,6 +83,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       setValueSelectionKey(selectionKey)
       setBaseline(JSON.stringify(saved))
       setNotice('已保存，新请求和下一轮对话立即生效')
+      onDirtyChange(false)
       onSaved(kind, saved.name)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存失败')

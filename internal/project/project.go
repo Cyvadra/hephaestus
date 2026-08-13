@@ -156,7 +156,11 @@ func (s *Service) SetConciergeAvailability(conciergeName string, projectNames []
 			if sameNames(p.AvailableConciergeList, available) {
 				continue
 			}
-			if err := tx.Model(p).Update("available_concierge_list", available).Error; err != nil {
+			// Update the struct field and Save so GORM's serializer:json
+			// writes a real jsonb value. A field-level Update with a
+			// []string would emit a Postgres array literal instead.
+			p.AvailableConciergeList = available
+			if err := tx.Save(p).Error; err != nil {
 				return fmt.Errorf("project: update availability for %q: %w", p.Name, err)
 			}
 		}

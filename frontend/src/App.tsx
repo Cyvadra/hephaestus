@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useBlocker, useLocation, useNavigate } from 'react-router-dom'
 import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
@@ -24,6 +24,7 @@ export default function App() {
   const [configurationRefreshKey, setConfigurationRefreshKey] = useState(0)
   const [configurationLists, setConfigurationLists] = useState<ConfigurationLists>({})
   const [configurationSidebarOpen, setConfigurationSidebarOpen] = useState(false)
+  const configurationDirtyRef = useRef(false)
 
   const chatRoute = route.type === 'chat' || route.type === 'chat-new' ? route : null
   const configurationRoute = route.type === 'configuration-new' || route.type === 'configuration-edit' ? route : null
@@ -34,7 +35,12 @@ export default function App() {
   const configurationName = route.type === 'configuration-edit' ? route.name : null
   const configurationIsNew = route.type === 'configuration-new'
   const isChoosingConcierge = route.type === 'chat-new' && draftConcierge == null
-  const navigationBlocker = useBlocker(configurationDirty)
+  const navigationBlocker = useBlocker(() => configurationDirtyRef.current)
+
+  const handleConfigurationDirtyChange = useCallback((dirty: boolean) => {
+    configurationDirtyRef.current = dirty
+    setConfigurationDirty(dirty)
+  }, [])
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -52,12 +58,12 @@ export default function App() {
   useEffect(() => {
     if (navigationBlocker.state !== 'blocked') return
     if (window.confirm('当前配置有未保存的更改。放弃更改并继续吗？')) {
-      setConfigurationDirty(false)
+      handleConfigurationDirtyChange(false)
       navigationBlocker.proceed()
     } else {
       navigationBlocker.reset()
     }
-  }, [navigationBlocker])
+  }, [handleConfigurationDirtyChange, navigationBlocker])
 
   useEffect(() => {
     if (route.type === 'chat-new') setDraftConcierge(null)
@@ -155,9 +161,10 @@ export default function App() {
           lists={configurationLists}
           selectionKey={`${configurationKind ?? 'overview'}:${configurationName ?? (configurationIsNew ? 'new' : '')}`}
           refreshKey={configurationRefreshKey}
-          onDirtyChange={setConfigurationDirty}
+          onDirtyChange={handleConfigurationDirtyChange}
           onCreate={handleConfigurationCreate}
           onSaved={(kind, name) => {
+            handleConfigurationDirtyChange(false)
             setConfigurationRefreshKey(value => value + 1)
             navigate(routes.configurationEdit(kind, name), { replace: configurationIsNew })
           }}
