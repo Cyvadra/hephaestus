@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronRight, Pencil, Pin, Plus, Settings, Trash2, Undo2 } from 'lucide-react'
+import { Check, ChevronRight, Pencil, Pin, Plus, Trash2, Undo2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { deleteSession, listSessions, updateSession } from '../api/client'
 import type { Session } from '../api/types'
 import type { ConfigurationKind } from '../api/types'
 import ProjectSwitcher from './ProjectSwitcher'
 import ConfigurationSidebar, { type ConfigurationLists } from './ConfigurationSidebar'
+import SidebarSettingsMenu from './SidebarSettingsMenu'
 
 interface Props {
   mode: 'chat' | 'configurations'
@@ -29,6 +31,7 @@ interface Props {
 }
 
 export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationListsChange }: Props) {
+  const { t } = useTranslation()
   const [sessions, setSessions] = useState<Session[]>([])
   const [menu, setMenu] = useState<{ sessionID: number; left: number; top: number } | null>(null)
   const [renamingId, setRenamingId] = useState<number | null>(null)
@@ -72,7 +75,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   const isPinned = (session: Session) => session.FlagPinned === 1
   const active = sessions.filter(s => !s.FlagArchived)
   const pinnedSessions = active.filter(isPinned)
-  const groups = groupSessions(active.filter(s => !isPinned(s)))
+  const groups = groupSessions(active.filter(s => !isPinned(s)), t)
   const archived = sessions.filter(s => s.FlagArchived)
 
   function renderSession(s: Session) {
@@ -134,14 +137,14 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
         onClick={onOpenNewSession}
       >
         <Plus aria-hidden="true" size={16} strokeWidth={1.7} />
-        <span>New chat</span>
+        <span>{t('session.newChat')}</span>
       </button>
 
       <div className="sidebar-section">
         <div className="session-list">
           {pinnedSessions.length > 0 && (
             <div className="session-group">
-              <div className="sidebar-section-title">置顶</div>
+              <div className="sidebar-section-title">{t('session.pinned')}</div>
               {pinnedSessions.map(renderSession)}
             </div>
           )}
@@ -161,7 +164,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
                 onClick={() => setArchivedExpanded(current => !current)}
               >
                 <ChevronRight aria-hidden="true" size={14} />
-                <span>已归档</span>
+                <span>{t('session.archived')}</span>
               </button>
               {archivedExpanded && <div id="archived-session-list">{archived.slice(0, 20).map(renderSession)}</div>}
             </div>
@@ -173,14 +176,9 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
 
       <div className="sidebar-footer">
         {mode === 'configurations'
-          ? <div className="sidebar-footer-label" title="数据库配置">Registry console</div>
+          ? <div className="sidebar-footer-label" title={t('configuration.databaseConfiguration')}>{t('configuration.registryConsole')}</div>
           : <ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />}
-        <div className="settings-tooltip">
-          <button className={`sidebar-settings-btn${mode === 'configurations' ? ' active' : ''}`} aria-label={mode === 'configurations' ? '返回聊天' : '配置管理'} type="button" onClick={mode === 'configurations' ? onCloseConfigurations : onOpenConfigurations}>
-            <Settings aria-hidden="true" size={16} strokeWidth={1.7} />
-          </button>
-          <span role="tooltip">{mode === 'configurations' ? '返回聊天' : '配置管理'}</span>
-        </div>
+        <SidebarSettingsMenu mode={mode} onOpenConfigurations={onOpenConfigurations} onCloseConfigurations={onCloseConfigurations} />
       </div>
       {deleteCandidate && <DeleteDialog session={deleteCandidate} onClose={() => setDeleteCandidate(null)} onConfirm={async () => { await deleteSession(deleteCandidate.ID); setSessions(current => current.filter(session => session.ID !== deleteCandidate.ID)); if (deleteCandidate.ID === activeSessionId) onOpenNewSession(); setDeleteCandidate(null) }} />}
     </aside>
@@ -200,7 +198,8 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
 }
 
 function SessionItem({ session, active, menu, pinned, renaming, onSelect, onMenuOpen, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menu: { left: number; top: number } | null; pinned: boolean; renaming: boolean; onSelect: (id: number) => void; onMenuOpen: (target: HTMLElement) => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
-  const label = session.Title || `Session #${session.ID}`
+  const { t } = useTranslation()
+  const label = session.Title || t('session.unnamed', { id: session.ID })
   const titleRef = useRef<HTMLSpanElement>(null)
   const [titleScroll, setTitleScroll] = useState({ distance: 0, duration: 0 })
 
@@ -237,21 +236,22 @@ function SessionItem({ session, active, menu, pinned, renaming, onSelect, onMenu
               <span className="session-item-title-text">{label}</span>
             </span>
           </button>
-          <button className="session-item-archive" type="button" aria-label={`${session.FlagArchived ? '取消归档' : '归档'} ${label}`} onClick={event => { event.stopPropagation(); onArchive() }}>
+          <button className="session-item-archive" type="button" aria-label={t(session.FlagArchived ? 'session.unarchive' : 'session.archive', { title: label })} onClick={event => { event.stopPropagation(); onArchive() }}>
             {session.FlagArchived ? <Undo2 aria-hidden="true" size={13} /> : <Check aria-hidden="true" size={14} />}
           </button>
-          <button className={'session-item-pin' + (pinned ? ' pinned' : '')} type="button" aria-label={`${pinned ? '取消置顶' : '置顶'} ${label}`} onClick={event => { event.stopPropagation(); onPin() }}><Pin aria-hidden="true" size={12} /></button>
+          <button className={'session-item-pin' + (pinned ? ' pinned' : '')} type="button" aria-label={t(pinned ? 'session.unpin' : 'session.pin', { title: label })} onClick={event => { event.stopPropagation(); onPin() }}><Pin aria-hidden="true" size={12} /></button>
         </>
       )}
       {menu && !renaming && createPortal(<div className="session-menu" role="menu" style={{ left: menu.left, top: menu.top }}>
-        <button type="button" role="menuitem" onClick={onRenameStart}><Pencil aria-hidden="true" size={16} />重命名</button>
-        <button className="danger" type="button" role="menuitem" onClick={onDelete}><Trash2 aria-hidden="true" size={16} />删除</button>
+        <button type="button" role="menuitem" onClick={onRenameStart}><Pencil aria-hidden="true" size={16} />{t('session.rename')}</button>
+        <button className="danger" type="button" role="menuitem" onClick={onDelete}><Trash2 aria-hidden="true" size={16} />{t('common.delete')}</button>
       </div>, document.body)}
     </div>
   )
 }
 
 function RenameInput({ defaultValue, onSubmit, onCancel }: { defaultValue: string; onSubmit: (value: string) => void; onCancel: () => void }) {
+  const { t } = useTranslation()
   const cancelled = useRef(false)
   return (
     <input
@@ -259,7 +259,7 @@ function RenameInput({ defaultValue, onSubmit, onCancel }: { defaultValue: strin
       autoFocus
       defaultValue={defaultValue}
       maxLength={64}
-      aria-label="会话名称"
+      aria-label={t('session.name')}
       onFocus={event => event.target.select()}
       onKeyDown={event => {
         if (event.key === 'Enter') {
@@ -277,8 +277,9 @@ function RenameInput({ defaultValue, onSubmit, onCancel }: { defaultValue: strin
 }
 
 function DeleteDialog({ session, onClose, onConfirm }: { session: Session; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const { t } = useTranslation()
   const [deleting, setDeleting] = useState(false)
-  const title = session.Title || `Session #${session.ID}`
+  const title = session.Title || t('session.unnamed', { id: session.ID })
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -288,7 +289,7 @@ function DeleteDialog({ session, onClose, onConfirm }: { session: Session; onClo
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={onClose}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-session-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-session-title">确认删除该对话？</h2><p>删除后，该对话「{title}」将不可恢复。</p><div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>取消</button><button className="danger-button" type="button" disabled={deleting} onClick={async () => { setDeleting(true); try { await onConfirm() } finally { setDeleting(false) } }}>{deleting ? '删除中...' : '删除'}</button></div></div></div>
+  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={onClose}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-session-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-session-title">{t('session.deleteTitle')}</h2><p>{t('session.deleteBody', { title })}</p><div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>{t('common.cancel')}</button><button className="danger-button" type="button" disabled={deleting} onClick={async () => { setDeleting(true); try { await onConfirm() } finally { setDeleting(false) } }}>{deleting ? t('session.deleting') : t('common.delete')}</button></div></div></div>
 }
 
 interface SessionGroup {
@@ -297,7 +298,7 @@ interface SessionGroup {
   sessions: Session[]
 }
 
-function groupSessions(sessions: Session[]): SessionGroup[] {
+function groupSessions(sessions: Session[], t: ReturnType<typeof useTranslation>['t']): SessionGroup[] {
   const dayMs = 86_400_000
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
@@ -310,11 +311,11 @@ function groupSessions(sessions: Session[]): SessionGroup[] {
   }
 
   const buckets: { key: string; label: string; match: (age: number) => boolean }[] = [
-    { key: 'today', label: '今天', match: age => age < 1 },
-    { key: 'yesterday', label: '昨天', match: age => age === 1 },
-    { key: 'week', label: '7 天内', match: age => age > 1 && age <= 7 },
-    { key: 'month', label: '30 天内', match: age => age > 7 && age <= 30 },
-    { key: 'earlier', label: '更早', match: age => age > 30 },
+    { key: 'today', label: t('session.time.today'), match: age => age < 1 },
+    { key: 'yesterday', label: t('session.time.yesterday'), match: age => age === 1 },
+    { key: 'week', label: t('session.time.week'), match: age => age > 1 && age <= 7 },
+    { key: 'month', label: t('session.time.month'), match: age => age > 7 && age <= 30 },
+    { key: 'earlier', label: t('session.time.earlier'), match: age => age > 30 },
   ]
 
   return buckets

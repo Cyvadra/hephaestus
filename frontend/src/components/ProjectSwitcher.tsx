@@ -1,5 +1,6 @@
 import { Check, ChevronUp, FolderPlus, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { createProject, deleteProject, listProjects } from '../api/client'
 import type { Project } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function ProjectSwitcher({ activeProject, onProjectChange, onProjectsLoaded }: Props) {
+  const { t } = useTranslation()
   const [projects, setProjects] = useState<Project[]>([])
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
@@ -65,7 +67,7 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
         onClick={menu.togglePinned}
         onFocus={menu.pinOpen}
       >
-        <span className="project-switcher-name">{current?.Name ?? activeProject ?? 'Loading projects'}</span>
+        <span className="project-switcher-name">{current?.Name ?? activeProject ?? t('project.loading')}</span>
         <ChevronUp aria-hidden="true" size={15} strokeWidth={1.8} />
       </button>
       {menu.open && (
@@ -78,21 +80,21 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
                     <strong>{project.Name}</strong>
                     {project.Description && <small>{project.Description}</small>}
                   </span>
-                  {project.Name === activeProject && <Check aria-label="当前项目" size={15} />}
+                  {project.Name === activeProject && <Check aria-label={t('project.current')} size={15} />}
                 </button>
-                {!project.is_default && <button className="project-switcher-delete" type="button" aria-label={`删除项目 ${project.Name}`} onClick={() => setDeleteCandidate(project)}><Trash2 aria-hidden="true" size={14} /></button>}
+                {!project.is_default && <button className="project-switcher-delete" type="button" aria-label={t('project.delete', { name: project.Name })} onClick={() => setDeleteCandidate(project)}><Trash2 aria-hidden="true" size={14} /></button>}
               </div>
             ))}
           </div>
           <button className="project-switcher-create" type="button" onClick={() => setCreating(current => !current)}>
             <FolderPlus aria-hidden="true" size={15} />
-            <span>New project</span>
+            <span>{t('project.new')}</span>
           </button>
           {creating && (
             <form className="project-create-form" onSubmit={submit}>
-              <input value={name} onChange={event => setName(event.target.value)} placeholder="project-name" maxLength={63} aria-label="项目名称" autoFocus />
-              <input value={description} onChange={event => setDescription(event.target.value)} placeholder="Description (optional)" maxLength={1024} aria-label="项目说明" />
-              <button type="submit"><Plus aria-hidden="true" size={15} />Create</button>
+              <input value={name} onChange={event => setName(event.target.value)} placeholder="project-name" maxLength={63} aria-label={t('project.name')} autoFocus />
+              <input value={description} onChange={event => setDescription(event.target.value)} placeholder={t('project.descriptionPlaceholder')} maxLength={1024} aria-label={t('project.description')} />
+              <button type="submit"><Plus aria-hidden="true" size={15} />{t('project.create')}</button>
             </form>
           )}
           {error && <p className="project-switcher-error">{error}</p>}
@@ -109,6 +111,7 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
 }
 
 function DeleteProjectDialog({ project, onClose, onConfirm }: { project: Project; onClose: () => void; onConfirm: (deleteDirectory: boolean) => Promise<void> }) {
+  const { t } = useTranslation()
   const [confirmation, setConfirmation] = useState('')
   const [deleteDirectory, setDeleteDirectory] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -122,5 +125,5 @@ function DeleteProjectDialog({ project, onClose, onConfirm }: { project: Project
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [deleting, onClose])
 
-  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={() => { if (!deleting) onClose() }}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-project-title">删除项目？</h2><p>项目必须没有对话才能删除。请输入「{project.Name}」确认。</p>{error && <p className="project-switcher-error">{error}</p>}<input autoFocus value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder={project.Name} aria-label="输入项目名称确认" /><label className="project-delete-directory"><input type="checkbox" checked={deleteDirectory} onChange={event => setDeleteDirectory(event.target.checked)} disabled={deleting} />同时删除项目目录</label><div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>取消</button><button className="danger-button" type="button" disabled={confirmation !== project.Name || deleting} onClick={async () => { setDeleting(true); setError(null); try { await onConfirm(deleteDirectory) } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setDeleting(false) } }}>{deleting ? '删除中...' : '删除'}</button></div></div></div>
+  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={() => { if (!deleting) onClose() }}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-project-title">{t('project.deleteTitle')}</h2><p>{t('project.deleteBody', { name: project.Name })}</p>{error && <p className="project-switcher-error">{error}</p>}<input autoFocus value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder={project.Name} aria-label={t('project.confirmation')} /><label className="project-delete-directory"><input type="checkbox" checked={deleteDirectory} onChange={event => setDeleteDirectory(event.target.checked)} disabled={deleting} />{t('project.deleteDirectory')}</label><div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>{t('common.cancel')}</button><button className="danger-button" type="button" disabled={confirmation !== project.Name || deleting} onClick={async () => { setDeleting(true); setError(null); try { await onConfirm(deleteDirectory) } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setDeleting(false) } }}>{deleting ? t('project.deleting') : t('common.delete')}</button></div></div></div>
 }

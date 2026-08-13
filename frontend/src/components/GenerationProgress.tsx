@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useEffectEvent, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '../i18n'
 import Markdown from './Markdown'
 import type { InteractionRequest, StreamToolCall } from '../api/types'
 
@@ -14,12 +16,13 @@ interface Props {
 }
 
 export default function GenerationProgress({ content, activities, onRespondToPermission }: Props) {
+  const { t } = useTranslation()
   return (
     <div className="message-stack generation-progress">
       <details className="reasoning-panel" open>
         <summary className="reasoning-summary">
           <span className="reasoning-spinner" aria-hidden="true" />
-          思考中
+          {t('chat.reasoning.inProgress')}
         </summary>
         <div className="reasoning-content" aria-live="polite">
           {activities.map(activity => activity.type === 'reasoning' ? (
@@ -29,7 +32,7 @@ export default function GenerationProgress({ content, activities, onRespondToPer
           ) : (
 			<PermissionActivity key={activity.sequence} request={activity.request} onRespond={onRespondToPermission} />
           ))}
-          {activities.length === 0 && <span className="reasoning-pending">正在分析问题…</span>}
+          {activities.length === 0 && <span className="reasoning-pending">{t('chat.reasoning.analyzing')}</span>}
         </div>
       </details>
       {content && (
@@ -45,6 +48,7 @@ export default function GenerationProgress({ content, activities, onRespondToPer
 }
 
 function PermissionActivity({ request, onRespond }: { request: InteractionRequest; onRespond?: (request: InteractionRequest, approved: boolean) => Promise<boolean> }) {
+  const { t } = useTranslation()
   const [secondsRemaining, setSecondsRemaining] = useState(20)
   const [responding, setResponding] = useState(false)
 
@@ -56,7 +60,7 @@ function PermissionActivity({ request, onRespond }: { request: InteractionReques
       setSecondsRemaining(nextSeconds)
     }, 250)
     const titleTimer = window.setInterval(() => {
-      document.title = document.title === originalTitle ? '需要授权 - Need Authorization' : originalTitle
+      document.title = document.title === originalTitle ? i18n.t('chat.permission.authorize') : originalTitle
     }, 1000)
     return () => {
       window.clearInterval(countdownTimer)
@@ -65,15 +69,19 @@ function PermissionActivity({ request, onRespond }: { request: InteractionReques
     }
   }, [])
 
-  const respond = async (approved: boolean) => {
+  const respond = useEffectEvent(async (approved: boolean) => {
     if (responding || !onRespond) return
     setResponding(true)
     const accepted = await onRespond(request, approved)
     if (!accepted) setResponding(false)
-  }
+  })
+
+  const autoRespond = useEffectEvent(() => {
+    void respond(true)
+  })
 
   useEffect(() => {
-    if (secondsRemaining === 0) void respond(true)
+    if (secondsRemaining === 0) autoRespond()
   }, [secondsRemaining])
 
   return <div className="tool-activity-list">
@@ -81,25 +89,26 @@ function PermissionActivity({ request, onRespond }: { request: InteractionReques
       <div className="tool-activity-header">
         <span className="tool-status-dot" data-status="calling" />
         <strong>{request.title}</strong>
-        <span>{responding ? '正在处理' : `${secondsRemaining} 秒后自动允许`}</span>
+        <span>{responding ? t('chat.permission.processing') : t('chat.permission.autoApprove', { count: secondsRemaining })}</span>
       </div>
       <pre>{request.details}</pre>
       <div className="message-editor-actions permission-response-actions">
-        <button type="button" className="message-action-btn" disabled={responding} onClick={() => void respond(false)}>取消</button>
-        <button type="button" className="composer-send-btn permission-approve-pulse" disabled={responding} onClick={() => void respond(true)}>确认</button>
+        <button type="button" className="message-action-btn" disabled={responding} onClick={async () => { if (responding || !onRespond) return; setResponding(true); const accepted = await onRespond(request, false); if (!accepted) setResponding(false) }}>{t('common.cancel')}</button>
+        <button type="button" className="composer-send-btn permission-approve-pulse" disabled={responding} onClick={async () => { if (responding || !onRespond) return; setResponding(true); const accepted = await onRespond(request, true); if (!accepted) setResponding(false) }}>{t('chat.permission.authorize')}</button>
       </div>
     </div>
   </div>
 }
 
 function StreamToolActivity({ toolCall }: { toolCall: StreamToolCall }) {
+  const { t } = useTranslation()
   return (
     <div className="tool-activity-list">
       <div className="tool-activity">
         <div className="tool-activity-header">
           <span className="tool-status-dot" data-status={toolCall.status} />
-          <strong>{toolCall.name || '准备调用工具'}</strong>
-          <span>{toolCall.status === 'complete' ? '已完成' : toolCall.status === 'error' ? '失败' : '调用中'}</span>
+          <strong>{toolCall.name || t('chat.permission.awaitingTool')}</strong>
+          <span>{toolCall.status === 'complete' ? t('chat.permission.complete') : toolCall.status === 'error' ? t('chat.permission.failed') : t('chat.permission.calling')}</span>
         </div>
         {toolCall.arguments && <pre>{toolCall.arguments}</pre>}
         {toolCall.result && <pre className="tool-result-content">{toolCall.result}</pre>}

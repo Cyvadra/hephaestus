@@ -1,8 +1,9 @@
 import { Bot, BriefcaseBusiness, ChevronDown, ChevronLeft, CircleUserRound, Plus, Search, Sparkles, Workflow, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { listConfigurations } from '../api/client'
 import type { Configuration, ConfigurationKind } from '../api/types'
-import { CONFIGURATION_META, configurationSummary } from './configuration/model'
+import { CONFIGURATION_META, configurationSummary, type TranslationDescriptor } from './configuration/model'
 
 export type ConfigurationLists = Partial<Record<ConfigurationKind, Configuration[]>>
 
@@ -26,6 +27,7 @@ const ICONS = {
 }
 
 export default function ConfigurationSidebar({ activeKind, activeName, refreshKey, onBack, onSelect, onCreate, onListsChange }: Props) {
+  const { t } = useTranslation()
   const [lists, setLists] = useState<ConfigurationLists>({})
   const [errors, setErrors] = useState<Partial<Record<ConfigurationKind, string>>>({})
   const [loading, setLoading] = useState<ConfigurationKind[]>([])
@@ -47,40 +49,41 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
       results.forEach((result, index) => {
         const kind = kinds[index]
         if (result.status === 'fulfilled') delete next[kind]
-        else next[kind] = result.reason instanceof Error ? result.reason.message : '加载失败'
+        else next[kind] = result.reason instanceof Error ? result.reason.message : t('configuration.loadFailed')
       })
       return next
     })
     setLoading(current => current.filter(kind => !kinds.includes(kind)))
-  }, [])
+  }, [t])
 
   useEffect(() => { void load() }, [load, refreshKey])
 
   return (
     <>
       <div className="configuration-sidebar-header">
-        <button type="button" aria-label="返回聊天" title="返回聊天" onClick={onBack}><ChevronLeft size={17} /></button>
-        <div><strong>配置管理</strong><span>Database registry</span></div>
+        <button type="button" aria-label={t('app.returnToChat')} title={t('app.returnToChat')} onClick={onBack}><ChevronLeft size={17} /></button>
+        <div><strong>{t('app.configurationManagement')}</strong><span>{t('configuration.registryConsole')}</span></div>
       </div>
-      <div className="configuration-search"><Search aria-hidden="true" size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索数据库配置" /></div>
+      <div className="configuration-search"><Search aria-hidden="true" size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('configuration.search')} /></div>
       <div className="configuration-sidebar-list">
         {CONFIGURATION_META.map(meta => {
           const Icon = ICONS[meta.kind]
           const values = lists[meta.kind] ?? []
-          const visible = values.filter(value => `${value.name} ${configurationSummary(meta.kind, value)}`.toLowerCase().includes(query.trim().toLowerCase()))
+          const label = t(`${meta.translationKey}.label`)
+          const visible = values.filter(value => `${value.name} ${renderDescriptor(t, configurationSummary(meta.kind, value))}`.toLowerCase().includes(query.trim().toLowerCase()))
           const isCollapsed = collapsed.includes(meta.kind)
           return (
             <section className="configuration-sidebar-group" key={meta.kind}>
               <div className="configuration-group-heading">
                 <button className="configuration-group-toggle" type="button" aria-expanded={!isCollapsed} onClick={() => setCollapsed(current => current.includes(meta.kind) ? current.filter(kind => kind !== meta.kind) : [...current, meta.kind])}>
-                  <ChevronDown size={13} /><Icon size={15} /><span>{meta.label}</span><small>{values.length}</small>
+                  <ChevronDown size={13} /><Icon size={15} /><span>{label}</span><small>{values.length}</small>
                 </button>
-                <button type="button" aria-label={`新建${meta.label}`} title={`新建${meta.label}`} onClick={() => onCreate(meta.kind)}><Plus size={14} /></button>
+                <button type="button" aria-label={t('configuration.create', { name: label })} title={t('configuration.create', { name: label })} onClick={() => onCreate(meta.kind)}><Plus size={14} /></button>
               </div>
               {!isCollapsed && <div className="configuration-group-items">
-                {loading.includes(meta.kind) && values.length === 0 ? <div className="configuration-list-skeleton"><i /><i /></div> : errors[meta.kind] ? <button className="configuration-list-error" type="button" onClick={() => void load([meta.kind])}>加载失败，点击重试</button> : visible.length === 0 ? <button className="configuration-list-empty" type="button" onClick={() => onCreate(meta.kind)}>{query ? '无匹配项' : `新建第一个${meta.label}`}</button> : visible.map(value => (
+                {loading.includes(meta.kind) && values.length === 0 ? <div className="configuration-list-skeleton"><i /><i /></div> : errors[meta.kind] ? <button className="configuration-list-error" type="button" onClick={() => void load([meta.kind])}>{t('configuration.retryLoading')}</button> : visible.length === 0 ? <button className="configuration-list-empty" type="button" onClick={() => onCreate(meta.kind)}>{query ? t('configuration.noMatches') : t('configuration.createFirst', { name: label })}</button> : visible.map(value => (
                   <button className={`configuration-list-item${activeKind === meta.kind && activeName === value.name ? ' active' : ''}`} type="button" key={value.name} onClick={() => onSelect(meta.kind, value.name)}>
-                    <strong>{value.name}</strong><span>{configurationSummary(meta.kind, value)}</span>
+                    <strong>{value.name}</strong><span>{renderDescriptor(t, configurationSummary(meta.kind, value))}</span>
                   </button>
                 ))}
               </div>}
@@ -90,4 +93,13 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
       </div>
     </>
   )
+}
+
+function renderDescriptor(t: ReturnType<typeof useTranslation>['t'], descriptor: TranslationDescriptor | null) {
+  if (descriptor == null) return ''
+  if (descriptor.text != null) return descriptor.text
+  const values = descriptor.values?.identity === '__not_configured__'
+    ? { ...descriptor.values, identity: t('configuration.summary.notConfigured') }
+    : descriptor.values
+  return descriptor.key == null ? '' : t(descriptor.key, values)
 }

@@ -1,5 +1,6 @@
 import { GripVertical, Plus, Trash2, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface FieldProps {
   label: string
@@ -43,16 +44,18 @@ export function NumberInput({ id, value, onChange, nullable, min, max, step = 1 
 }
 
 export function Toggle({ id, checked, onChange }: { id: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  const { t } = useTranslation()
   return (
     <label className="configuration-toggle" htmlFor={id}>
       <input id={id} type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} />
       <span aria-hidden="true" />
-      <strong>{checked ? '启用' : '停用'}</strong>
+      <strong>{checked ? t('configuration.enabled') : t('configuration.disabled')}</strong>
     </label>
   )
 }
 
-export function TagsInput({ values, onChange, suggestions = [], placeholder = '输入后按 Enter' }: { values: string[]; onChange: (values: string[]) => void; suggestions?: string[]; placeholder?: string }) {
+export function TagsInput({ values, onChange, suggestions = [], placeholder }: { values: string[]; onChange: (values: string[]) => void; suggestions?: string[]; placeholder?: string }) {
+  const { t } = useTranslation()
   const [input, setInput] = useState('')
   const add = (raw: string) => {
     const value = raw.trim()
@@ -66,12 +69,12 @@ export function TagsInput({ values, onChange, suggestions = [], placeholder = '�
         {values.map(value => (
           <span key={value} className="configuration-tag">
             {value}
-            <button type="button" aria-label={`移除 ${value}`} onClick={() => onChange(values.filter(item => item !== value))}><X size={12} /></button>
+            <button type="button" aria-label={t('configuration.remove', { name: value })} onClick={() => onChange(values.filter(item => item !== value))}><X size={12} /></button>
           </span>
         ))}
         <input
           value={input}
-          placeholder={values.length ? '继续添加…' : placeholder}
+          placeholder={values.length ? t('configuration.continueAdding') : (placeholder ?? t('configuration.inputThenEnter'))}
           onChange={event => setInput(event.target.value)}
           onKeyDown={event => {
             if (event.key !== 'Enter' && event.key !== ',') return
@@ -81,18 +84,20 @@ export function TagsInput({ values, onChange, suggestions = [], placeholder = '�
         />
       </div>
       {suggestions.length > 0 && <div className="configuration-autocomplete-menu">
-        {available.length > 0 ? available.map(value => <button type="button" key={value} onMouseDown={event => event.preventDefault()} onClick={() => add(value)}><span>{value}</span><Plus size={13} /></button>) : <span>{input ? '没有匹配的系统选项，可按 Enter 自由添加' : '所有系统选项均已添加'}</span>}
+        {available.length > 0 ? available.map(value => <button type="button" key={value} onMouseDown={event => event.preventDefault()} onClick={() => add(value)}><span>{value}</span><Plus size={13} /></button>) : <span>{input ? t('configuration.noMatchingSystemOptions') : t('configuration.allSystemOptionsAdded')}</span>}
       </div>}
     </div>
   )
 }
 
 export function SuggestionInput({ id, value, onChange, suggestions, placeholder }: { id: string; value: string; onChange: (value: string) => void; suggestions: string[]; placeholder?: string }) {
+  const { t } = useTranslation()
   const available = suggestions.filter(item => item.toLowerCase().includes(value.trim().toLowerCase())).slice(0, 8)
-  return <div className="configuration-autocomplete"><input id={id} value={value} placeholder={placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />{suggestions.length > 0 && <div className="configuration-autocomplete-menu">{available.length > 0 ? available.map(item => <button type="button" key={item} onMouseDown={event => event.preventDefault()} onClick={() => onChange(item)}><span>{item}</span></button>) : <span>没有匹配的系统选项，也可以自由输入</span>}</div>}</div>
+  return <div className="configuration-autocomplete"><input id={id} value={value} placeholder={placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />{suggestions.length > 0 && <div className="configuration-autocomplete-menu">{available.length > 0 ? available.map(item => <button type="button" key={item} onMouseDown={event => event.preventDefault()} onClick={() => onChange(item)}><span>{item}</span></button>) : <span>{t('configuration.noMatchingSystemOptionsFreeInput')}</span>}</div>}</div>
 }
 
-export function StringListEditor({ values, onChange, addLabel = '添加一项', multiline = false }: { values: string[]; onChange: (values: string[]) => void; addLabel?: string; multiline?: boolean }) {
+export function StringListEditor({ values, onChange, addLabel, multiline = false }: { values: string[]; onChange: (values: string[]) => void; addLabel?: string; multiline?: boolean }) {
+  const { t } = useTranslation()
   return (
     <div className="configuration-repeat-list">
       {values.map((value, index) => (
@@ -101,10 +106,10 @@ export function StringListEditor({ values, onChange, addLabel = '添加一项', 
           {multiline
             ? <textarea rows={2} value={value} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />
             : <input value={value} onChange={event => onChange(values.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />}
-          <button type="button" aria-label="删除此项" onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button>
+          <button type="button" aria-label={t('configuration.deleteItem')} onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button>
         </div>
       ))}
-      <button className="configuration-add-row" type="button" onClick={() => onChange([...values, ''])}><Plus size={15} />{addLabel}</button>
+      <button className="configuration-add-row" type="button" onClick={() => onChange([...values, ''])}><Plus size={15} />{addLabel ?? t('configuration.addItem')}</button>
     </div>
   )
 }

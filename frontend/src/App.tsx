@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useBlocker, useLocation, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
 import ConfigurationWorkspace from './components/ConfigurationWorkspace'
@@ -12,6 +13,7 @@ const LAST_CONCIERGE_ID_KEY = 'hephaestus.lastConciergeId'
 const ACTIVE_PROJECT_KEY = 'hephaestus.activeProject'
 
 export default function App() {
+  const { t } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
   const route = parseRoute(location.pathname)
@@ -57,13 +59,13 @@ export default function App() {
 
   useEffect(() => {
     if (navigationBlocker.state !== 'blocked') return
-    if (window.confirm('当前配置有未保存的更改。放弃更改并继续吗？')) {
+    if (window.confirm(t('app.unsavedChanges'))) {
       handleConfigurationDirtyChange(false)
       navigationBlocker.proceed()
     } else {
       navigationBlocker.reset()
     }
-  }, [handleConfigurationDirtyChange, navigationBlocker])
+  }, [handleConfigurationDirtyChange, navigationBlocker, t])
 
   useEffect(() => {
     if (route.type === 'chat-new') setDraftConcierge(null)
@@ -160,7 +162,7 @@ export default function App() {
         onConfigurationListsChange={setConfigurationLists}
       />
       <main className="main-panel">
-        {mode === 'chat' && <button className="mobile-configuration-entry" type="button" aria-label="配置管理" title="配置管理" onClick={handleOpenConfigurations}><Settings size={17} /></button>}
+        {mode === 'chat' && <button className="mobile-configuration-entry" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={handleOpenConfigurations}><Settings size={17} /></button>}
         {mode === 'configurations' ? <ConfigurationWorkspace
           kind={configurationKind}
           name={configurationName}

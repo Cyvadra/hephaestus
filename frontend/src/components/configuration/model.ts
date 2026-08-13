@@ -6,18 +6,16 @@ import type {
 
 export interface ConfigurationKindMeta {
   kind: ConfigurationKind
-  label: string
-  singular: string
-  description: string
+  translationKey: string
 }
 
 export const CONFIGURATION_META: ConfigurationKindMeta[] = [
-  { kind: 'identities', label: '身份', singular: 'Identity', description: '模型、推理参数与系统提示词' },
-  { kind: 'impressions', label: '印象', singular: 'Impression', description: '可复用的上下文消息序列' },
-  { kind: 'tool-groups', label: '工具组', singular: 'Tool Group', description: '按用途组织可调用工具' },
-  { kind: 'concierges', label: '助理', singular: 'Concierge', description: '组合身份、印象、工具组与插件' },
-  { kind: 'workflows', label: '工作流', singular: 'Workflow', description: '定义输入输出与顺序执行步骤' },
-  { kind: 'jobs', label: '任务', singular: 'Job', description: '通过触发器调度工作流' },
+  { kind: 'identities', translationKey: 'configuration.kinds.identities' },
+  { kind: 'impressions', translationKey: 'configuration.kinds.impressions' },
+  { kind: 'tool-groups', translationKey: 'configuration.kinds.toolGroups' },
+  { kind: 'concierges', translationKey: 'configuration.kinds.concierges' },
+  { kind: 'workflows', translationKey: 'configuration.kinds.workflows' },
+  { kind: 'jobs', translationKey: 'configuration.kinds.jobs' },
 ]
 
 export const getConfigurationMeta = (kind: ConfigurationKind) =>
@@ -39,35 +37,41 @@ export function createEmptyConfiguration<K extends ConfigurationKind>(kind: K): 
   return structuredClone(values[kind])
 }
 
-export function configurationSummary(kind: ConfigurationKind, value: Configuration): string {
+export interface TranslationDescriptor {
+  key?: string
+  text?: string
+  values?: Record<string, string | number>
+}
+
+export function configurationSummary(kind: ConfigurationKind, value: Configuration): TranslationDescriptor | null {
   switch (kind) {
     case 'identities': {
       const identity = value as ConfigurationByKind['identities']
-      return identity.description || identity.preferred_model || '系统身份'
+      return identity.description || identity.preferred_model ? { text: identity.description || identity.preferred_model } : { key: 'configuration.summary.systemIdentity' }
     }
     case 'impressions': {
       const impression = value as ConfigurationByKind['impressions']
-      return impression.description || `${impression.messages.length} 条消息`
+      return impression.description ? { text: impression.description } : { key: 'configuration.summary.messages', values: { count: impression.messages.length } }
     }
     case 'tool-groups':
-      return `${(value as ConfigurationByKind['tool-groups']).tools.length} 个工具`
+      return { key: 'configuration.summary.tools', values: { count: (value as ConfigurationByKind['tool-groups']).tools.length } }
     case 'concierges':
-      return `Identity · ${(value as ConfigurationByKind['concierges']).identity || '未设置'}`
+      return { key: 'configuration.summary.concierge', values: { identity: (value as ConfigurationByKind['concierges']).identity || '__not_configured__' } }
     case 'workflows': {
       const workflow = value as ConfigurationByKind['workflows']
-      return workflow.description || `${workflow.steps.length} 个步骤`
+      return workflow.description ? { text: workflow.description } : { key: 'configuration.summary.steps', values: { count: workflow.steps.length } }
     }
     case 'jobs': {
       const job = value as ConfigurationByKind['jobs']
-      return job.title || job.description || `${job.workflows.length} 个工作流`
+      return job.title || job.description ? { text: job.title || job.description } : { key: 'configuration.summary.workflows', values: { count: job.workflows.length } }
     }
   }
 }
 
-export function validateConfiguration(value: Configuration): Record<string, string> {
-  const errors: Record<string, string> = {}
-  if (!value.name.trim()) errors.name = '名称不能为空'
+export function validateConfiguration(value: Configuration): Record<string, TranslationDescriptor> {
+  const errors: Record<string, TranslationDescriptor> = {}
+  if (!value.name.trim()) errors.name = { key: 'configuration.validation.nameRequired' }
 
-  if ('nickname' in value && Array.from(value.nickname).length > 20) errors.nickname = '昵称不能超过 20 字'
+  if ('nickname' in value && Array.from(value.nickname).length > 20) errors.nickname = { key: 'configuration.validation.nicknameTooLong' }
   return errors
 }

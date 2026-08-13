@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowUp, Blocks, Check, Wrench, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { GenerationOptions, ReasoningEffort } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
 
@@ -23,13 +24,14 @@ interface Props {
   onPluginToggle: (plugin: string, active: boolean) => void
 }
 
-const reasoningChoices: { value: ReasoningEffort; label: string }[] = [
-  { value: 'max', label: '深度' },
-  { value: 'high', label: '快速' },
-  { value: 'none', label: '即答' },
+const reasoningChoices: ReasoningEffort[] = [
+  'max',
+  'high',
+  'none',
 ]
 
 export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle }: Props) {
+  const { t } = useTranslation()
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -39,7 +41,9 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
 
   const isCommand = text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
-  const reasoningLabel = reasoningChoices.find(choice => choice.value === generationOptions.reasoningEffort)?.label ?? '无'
+  const reasoningLabel = reasoningChoices.includes(generationOptions.reasoningEffort)
+    ? t(`chat.reasoning.${generationOptions.reasoningEffort}`)
+    : t('chat.reasoning.unavailable')
   const commandQuery = text.trimStart().toLowerCase()
   const commandSuggestions = commandHelp
     ?.split('\n')
@@ -80,14 +84,14 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
     <div className="composer-panel">
       <div className="composer-card">
         {isCommand && (
-          <div className="composer-hint">斜杠命令：回复不会写入普通历史记录。</div>
+          <div className="composer-hint">{t('chat.command.hint')}</div>
         )}
         {files.length > 0 && (
           <div className="composer-files" aria-live="polite">
             {files.map((file, index) => (
               <div className="composer-file" key={`${file.name}-${file.lastModified}-${index}`}>
                 <span>{file.name} ({formatSize(file.size)})</span>
-                <button type="button" onClick={() => onFilesChange(files.filter((_, currentIndex) => currentIndex !== index))} title="移除文件" aria-label={`移除 ${file.name}`}>
+                <button type="button" onClick={() => onFilesChange(files.filter((_, currentIndex) => currentIndex !== index))} title={t('chat.files.remove', { name: file.name })} aria-label={t('chat.files.remove', { name: file.name })}>
                   <X aria-hidden="true" size={14} />
                 </button>
               </div>
@@ -95,8 +99,8 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
           </div>
         )}
         {isCommand && (
-          <div className="command-suggestions" role="listbox" aria-label="斜杠命令建议">
-            {commandHelpLoading ? <span className="command-suggestions-status">正在加载命令…</span> : commandSuggestions.length > 0 ? (
+          <div className="command-suggestions" role="listbox" aria-label={t('chat.command.suggestions')}>
+            {commandHelpLoading ? <span className="command-suggestions-status">{t('chat.command.loading')}</span> : commandSuggestions.length > 0 ? (
               commandSuggestions.map(command => {
                 const [name, ...description] = command.split(' - ')
                 const isMatch = matchedCommands.includes(command)
@@ -119,7 +123,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                   </button>
                 )
               })
-            ) : commandHelp ? <span className="command-suggestions-status">没有可用命令</span> : <span className="command-suggestions-status">当前会话创建后将加载命令</span>}
+            ) : commandHelp ? <span className="command-suggestions-status">{t('chat.command.unavailable')}</span> : <span className="command-suggestions-status">{t('chat.command.pendingSession')}</span>}
           </div>
         )}
         <div className="composer-input-row">
@@ -129,7 +133,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
             onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}
             disabled={disabled && !text.startsWith('/')}
-            placeholder={disabled ? '生成中…' : '请输入你的问题…'}
+            placeholder={disabled ? t('chat.compose.generating') : t('chat.compose.placeholder')}
             rows={3}
             className="composer-textarea"
           />
@@ -151,26 +155,26 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                   onFocus={() => {
                     if (!controlsDisabled) reasoningMenu.pinOpen()
                   }}
-                  title="选择思考强度"
+                  title={t('chat.reasoning.select')}
                 >
                   <ThinkingIcon />
                   <span>{reasoningLabel}</span>
                 </button>
                 {reasoningMenu.open && (
-                  <div className="composer-options-menu" role="menu" aria-label="思考强度" onMouseEnter={reasoningMenu.cancelClose} onMouseLeave={reasoningMenu.scheduleClose}>
+                  <div className="composer-options-menu" role="menu" aria-label={t('chat.reasoning.select')} onMouseEnter={reasoningMenu.cancelClose} onMouseLeave={reasoningMenu.scheduleClose}>
                     {reasoningChoices.map(choice => (
                       <button
                         type="button"
                         role="menuitemradio"
-                        aria-checked={generationOptions.reasoningEffort === choice.value}
-                        key={choice.value}
+                        aria-checked={generationOptions.reasoningEffort === choice}
+                        key={choice}
                         onClick={() => {
-                          onGenerationOptionsChange({ ...generationOptions, reasoningEffort: choice.value })
+                          onGenerationOptionsChange({ ...generationOptions, reasoningEffort: choice })
                           reasoningMenu.close()
                         }}
                       >
-                        <span>{choice.label}</span>
-                        {generationOptions.reasoningEffort === choice.value && <Check aria-hidden="true" size={14} />}
+                        <span>{t(`chat.reasoning.${choice}`)}</span>
+                        {generationOptions.reasoningEffort === choice && <Check aria-hidden="true" size={14} />}
                       </button>
                     ))}
                   </div>
@@ -182,16 +186,16 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                 disabled={controlsDisabled}
                 aria-pressed={generationOptions.webSearch}
                 onClick={() => onGenerationOptionsChange({ ...generationOptions, webSearch: !generationOptions.webSearch })}
-                title={generationOptions.webSearch ? '联网已开启' : '联网已关闭'}
+                title={generationOptions.webSearch ? t('chat.compose.webSearchEnabled') : t('chat.compose.webSearchDisabled')}
               >
                 <WebIcon />
-                <span>联网</span>
+                <span>{t('chat.compose.webSearch')}</span>
               </button>
               {toolGroups.length > 0 && (
                 <SelectableOptionsControl
-                  label="工具"
-                  menuLabel="工具组"
-                  title="选择工具组"
+                  label={t('chat.compose.tools')}
+                  menuLabel={t('chat.compose.toolGroups')}
+                  title={t('chat.compose.selectToolGroups')}
                   icon={<Wrench aria-hidden="true" size={14} />}
                   options={toolGroups}
                   activeOptions={activeToolGroups}
@@ -201,9 +205,9 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
               )}
               {plugins.length > 0 && (
                 <SelectableOptionsControl
-                  label="插件"
-                  menuLabel="插件"
-                  title="选择插件"
+                  label={t('chat.compose.plugins')}
+                  menuLabel={t('chat.compose.plugins')}
+                  title={t('chat.compose.selectPlugins')}
                   icon={<Blocks aria-hidden="true" size={14} />}
                   options={plugins}
                   activeOptions={activePlugins}
@@ -216,26 +220,26 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
             <div className="composer-submit-controls">
               {disabled ? (
                 <button type="button" onClick={onStop} className="composer-stop-btn">
-                  停止
+                  {t('chat.compose.stop')}
                 </button>
               ) : (
                 <>
                 <input ref={fileInputRef} type="file" multiple hidden onChange={event => onFilesChange([...files, ...Array.from(event.target.files ?? [])])} />
                 <div className="composer-upload-tooltip">
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isCommand} className="composer-upload-btn" aria-label="上传文件（最多 5 个，单文件最大 50 MB，总计 250 MB）" aria-describedby="upload-file-limits">
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isCommand} className="composer-upload-btn" aria-label={t('chat.files.uploadLabel')} aria-describedby="upload-file-limits">
                     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <path d="M5.5498 9.75V5H6.9502V9.75C6.9502 10.3299 7.4201 10.7998 8 10.7998C8.5799 10.7998 9.0498 10.3299 9.0498 9.75V4.5C9.0498 2.9536 7.7964 1.7002 6.25 1.7002C4.7036 1.7002 3.4502 2.9536 3.4502 4.5V9.75C3.4502 12.2629 5.4871 14.2998 8 14.2998C10.5129 14.2998 12.5498 12.2629 12.5498 9.75V4H13.9502V9.75C13.9502 13.0361 11.2861 15.7002 8 15.7002C4.71391 15.7002 2.0498 13.0361 2.0498 9.75V4.5C2.04981 2.1804 3.9304 0.299806 6.25 0.299805C8.5696 0.299805 10.4502 2.1804 10.4502 4.5V9.75C10.4502 11.1031 9.3531 12.2002 8 12.2002C6.6469 12.2002 5.5498 11.1031 5.5498 9.75Z" fill="currentColor" />
                     </svg>
                   </button>
-                  <span id="upload-file-limits" role="tooltip">上传文件：最多 5 个，单文件最大 50 MB，总计 250 MB</span>
+                  <span id="upload-file-limits" role="tooltip">{t('chat.files.uploadLimits')}</span>
                 </div>
                 <button
                   type="button"
                   onClick={submit}
                   disabled={!text.trim()}
                   className="composer-send-btn composer-send-icon-btn"
-                  aria-label="发送"
-                  title="发送"
+                  aria-label={t('chat.compose.send')}
+                  title={t('chat.compose.send')}
                 >
                   <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
                 </button>

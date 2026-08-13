@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Check, Copy, Download, FileText, GitFork, Pencil, RefreshCw, StepForward } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
 import { attachmentDownloadURL } from '../api/client'
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, onFork, onRegenerate, onContinue }: Props) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
   const [editText, setEditText] = useState(msg.Content)
@@ -112,8 +114,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 autoFocus
               />
               <div className="message-editor-actions">
-                <button onClick={() => setEditing(false)} className="message-action-btn">取消</button>
-                <button onClick={handleEditSubmit} className="composer-send-btn">重发</button>
+                <button onClick={() => setEditing(false)} className="message-action-btn">{t('common.cancel')}</button>
+                <button onClick={handleEditSubmit} className="composer-send-btn">{t('chat.message.resend')}</button>
               </div>
             </div>
           ) : (
@@ -123,7 +125,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   <div className="message-attachment" key={attachment.path}>
                     <FileText aria-hidden="true" size={15} />
                     <span>{attachment.path}</span>
-                    <small>{attachment.size}{attachment.contentIncluded ? ' · 已提取内容' : ''}</small>
+                    <small>{attachment.size}{attachment.contentIncluded ? t('chat.files.contentExtracted') : ''}</small>
                   </div>
                 ))}
                 <div className="message-body">{parsedUserContent?.body ?? msg.Content}</div>
@@ -132,14 +134,14 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 {sibs.length > 1 && (
                   <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
                 )}
-                <IconButton label={copied ? '已复制' : '复制'} onClick={handleCopy}>
+                <IconButton label={copied ? t('chat.message.copied') : t('chat.message.copy')} onClick={handleCopy}>
                   {copied ? <Check /> : <Copy />}
                 </IconButton>
                 <button
                   onClick={startUserEdit}
                   className="message-action-btn message-icon-btn"
-                  aria-label="编辑"
-                  title="编辑"
+                  aria-label={t('chat.message.edit')}
+                  title={t('chat.message.edit')}
                 >
                   <Pencil />
                 </button>
@@ -164,7 +166,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
           {editing ? (
             <div className="message-editor assistant-message-editor">
               <label className="message-editor-field">
-                <span>正文</span>
+                <span>{t('chat.message.body')}</span>
                 <textarea
                   value={editText}
                   onChange={event => setEditText(event.target.value)}
@@ -175,7 +177,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 />
               </label>
               <label className="message-editor-field">
-                <span>思考过程</span>
+                <span>{t('chat.reasoning.process')}</span>
                 <textarea
                   value={editReasoning}
                   onChange={event => setEditReasoning(event.target.value)}
@@ -185,9 +187,9 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 />
               </label>
               <div className="message-editor-actions">
-                <button onClick={() => setEditing(false)} className="message-action-btn" disabled={editSaving}>取消</button>
+                <button onClick={() => setEditing(false)} className="message-action-btn" disabled={editSaving}>{t('common.cancel')}</button>
                 <button onClick={() => void handleAssistantEditSubmit()} className="composer-send-btn" disabled={!editText.trim() || editDisabled}>
-                  {editSaving ? '保存中' : '保存'}
+                  {editSaving ? t('chat.message.saving') : t('common.save')}
                 </button>
               </div>
             </div>
@@ -209,7 +211,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                         setReasoningPinned(pinned => !pinned)
                       }}
                     >
-                      思考过程
+                      {t('chat.reasoning.process')}
                     </summary>
                     {reasoningPinned && <StoredThinkingProcess messages={thinkingMessages} />}
                   </details>
@@ -225,14 +227,14 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
               )}
               {(msg.Content || attachments.length > 0) && (
                 <div className="message-card assistant">
-                  {msg.Status === 'incomplete' && <span className="message-status incomplete">异常终止</span>}
+                  {msg.Status === 'incomplete' && <span className="message-status incomplete">{t('chat.message.incomplete')}</span>}
           {msg.Content && (
             <div className="message-body">
               <Markdown>{msg.Content}</Markdown>
             </div>
           )}
           {attachments.length > 0 && (
-            <div className="assistant-attachments" aria-label="已发送文件">
+            <div className="assistant-attachments" aria-label={t('chat.files.sent')}>
               {attachments.map(attachment => <AssistantAttachment key={attachment.ID} attachment={attachment} />)}
             </div>
           )}
@@ -242,7 +244,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 {sibs.length > 1 && (
                   <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
                 )}
-                <IconButton label={copied ? '已复制' : '复制'} onClick={handleCopy}>
+                <IconButton label={copied ? t('chat.message.copied') : t('chat.message.copy')} onClick={handleCopy}>
                   {copied ? <Check /> : <Copy />}
                 </IconButton>
                 {canEdit && (
@@ -250,8 +252,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                     onClick={() => { setEditText(msg.Content); setEditReasoning(msg.ReasoningContent); setEditing(true) }}
                     className="message-action-btn message-icon-btn"
                     disabled={editDisabled}
-                    aria-label="编辑"
-                    title="编辑"
+                    aria-label={t('chat.message.edit')}
+                    title={t('chat.message.edit')}
                   >
                     <Pencil />
                   </button>
@@ -260,8 +262,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   <button
                     onClick={onRegenerate}
                     className="message-action-btn message-icon-btn"
-                    aria-label="重新生成"
-                    title="重新生成"
+                    aria-label={t('chat.message.regenerate')}
+                    title={t('chat.message.regenerate')}
                   >
                     <RefreshCw />
                   </button>
@@ -270,8 +272,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   <button
                     onClick={onContinue}
                     className="message-action-btn message-icon-btn"
-                    aria-label="继续生成"
-                    title="继续生成"
+                    aria-label={t('chat.message.continue')}
+                    title={t('chat.message.continue')}
                   >
                     <StepForward />
                   </button>
@@ -281,8 +283,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                     onClick={onFork}
                     className="message-action-btn message-icon-btn message-fork-btn"
                     disabled={forkDisabled}
-                    aria-label="创建会话分支"
-                    title="创建会话分支"
+                    aria-label={t('chat.message.fork')}
+                    title={t('chat.message.fork')}
                   >
                     <GitFork />
                   </button>
@@ -299,7 +301,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
     return (
       <div className="message-row assistant">
         <details className="stored-tool-result">
-          <summary>工具执行结果</summary>
+          <summary>{t('chat.message.toolResult')}</summary>
           <pre>{msg.Content}</pre>
         </details>
       </div>
@@ -318,6 +320,7 @@ function formatAttachmentSize(size: number) {
 }
 
 function AssistantAttachment({ attachment }: { attachment: ChatMessage['Attachments'][number] }) {
+  const { t } = useTranslation()
   const nameRef = useRef<HTMLSpanElement>(null)
   const [scroll, setScroll] = useState({ distance: 0, duration: 0 })
 
@@ -345,7 +348,7 @@ function AssistantAttachment({ attachment }: { attachment: ChatMessage['Attachme
       className={'assistant-attachment' + (scroll.distance > 0 ? ' overflowing' : '')}
       download={attachment.Name}
       href={attachmentDownloadURL(attachment.SessionID, attachment.ID)}
-      title={`下载 ${attachment.Name}`}
+      title={t('chat.files.download', { name: attachment.Name })}
     >
       <FileText aria-hidden="true" size={16} />
       <span ref={nameRef} style={style}><span>{attachment.Name}</span></span>
@@ -435,10 +438,11 @@ function StoredThinkingProcess({ messages }: { messages: ChatMessage[] }) {
 }
 
 function StoredToolCall({ toolCall, result }: { toolCall: ToolCall; result?: string }) {
-  const name = toolCall.function?.name || '工具调用'
+  const { t } = useTranslation()
+  const name = toolCall.function?.name || t('chat.message.toolCall')
   const args = toolCall.function?.arguments
   const resultPreview = result && result.length > 12000
-    ? `${result.slice(0, 12000)}\n\n[结果过长，已截断]`
+    ? `${result.slice(0, 12000)}\n\n${t('chat.message.truncatedResult')}`
     : result
 
   return (
@@ -446,12 +450,12 @@ function StoredToolCall({ toolCall, result }: { toolCall: ToolCall; result?: str
       <div className="tool-activity-header">
         <span className="tool-status-dot" data-status="complete" />
         <strong>{name}</strong>
-        <span>已调用</span>
+        <span>{t('chat.message.called')}</span>
       </div>
       {args && <pre>{args}</pre>}
       {resultPreview && (
         <details className="tool-output">
-          <summary>查看执行结果</summary>
+          <summary>{t('chat.message.viewResult')}</summary>
           <pre className="tool-result-content">{resultPreview}</pre>
         </details>
       )}

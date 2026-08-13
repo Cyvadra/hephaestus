@@ -33,3 +33,16 @@ SPA fallback is required for refreshing or directly opening a nested URL.
 npm run lint
 npm run build
 ```
+
+## Localization
+
+UI resources live in `src/i18n/locales.ts`. The active language is persisted in
+browser storage and defaults to Chinese for Chinese browser locales, otherwise
+English. Use `useTranslation()` and semantic keys for user-facing text; do not
+translate API values, user-authored content, or configuration payloads.
+
+Run the candidate inventory while migrating a feature:
+
+```sh
+npm run i18n:audit
+```

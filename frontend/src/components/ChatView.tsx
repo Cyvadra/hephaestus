@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
 import { UploadCloud, Zap } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { createSession, editAssistantMessage, forkSessionAtMessage, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
@@ -9,6 +10,7 @@ import Composer from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
 import { pendingAttachmentPrefix } from '../lib/attachments'
+import i18n from '../i18n'
 
 const COMMAND_HELP_CACHE_KEY = 'hephaestus.commandHelp'
 const COMMAND_HELP_CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -39,7 +41,7 @@ function notifyPermissionRequest(request: InteractionRequest) {
     return
   }
   if (Notification.permission === 'granted') {
-    new Notification(request.title, { body: '20 秒后将自动允许，请返回 Hephaestus 确认。' })
+    new Notification(request.title, { body: i18n.t('chat.permission.notification') })
   }
 }
 
@@ -104,6 +106,7 @@ async function consumeStream(
 }
 
 export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, configurationRefreshKey, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated, onSessionTarget }: Props) {
+  const { t } = useTranslation()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -385,7 +388,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     try {
       if (targetSessionId == null) {
         if (!selectedConcierge) {
-          throw new Error('请先选择顾问再开始新会话')
+          throw new Error(t('chat.concierge.selectBeforeStarting'))
         }
         if (project == null) throw new Error('No project selected')
         const created = await createSession(selectedConcierge.name, project)
@@ -433,7 +436,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       setStreamingActivities([])
       setOptimisticUserMessage(null)
     }
-  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions])
+  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, t])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -574,9 +577,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const lastAssistantIdx = displayMessages.map(item => item.message.Role).lastIndexOf('assistant')
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
-  const headerTitle = activeSession?.Title || (resolvedSessionId == null ? '新会话' : `Session #${resolvedSessionId}`)
+  const headerTitle = activeSession?.Title || (resolvedSessionId == null ? t('chat.session.new') : t('chat.session.unnamed', { id: resolvedSessionId }))
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
-  const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || '未选择 Concierge'
+  const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || t('chat.concierge.notSelected')
   const sessionConcierge = concierges.find(concierge => concierge.name === activeSession?.SourceConcierge)
   const toolGroups = activeSession == null ? [] : [...new Set([
     ...(activeSession.Settings.tool_groups ?? []),
@@ -602,8 +605,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       {dragDepth > 0 && (
         <div className="file-drop-overlay" role="status" aria-live="polite">
           <UploadCloud aria-hidden="true" size={32} strokeWidth={1.8} />
-          <strong>释放以上传文件</strong>
-          <span>最多 5 个文件，单个文件最大 50 MB</span>
+          <strong>{t('chat.dropFiles.title')}</strong>
+          <span>{t('chat.dropFiles.limits')}</span>
         </div>
       )}
       <header className="chat-header">
@@ -613,7 +616,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               <input
                 value={headerTitleDraft}
                 maxLength={64}
-                aria-label="会话标题"
+                aria-label={t('chat.session.title')}
                 onChange={event => setHeaderTitleDraft(event.target.value)}
                 onKeyDown={event => {
                   if (event.key === 'Enter') {
@@ -646,7 +649,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>
         {isNewSession ? (
           <div className="empty-state-card">
-            <h2>{isChoosingConcierge ? '选择 Concierge' : '开始新的对话'}</h2>
+            <h2>{isChoosingConcierge ? t('chat.concierge.select') : t('chat.concierge.start')}</h2>
             {isChoosingConcierge ? (
               <div className="concierge-card-grid">
                 {concierges.map(concierge => (
@@ -658,24 +661,24 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
                   >
                     <strong>{concierge.identity}</strong>
                     <p>{concierge.description}</p>
-                    <CardTags label="工具组" values={concierge.tool_groups} />
-                    <CardTags label="印象" values={concierge.impressions} />
+                    <CardTags label={t('chat.concierge.toolGroups')} values={concierge.tool_groups} />
+                    <CardTags label={t('chat.concierge.impressions')} values={concierge.impressions} />
                   </button>
                 ))}
               </div>
             ) : selectedConcierge && (
               <div className="concierge-details">
                 <div className="concierge-detail">
-                  <span>顾问</span>
+                  <span>{t('chat.concierge.advisor')}</span>
                   <strong>{selectedConcierge.name}</strong>
                 </div>
                 <div className="concierge-detail">
-                  <span>身份</span>
+                  <span>{t('chat.concierge.identity')}</span>
                   <p>{selectedConcierge.identity}</p>
                 </div>
-                <DetailList label="印象" values={selectedConcierge.impressions} />
-                <DetailList label="工具组" values={selectedConcierge.tool_groups} />
-                <DetailList label="插件" values={selectedConcierge.plugins} />
+                <DetailList label={t('chat.concierge.impressions')} values={selectedConcierge.impressions} />
+                <DetailList label={t('chat.concierge.toolGroups')} values={selectedConcierge.tool_groups} />
+                <DetailList label={t('chat.concierge.plugins')} values={selectedConcierge.plugins} />
               </div>
             )}
           </div>
@@ -874,6 +877,7 @@ function groupToolChains(path: ChatMessage[]): DisplayMessage[] {
 }
 
 function DetailList({ label, values }: { label: string; values?: string[] }) {
+  const { t } = useTranslation()
   const configuredValues = Array.isArray(values) ? values : []
 
   return (
@@ -884,7 +888,7 @@ function DetailList({ label, values }: { label: string; values?: string[] }) {
           {configuredValues.map(value => <span className="concierge-tag" key={value}>{value}</span>)}
         </div>
       ) : (
-        <p>未配置</p>
+        <p>{t('chat.concierge.unconfigured')}</p>
       )}
     </div>
   )

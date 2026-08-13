@@ -1,5 +1,6 @@
 import { AlertCircle, ChevronRight, LoaderCircle, Play, RefreshCw, Square } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   cancelJobRun,
   cancelWorkflowRun,
@@ -13,19 +14,9 @@ import {
 import { subscribeWorkflowRun } from '../../api/workflowStream'
 import type { JobRun, JobRunDetail, WorkflowRun, WorkflowRunDetail, WorkflowStepRun } from '../../api/types'
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: '等待',
-  running: '运行中',
-  succeeded: '成功',
-  failed: '失败',
-  fatal: '致命错误',
-  cancelled: '已取消',
-  interrupted: '已中断',
-  completed_with_errors: '部分成功',
-}
-
 function RunStatusBadge({ status }: { status: string }) {
-  return <span className={`run-status run-status-${status}`}>{STATUS_LABELS[status] ?? status}</span>
+  const { t } = useTranslation()
+  return <span className={`run-status run-status-${status}`}>{t(`configuration.runs.${status}`, { defaultValue: status })}</span>
 }
 
 function isActive(status: string): boolean {
@@ -100,6 +91,7 @@ interface LiveProgress {
 // WorkflowRunTester 提供工作流的在线测试：填写输入、选择 Project 启动运行，
 // 通过 SSE 实时查看步骤输出与结果，可取消进行中的运行。
 export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName: string; inputSchema: unknown }) {
+  const { t } = useTranslation()
   const [projects, setProjects] = useState<string[]>([])
   const [project, setProject] = useState('')
   const [inputSource, setInputSource] = useState('')
@@ -118,8 +110,8 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
   }, [workflowName, inputSchema])
 
   const load = useCallback(() => {
-    void listWorkflowRuns(workflowName, 20).then(setRuns).catch(reason => setError(reason instanceof Error ? reason.message : '加载运行记录失败'))
-  }, [workflowName])
+    void listWorkflowRuns(workflowName, 20).then(setRuns).catch(reason => setError(reason instanceof Error ? reason.message : t('configuration.runs.loadFailed')))
+  }, [workflowName, t])
   useEffect(() => { load() }, [load, refreshKey])
 
   // 通过 SSE 实时订阅最新一条进行中的运行，替代轮询；运行到达终态后由
@@ -182,7 +174,7 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
     setLive(null)
     const parsed = parseJSONLoose(inputSource)
     if (parsed === undefined || parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      setError('输入必须是合法的 JSON 对象')
+      setError(t('configuration.runs.invalidInput'))
       return
     }
     setStarting(true)
@@ -192,7 +184,7 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
       setDetails(current => ({ ...current, [run.ID]: { run, steps: [] } }))
       setRefreshKey(key => key + 1)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '启动失败')
+      setError(reason instanceof Error ? reason.message : t('configuration.runs.startFailed'))
     } finally {
       setStarting(false)
     }
@@ -207,7 +199,7 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
       const detail = await getWorkflowRun(runID)
       setDetails(current => ({ ...current, [runID]: detail }))
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '加载详情失败')
+      setError(reason instanceof Error ? reason.message : t('configuration.runs.detailFailed'))
     }
   }
 
@@ -216,32 +208,32 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
       await cancelWorkflowRun(runID)
       setRefreshKey(key => key + 1)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '取消失败')
+      setError(reason instanceof Error ? reason.message : t('configuration.runs.cancelFailed'))
     }
   }
 
   return (
     <section className="run-tester">
-      <header><h2>在线测试</h2><p>填写输入并启动一次该工作流的运行，实时查看每个步骤的执行结果。</p></header>
+      <header><h2>{t('configuration.runs.testerTitle')}</h2><p>{t('configuration.runs.testerDescription')}</p></header>
       <div className="run-tester-form">
-        <label className="run-tester-project">Project
+        <label className="run-tester-project">{t('configuration.form.project')}
           <input list="run-project-suggestions" placeholder="default-workspace" value={project} onChange={event => setProject(event.target.value)} />
           <datalist id="run-project-suggestions">{projects.map(item => <option key={item} value={item} />)}</datalist>
         </label>
-        <label className="run-tester-input">输入 JSON <small>已按 input_schema 预填</small>
+        <label className="run-tester-input">{t('configuration.runs.inputJson')} <small>{t('configuration.runs.schemaPrefill')}</small>
           <textarea className="configuration-json-editor" rows={7} value={inputSource} onChange={event => setInputSource(event.target.value)} />
         </label>
         <div className="run-tester-actions">
-          <button className="primary" type="button" disabled={starting} onClick={() => void start()}>{starting ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}启动运行</button>
-          <button type="button" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={15} />刷新</button>
+          <button className="primary" type="button" disabled={starting} onClick={() => void start()}>{starting ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}{t('configuration.runs.start')}</button>
+          <button type="button" onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={15} />{t('configuration.runs.refresh')}</button>
         </div>
         {error && <div className="configuration-alert error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
       </div>
       {live && (
         <div className="run-live">
           <header>
-            <span className="run-live-badge"><LoaderCircle className="spin" size={13} />运行中 #{live.runID}</span>
-            <span className="run-live-step">{live.stepText ? `步骤 ${live.stepIndex + 1}：${live.stepText}` : '准备中…'}</span>
+            <span className="run-live-badge"><LoaderCircle className="spin" size={13} />{t('configuration.runs.live', { id: live.runID })}</span>
+            <span className="run-live-step">{live.stepText ? t('configuration.runs.step', { index: live.stepIndex + 1, text: live.stepText }) : t('configuration.runs.preparing')}</span>
           </header>
           {live.tools.length > 0 && (
             <div className="run-live-tools">{live.tools.map((name, index) => <span key={index} className="run-live-tool">{name}</span>)}</div>
@@ -252,11 +244,11 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
       <RunList<WorkflowRun, WorkflowRunDetail>
         runs={runs}
         details={details}
-        empty="还没有运行记录，点击上方「启动运行」开始测试。"
+        empty={t('configuration.runs.noRuns')}
         onToggle={toggle}
         onCancel={cancel}
         runTitle={run => run.WorkflowName}
-        runSubtitle={run => `#${run.ID} · 尝试 ${run.Attempt} · ${run.ProjectName}`}
+        runSubtitle={run => `#${run.ID} · ${t('configuration.runs.attempt', { count: run.Attempt })} · ${run.ProjectName}`}
         runInputText={run => prettyJSON(run.Input)}
         runOutputText={run => prettyJSON(run.Output)}
         renderSteps={detail => (detail ? detail.steps : [])}
@@ -267,14 +259,15 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
 
 // JobRunsPanel 展示一个 Job 的历史调度运行记录，可展开查看其绑定的工作流尝试。
 export function JobRunsPanel({ jobName }: { jobName: string }) {
+  const { t } = useTranslation()
   const [runs, setRuns] = useState<JobRun[]>([])
   const [details, setDetails] = useState<Record<number, JobRunDetail | null>>({})
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const load = useCallback(() => {
-    void listJobRuns(jobName, 20).then(setRuns).catch(reason => setError(reason instanceof Error ? reason.message : '加载运行记录失败'))
-  }, [jobName])
+    void listJobRuns(jobName, 20).then(setRuns).catch(reason => setError(reason instanceof Error ? reason.message : t('configuration.runs.loadFailed')))
+  }, [jobName, t])
   useEffect(() => { load() }, [load, refreshKey])
 
   const newestID = runs[0]?.ID
@@ -299,7 +292,7 @@ export function JobRunsPanel({ jobName }: { jobName: string }) {
       const detail = await getJobRun(runID)
       setDetails(current => ({ ...current, [runID]: detail }))
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '加载详情失败')
+      setError(reason instanceof Error ? reason.message : t('configuration.runs.detailFailed'))
     }
   }
 
@@ -308,18 +301,18 @@ export function JobRunsPanel({ jobName }: { jobName: string }) {
       await cancelJobRun(runID)
       setRefreshKey(key => key + 1)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '取消失败')
+      setError(reason instanceof Error ? reason.message : t('configuration.runs.cancelFailed'))
     }
   }
 
   return (
     <section className="run-tester">
-      <header><h2>运行记录</h2><p>该 Job 由调度器按触发器自动执行；此处仅查看与取消，不支持手动触发。</p></header>
+      <header><h2>{t('configuration.runs.historyTitle')}</h2><p>{t('configuration.runs.historyDescription')}</p></header>
       {error && <div className="configuration-alert error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
       <RunList<JobRun, JobRunDetail>
         runs={runs}
         details={details}
-        empty="该任务还没有运行记录。"
+        empty={t('configuration.runs.noJobRuns')}
         onToggle={toggle}
         onCancel={cancel}
         runTitle={run => run.JobName}
@@ -346,6 +339,7 @@ interface RunListProps<R extends WorkflowRun | JobRun, D extends WorkflowRunDeta
 }
 
 function RunList<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | JobRunDetail>({ runs, details, empty, onToggle, onCancel, runTitle, runSubtitle, runInputText, runOutputText, renderSteps }: RunListProps<R, D>) {
+  const { t } = useTranslation()
   if (runs.length === 0) return <div className="run-list-empty">{empty}</div>
   return (
     <div className="run-list">
@@ -360,14 +354,14 @@ function RunList<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | J
               <RunStatusBadge status={run.Status} />
               <div className="run-row-title"><strong>{runTitle(run)}</strong><span>{runSubtitle(run)}</span></div>
               <div className="run-row-time">{formatTime(run.StartedAt)} → {formatTime(run.FinishedAt)}</div>
-              {active && <button className="run-cancel" type="button" title="取消运行" onClick={() => onCancel(run.ID)}><Square size={13} />取消</button>}
+              {active && <button className="run-cancel" type="button" title={t('configuration.runs.cancelRun')} onClick={() => onCancel(run.ID)}><Square size={13} />{t('configuration.runs.cancel')}</button>}
             </div>
             {run.Error && <ErrorLine message={run.Error} />}
             {expanded && detail && (
               <div className="run-detail">
                 <RunData inputText={runInputText(run)} outputText={runOutputText(run)} />
                 <div className="run-steps">
-                  {renderSteps(detail).length === 0 && <span className="run-detail-muted">没有步骤记录</span>}
+                  {renderSteps(detail).length === 0 && <span className="run-detail-muted">{t('configuration.runs.noSteps')}</span>}
                   {renderSteps(detail).map((step, index) => <WorkflowStepRow key={step.ID} index={index} step={step} />)}
                 </div>
               </div>
@@ -380,11 +374,12 @@ function RunList<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | J
 }
 
 function RunData({ inputText, outputText }: { inputText: string; outputText: string }) {
+  const { t } = useTranslation()
   if (!inputText && !outputText) return null
   return (
     <div className="run-data">
-      {inputText && <div><h4>输入</h4><pre>{inputText}</pre></div>}
-      {outputText && <div><h4>输出</h4><pre>{outputText}</pre></div>}
+      {inputText && <div><h4>{t('configuration.runs.input')}</h4><pre>{inputText}</pre></div>}
+      {outputText && <div><h4>{t('configuration.runs.output')}</h4><pre>{outputText}</pre></div>}
     </div>
   )
 }
@@ -394,8 +389,9 @@ function isWorkflowStepRun(step: WorkflowStepRun | WorkflowRun): step is Workflo
 }
 
 function WorkflowStepRow({ index, step }: { index: number; step: WorkflowStepRun | WorkflowRun }) {
+  const { t } = useTranslation()
   const stepRun = isWorkflowStepRun(step)
-  const title = stepRun ? `步骤 ${index + 1}` : `工作流 ${step.WorkflowName} · 尝试 ${(step as WorkflowRun).Attempt}`
+  const title = stepRun ? t('configuration.runs.stepTitle', { index: index + 1 }) : t('configuration.runs.workflowAttempt', { name: step.WorkflowName, count: (step as WorkflowRun).Attempt })
   const text = stepRun ? step.Text : ''
   const output = stepRun ? step.Output : prettyJSON((step as WorkflowRun).Output)
   return (
