@@ -5466,7 +5466,7 @@ body {
     line-height: 20px
 }
 
-.settings-tooltip {
+.sidebar-settings-menu {
     position: relative
 }
 
@@ -5490,25 +5490,57 @@ body {
     outline: none
 }
 
-.settings-tooltip span {
-    z-index: 5;
-    color: var(--dsw-static-neutral-bluish-00);
-    background: var(--dsw-alias-tooltip-bg);
-    border-radius: 6px;
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    padding: 4px 8px;
-    font-size: 12px;
-    line-height: 18px;
-    transition: opacity .15s ease;
+.sidebar-settings-popover {
+    z-index: 20;
     position: absolute;
     right: 0;
-    bottom: calc(100% + 6px)
+    bottom: calc(100% + 4px);
+    width: 180px;
+    padding: 4px;
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-specific-menu);
+    border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px rgba(0,0,0,.12)
 }
 
-.settings-tooltip:focus-within span,.settings-tooltip:hover span {
-    opacity: 1
+.sidebar-settings-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-height: 34px;
+    padding: 6px 8px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer
+}
+
+.sidebar-settings-option:hover,.sidebar-settings-option:focus-visible {
+    background: var(--dsw-alias-interactive-bg-hover);
+    outline: none
+}
+
+.sidebar-settings-heading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 2px 8px;
+    color: var(--dsw-alias-label-tertiary);
+    font-size: 11px
+}
+
+.sidebar-settings-divider {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--dsw-alias-border-l1)
 }
 
 .main-panel {
@@ -5665,7 +5697,7 @@ body {
 }
 
 .concierge-card-grid {
-    grid-template-columns: repeat(auto-fit,minmax(165px,1fr));
+    grid-template-columns: repeat(auto-fit,minmax(240px,1fr));
     gap: 12px;
     margin-top: 22px;
     display: grid
@@ -5710,17 +5742,18 @@ body {
 }
 
 .concierge-card-tags {
+    grid-template-columns: 78px minmax(0,1fr);
     align-items: start;
-    gap: 6px;
+    gap: 10px;
     margin-top: 8px;
-    display: flex
+    display: grid
 }
 
 .concierge-card-tags > span {
     color: var(--dsw-alias-label-tertiary);
-    flex: 0 0 36px;
     font-size: 12px;
-    line-height: 22px
+    line-height: 22px;
+    white-space: nowrap
 }
 
 .concierge-detail {

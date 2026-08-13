@@ -398,12 +398,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         createdSessionRef.current = created.ID
         setResolvedSessionId(created.ID)
         onSessionCreated?.(created.ID)
-        // Persist the draft's current control values onto the new session so
-        // they survive a refresh before any further message is sent.
-        void updateSession(created.ID, {
+        const updated = await updateSession(created.ID, {
           reasoningEffort: generationOptions.reasoningEffort,
           enableWebSearch: generationOptions.webSearch,
-        }).catch(() => undefined)
+        })
+        setActiveSession(updated)
       }
 
       const gen = streamMessage(targetSessionId, text, leafId ?? undefined, files, generationOptions, controller.signal)
@@ -749,7 +748,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         toolGroups={toolGroups}
         activeToolGroups={activeToolGroups}
         onToolGroupToggle={(toolGroup, active) => { void handleToolGroupToggle(toolGroup, active) }}
-        plugins={plugins}
+        plugins={resolvedSessionId == null ? [] : plugins}
         pluginDescriptions={pluginDescriptions}
         activePlugins={activePlugins}
         onPluginToggle={(plugin, active) => { void handlePluginToggle(plugin, active) }}
