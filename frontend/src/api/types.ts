@@ -107,8 +107,14 @@ export interface GenerationOptions {
 
 export interface SendMessageResponse {
   command_response?: string
+  session_target?: SessionTarget
   message?: ChatMessage
   metadata?: Record<string, unknown>
+}
+
+export interface SessionTarget {
+  id: number
+  project: string
 }
 
 export interface UploadAttachment {

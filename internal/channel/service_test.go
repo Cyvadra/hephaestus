@@ -20,16 +20,6 @@ func TestIsApproval(t *testing.T) {
 	}
 }
 
-func TestReplacementSessionID(t *testing.T) {
-	got, ok := replacementSessionID("Archived session 4. New session: 17 (from concierge default).")
-	if !ok || got != 17 {
-		t.Fatalf("replacementSessionID() = %d, %v", got, ok)
-	}
-	if _, ok := replacementSessionID("no replacement"); ok {
-		t.Fatal("unexpected replacement session")
-	}
-}
-
 func TestChannelTurnOptionsPreservesExpectedLeaf(t *testing.T) {
 	leaf := uint(42)
 	options := channelTurnOptions(&leaf, nil)

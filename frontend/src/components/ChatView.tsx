@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEve
 import { UploadCloud, Zap } from 'lucide-react'
 import { createSession, editAssistantMessage, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, StreamToolCall, UploadResult } from '../api/types'
+import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer from './Composer'
@@ -24,6 +24,7 @@ interface Props {
   onDefaultConciergeResolved?: (conciergeId: string) => void
   onSessionCreated?: (id: number) => void
   onSessionUpdated?: (session: Session) => void
+  onSessionTarget?: (target: SessionTarget) => void
 }
 
 // notifyPermissionRequest surfaces a desktop notification for an
@@ -102,7 +103,7 @@ async function consumeStream(
   }
 }
 
-export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, configurationRefreshKey, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated }: Props) {
+export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, configurationRefreshKey, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated, onSessionTarget }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -346,6 +347,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const controller = new AbortController()
     streamAbortRef.current = controller
     let targetSessionId = resolvedSessionId
+    let switchedSession = false
     try {
       if (targetSessionId == null) {
         if (!selectedConcierge) {
@@ -374,6 +376,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onSessionUpdated,
         onDone: async data => {
           if (data.command_response) setCommandResponse(data.command_response)
+          if (data.session_target) {
+			switchedSession = true
+            onSessionTarget?.(data.session_target)
+            return
+          }
           const uploads = data.metadata?.uploads as UploadResult | undefined
           setUploadWarnings(uploads?.warnings ?? [])
           await loadHistory(targetSessionId!)
@@ -386,13 +393,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       if (!controller.signal.aborted) setError(String(cause))
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
-      if (targetSessionId != null) await loadHistory(targetSessionId)
+    if (!switchedSession && targetSessionId != null) await loadHistory(targetSessionId)
       setStreaming(false)
       setStreamingText('')
       setStreamingActivities([])
       setOptimisticUserMessage(null)
     }
-  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, generationOptions])
+  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return

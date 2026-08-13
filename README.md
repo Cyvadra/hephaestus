@@ -68,9 +68,16 @@ nor sent to the model.
 Use `/list <kind>` to enumerate available `identity`, `impression`,
 `toolgroup`, `plugin`, `concierge`, `session`, `job`, `workflow`, and `project`
 entries. `/detail <kind> <id>` shows an entry, `/switch` changes the identity
-or concierge, and `/activate` or `/deactivate` adjusts impressions, tool
-groups, and plugins. When an operation asks for approval, respond with
+or concierge, or moves the session to another available project; `/activate`
+or `/deactivate` adjusts impressions, tool groups, and plugins. After
+`/list <kind>`, commands may use the displayed ordinal (for example, `1` or
+`#1`) or the entry name. When an operation asks for approval, respond with
 `/interact approve` or `/interact deny`.
+
+`/switch session <ordinal|#session-id>` selects another session without
+changing either session. The ordinal comes from the most recent `/list session`
+for the current conversation; `#session-id` is a stable session ID. Session
+selection may target archived sessions and sessions in other projects.
 
 ### Web Tools
 

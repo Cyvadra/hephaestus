@@ -8,9 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +27,6 @@ import (
 )
 
 const defaultApprovalTimeout = 2 * time.Minute
-
-var replacementSessionRE = regexp.MustCompile(`(?i)new session:\s*(\d+)`)
 
 // Service owns external channels and routes each chat through one serialized
 // message stack. Approval responses bypass the stack because the active turn
@@ -155,11 +151,10 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		text += fmt.Sprintf("\n[received file: %s, path: %s]", attachment.Name, attachment.Path)
 	}
 	if command.IsCommand(text) {
-		response, executeErr := s.commands.Execute(sessionID, text)
-		if executeErr == nil {
-			if replacementID, ok := replacementSessionID(response); ok {
-				executeErr = s.saveBinding(message.Channel, message.ChatID, replacementID)
-			}
+		result, executeErr := s.commands.ExecuteResult(sessionID, text)
+		response := result.Response
+		if executeErr == nil && result.SessionTarget != nil {
+			executeErr = s.saveBinding(message.Channel, message.ChatID, result.SessionTarget.ID)
 		}
 		if executeErr != nil {
 			response = executeErr.Error()
@@ -369,15 +364,6 @@ func (s *Service) findChannel(name string) channels.Channel {
 }
 
 func bindingKey(channelName, chatID string) string { return channelName + "\x00" + chatID }
-
-func replacementSessionID(response string) (uint, bool) {
-	match := replacementSessionRE.FindStringSubmatch(response)
-	if len(match) != 2 {
-		return 0, false
-	}
-	parsed, err := strconv.ParseUint(match[1], 10, 64)
-	return uint(parsed), err == nil && parsed > 0
-}
 
 func isApproval(text string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(text))

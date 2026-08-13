@@ -230,6 +230,9 @@ func validateGenerationOptions(req *sendMessageRequest) error {
 type sendMessageResponse struct {
 	// CommandResponse is set (and never persisted) when Text was a slash command.
 	CommandResponse string `json:"command_response,omitempty"`
+	// SessionTarget asks the client to navigate to another existing session.
+	// It is set only by slash commands and does not represent a session write.
+	SessionTarget *command.SessionTarget `json:"session_target,omitempty"`
 	// Message is the persisted final assistant ChatMessage for a chat turn.
 	Message *store.ChatMessage `json:"message,omitempty"`
 	// Metadata carries any plugin-attached data for this turn (e.g.
@@ -426,11 +429,11 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 			c.JSON(http.StatusBadRequest, errorResponse{Error: "attachments cannot be sent with slash commands"})
 			return 0, sendMessageRequest{}, nil, false
 		}
-		resp, err := s.commands.Execute(sessionID, req.Text)
+		result, err := s.commands.ExecuteResult(sessionID, req.Text)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		} else {
-			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: resp})
+			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget})
 		}
 		return 0, sendMessageRequest{}, nil, false
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Cyvadra/hephaestus/internal/registry"
+	"github.com/Cyvadra/hephaestus/internal/store"
 )
 
 func testService() *Service {
@@ -46,15 +47,64 @@ func TestValidateKindNameUsesPublishedRegistry(t *testing.T) {
 
 func TestResolveNameUsesExplicitListReference(t *testing.T) {
 	service := testService()
-	service.lastList[7] = map[Kind][]string{KindProject: {"first", "second"}}
+	service.lastList[7] = map[Kind][]string{KindProject: {"first", "second"}, KindConcierge: {"default"}}
 
 	got, err := service.resolveName(7, KindProject, "#2")
 	if err != nil || got != "second" {
 		t.Fatalf("resolve #2: got %q, err %v", got, err)
 	}
+	got, err = service.resolveName(7, KindProject, "2")
+	if err != nil || got != "second" {
+		t.Fatalf("resolve bare 2: got %q, err %v", got, err)
+	}
+	got, err = service.resolveName(7, KindConcierge, "1")
+	if err != nil || got != "default" {
+		t.Fatalf("resolve bare 1: got %q, err %v", got, err)
+	}
 	got, err = service.resolveName(7, KindProject, "123")
 	if err != nil || got != "123" {
-		t.Fatalf("numeric literal name: got %q, err %v", got, err)
+		t.Fatalf("numeric literal name without matching list item: got %q, err %v", got, err)
+	}
+}
+
+func TestResolveSessionIDDistinguishesOrdinalsFromStableIDs(t *testing.T) {
+	service := testService()
+	service.lastList[7] = map[Kind][]string{KindSession: {"42", "99"}}
+
+	got, err := service.resolveSessionID(7, "2")
+	if err != nil || got != 99 {
+		t.Fatalf("resolve session ordinal: got %d, err %v", got, err)
+	}
+	got, err = service.resolveSessionID(7, "#42")
+	if err != nil || got != 42 {
+		t.Fatalf("resolve stable session ID: got %d, err %v", got, err)
+	}
+	if _, err := service.resolveSessionID(7, "42"); err == nil {
+		t.Fatal("bare session ID must not bypass the latest session list")
+	}
+	if _, err := service.resolveSessionID(7, "3"); err == nil {
+		t.Fatal("out-of-range session ordinal must be rejected")
+	}
+}
+
+func TestSessionListItemsUseTitleLabelAndStableID(t *testing.T) {
+	items := sessionListItems([]store.Session{
+		{ID: 42, Title: "Release checklist"},
+		{ID: 43},
+	}, 42)
+	if got := items[0]; got.name != "42" || got.label != "* Release checklist (#42)" {
+		t.Fatalf("unexpected titled session item: %#v", got)
+	}
+	if got := items[1]; got.name != "43" || got.label != "Session #43" {
+		t.Fatalf("unexpected untitled session item: %#v", got)
+	}
+}
+
+func TestKeysOfSortsNamesForStableListReferences(t *testing.T) {
+	got := keysOf(map[string]struct{}{"third": {}, "first": {}, "second": {}})
+	want := []string{"first", "second", "third"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("keysOf() = %v, want %v", got, want)
 	}
 }
 

@@ -4,7 +4,7 @@ import SessionSidebar from './components/SessionSidebar'
 import ChatView from './components/ChatView'
 import ConfigurationWorkspace from './components/ConfigurationWorkspace'
 import { Settings } from 'lucide-react'
-import type { ConfigurationKind, ConciergeItem, Session } from './api/types'
+import type { ConfigurationKind, ConciergeItem, Session, SessionTarget } from './api/types'
 import type { ConfigurationLists } from './components/ConfigurationSidebar'
 import { parseRoute, routes } from './lib/routes'
 
@@ -130,6 +130,13 @@ export default function App() {
     setSidebarSessionUpdate(session)
   }, [])
 
+  const handleSessionTarget = useCallback((target: SessionTarget) => {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, target.project)
+    setStoredProject(target.project)
+    setDraftConcierge(null)
+    navigate(routes.chat(target.project, target.id))
+  }, [navigate])
+
   return (
     <div className="app-shell">
       <SessionSidebar
@@ -183,6 +190,7 @@ export default function App() {
           onDefaultConciergeResolved={handleConciergeResolved}
           onSessionCreated={handleSessionCreated}
           onSessionUpdated={handleSessionUpdated}
+          onSessionTarget={handleSessionTarget}
           project={project}
         />}
       </main>
