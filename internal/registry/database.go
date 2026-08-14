@@ -62,6 +62,7 @@ func (r *Registry) Clone() *Registry {
 		Concierges:  cloneMap(r.Concierges),
 		Workflows:   cloneMap(r.Workflows),
 		Jobs:        cloneMap(r.Jobs),
+		Constants:   cloneMap(r.Constants),
 	}
 }
 
@@ -91,6 +92,7 @@ func emptyRegistry() *Registry {
 		Concierges:  map[string]Concierge{},
 		Workflows:   map[string]Workflow{},
 		Jobs:        map[string]Job{},
+		Constants:   map[string]Constant{},
 	}
 }
 
@@ -228,6 +230,8 @@ func recordUpdatedAt(kind Kind, value any) (time.Time, error) {
 		return typed.UpdatedAt, nil
 	case *Job:
 		return typed.UpdatedAt, nil
+	case *Constant:
+		return typed.UpdatedAt, nil
 	default:
 		return time.Time{}, wrongPayload(kind)
 	}
@@ -321,12 +325,26 @@ func loadDatabaseInto(db *gorm.DB, reg *Registry) error {
 		reg.Jobs[jobs[index].Name] = jobs[index]
 	}
 
+	var constants []Constant
+	if err := db.Find(&constants).Error; err != nil {
+		return fmt.Errorf("registry: load database constants: %w", err)
+	}
+	for _, value := range constants {
+		if err := validatePersistedName(KindConstant, value.Name); err != nil {
+			return err
+		}
+		reg.Constants[value.Name] = value
+	}
+
 	return nil
 }
 
 func validatePersistedName(kind Kind, name string) error {
 	if name == "" {
 		return fmt.Errorf("registry: database %s name must not be empty", kind)
+	}
+	if kind == KindConstant && !validPromptVariable(name) {
+		return fmt.Errorf("registry: database constant name %q must match [A-Za-z_][A-Za-z0-9_]*", name)
 	}
 	return nil
 }

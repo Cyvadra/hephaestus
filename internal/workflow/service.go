@@ -279,15 +279,19 @@ func (s *Service) closeRun(runID uint) {
 // as a JSON string) after the final step.
 func (s *Service) runSteps(ctx context.Context, run *store.WorkflowRun, reg *registry.Registry) (store.WorkflowRunStatus, []byte, error) {
 	wf := run.Workflow.Data()
-	cfg, err := agent.ResolveConcierge(reg, run.Concierge, s.toolReg)
-	if err != nil {
-		return store.WorkflowRunFatal, nil, err
-	}
 	proj, err := s.projects.GetByName(run.ProjectName)
 	if err != nil {
 		return store.WorkflowRunFatal, nil, fmt.Errorf("workflow: project %q not found", run.ProjectName)
 	}
-	ctx = toolkit.WithWorkspace(ctx, s.projects.Path(*proj))
+	workspace := s.projects.Path(*proj)
+	ctx = toolkit.WithWorkspace(ctx, workspace)
+	vars := registry.TimePromptVars(time.Now())
+	vars["project"] = proj.Name
+	vars["workspace"] = workspace
+	cfg, err := agent.ResolveConcierge(reg, run.Concierge, s.toolReg, vars)
+	if err != nil {
+		return store.WorkflowRunFatal, nil, err
+	}
 
 	var input map[string]any
 	if len(run.Input) > 0 {

@@ -8,6 +8,7 @@ const configurationKinds = new Set<ConfigurationKind>([
   'concierges',
   'workflows',
   'jobs',
+  'constants',
 ])
 
 export const routes = {

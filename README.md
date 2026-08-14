@@ -179,6 +179,14 @@ web-fetch provider.
 | `HEPHAESTUS_QQ_USER_OPENID` | none | Bot-scoped QQ user OpenID allowed to chat with this single-user installation. |
 | `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | Comma-separated text extensions eligible for prompt inclusion. |
 | `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,bmp` | Comma-separated image extensions eligible for OCR. |
+| `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | Largest text file included directly in a prompt. |
+| `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES` | `4194304` | Largest image sent to OCR. |
+| `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | Largest individual attachment. |
+| `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | Largest combined attachment payload per message. |
+| `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | Maximum attachments per message. |
+
+The OCR image limit cannot exceed the per-file limit, and the per-file limit
+cannot exceed the total message limit.
 
 ### QQ Channel
 
@@ -223,14 +231,6 @@ Project, while an absolute value names a remote path. By default only the
 current remote Project and `/tmp` are permitted; set
 `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE=true` to allow other remote paths. SSH
 failures and timeouts return an error and never run the command locally.
-| `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | Largest text file included directly in a prompt. |
-| `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES` | `4194304` | Largest image sent to OCR. |
-| `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | Largest individual attachment. |
-| `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | Largest combined attachment payload per message. |
-| `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | Maximum attachments per message. |
-
-The OCR image limit cannot exceed the per-file limit, and the per-file limit
-cannot exceed the total message limit.
 
 ## Checks
 

@@ -19,6 +19,7 @@ const (
 	KindConcierge  Kind = "concierges"
 	KindWorkflow   Kind = "workflows"
 	KindJob        Kind = "jobs"
+	KindConstant   Kind = "constants"
 )
 
 var (
@@ -48,6 +49,7 @@ type Catalog struct {
 	Concierges         []string          `json:"concierges"`
 	Workflows          []string          `json:"workflows"`
 	Jobs               []string          `json:"jobs"`
+	Constants          []string          `json:"constants"`
 	Tools              []string          `json:"tools"`
 	Plugins            []string          `json:"plugins"`
 	PluginDescriptions map[string]string `json:"plugin_descriptions"`
@@ -87,6 +89,7 @@ func (s *Service) Catalog() (Catalog, error) {
 		Concierges:         sortedMapKeys(reg.Concierges),
 		Workflows:          sortedMapKeys(reg.Workflows),
 		Jobs:               sortedMapKeys(reg.Jobs),
+		Constants:          sortedMapKeys(reg.Constants),
 		Tools:              sortedBoolKeys(s.knownTools),
 		Plugins:            sortedBoolKeys(s.knownPlugins),
 		PluginDescriptions: cloneStringMap(s.pluginDescriptions),
@@ -140,6 +143,9 @@ func (s *Service) List(kind Kind) (any, error) {
 		return values, s.db.Order("name").Find(&values).Error
 	case KindJob:
 		var values []Job
+		return values, s.db.Order("name").Find(&values).Error
+	case KindConstant:
+		var values []Constant
 		return values, s.db.Order("name").Find(&values).Error
 	default:
 		return nil, ErrInvalidKind
@@ -362,6 +368,26 @@ var kindDescriptors = map[Kind]kindDescriptor{
 				return wrongPayload(KindJob)
 			}
 			return normalizeJob(typed)
+		},
+	},
+	KindConstant: {
+		blank: func() any { return &Constant{} },
+		name: func(v any) (string, bool) {
+			typed, ok := v.(*Constant)
+			if !ok {
+				return "", false
+			}
+			return typed.Name, true
+		},
+		normalize: func(v any) error {
+			typed, ok := v.(*Constant)
+			if !ok {
+				return wrongPayload(KindConstant)
+			}
+			if !validPromptVariable(typed.Name) {
+				return fmt.Errorf("registry: constant name must match [A-Za-z_][A-Za-z0-9_]*")
+			}
+			return nil
 		},
 	},
 }

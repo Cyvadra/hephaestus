@@ -16,6 +16,7 @@ export const CONFIGURATION_META: ConfigurationKindMeta[] = [
   { kind: 'concierges', translationKey: 'configuration.kinds.concierges' },
   { kind: 'workflows', translationKey: 'configuration.kinds.workflows' },
   { kind: 'jobs', translationKey: 'configuration.kinds.jobs' },
+  { kind: 'constants', translationKey: 'configuration.kinds.constants' },
 ]
 
 export const getConfigurationMeta = (kind: ConfigurationKind) =>
@@ -33,6 +34,7 @@ export function createEmptyConfiguration<K extends ConfigurationKind>(kind: K): 
     concierges: { name: '', nickname: '', description: '', identity: '', impressions: [], tool_groups: [], plugins: [], available_projects: [] },
     workflows: { name: '', description: '', concierge: '', input_schema: {}, output_schema: {}, steps: [] },
     jobs: { name: '', title: '', description: '', goal: '', workflows: [], trigger: 'false', max_executions_per_day: 1 },
+    constants: { name: '', value: '' },
   }
   return structuredClone(values[kind])
 }
@@ -41,6 +43,24 @@ export interface TranslationDescriptor {
   key?: string
   text?: string
   values?: Record<string, string | number>
+}
+
+const PROMPT_PLACEHOLDER = /\{\{([^{}]*)\}\}/g
+const PROMPT_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function validatePromptTemplates(contents: string[], constants: string[]): TranslationDescriptor | null {
+  const missing = new Set<string>()
+  const invalid = new Set<string>()
+  for (const content of contents) {
+    for (const match of content.matchAll(PROMPT_PLACEHOLDER)) {
+      const name = match[1]
+      if (!PROMPT_VARIABLE.test(name)) invalid.add(match[0])
+      else if (!constants.includes(name)) missing.add(name)
+    }
+  }
+  if (invalid.size > 0) return { key: 'configuration.validation.promptPlaceholdersInvalid', values: { names: [...invalid].join(', ') } }
+  if (missing.size > 0) return { key: 'configuration.validation.promptConstantsMissing', values: { names: [...missing].join(', ') } }
+  return null
 }
 
 export function configurationSummary(kind: ConfigurationKind, value: Configuration): TranslationDescriptor | null {
@@ -65,13 +85,30 @@ export function configurationSummary(kind: ConfigurationKind, value: Configurati
       const job = value as ConfigurationByKind['jobs']
       return job.title || job.description ? { text: job.title || job.description } : { key: 'configuration.summary.workflows', values: { count: job.workflows.length } }
     }
+    case 'constants':
+      return { text: (value as ConfigurationByKind['constants']).value }
   }
 }
 
-export function validateConfiguration(value: Configuration): Record<string, TranslationDescriptor> {
+export function validateConfiguration(kind: ConfigurationKind, value: Configuration, constants: string[] = []): Record<string, TranslationDescriptor> {
   const errors: Record<string, TranslationDescriptor> = {}
   if (!value.name.trim()) errors.name = { key: 'configuration.validation.nameRequired' }
 
+  if (kind === 'constants' && value.name && !PROMPT_VARIABLE.test(value.name)) errors.name = { key: 'configuration.validation.constantNameInvalid' }
+
   if ('nickname' in value && Array.from(value.nickname).length > 20) errors.nickname = { key: 'configuration.validation.nicknameTooLong' }
+
+	if (kind === 'identities') {
+		const identity = value as ConfigurationByKind['identities']
+		const systemPromptError = validatePromptTemplates([identity.system_prompt], constants)
+    if (systemPromptError) errors.systemPrompt = systemPromptError
+		const messagesError = validatePromptTemplates(identity.injected_messages.map(message => message.content), constants)
+    if (messagesError) errors.injectedMessages = messagesError
+  }
+	if (kind === 'impressions') {
+		const impression = value as ConfigurationByKind['impressions']
+		const messagesError = validatePromptTemplates(impression.messages.map(message => message.content), constants)
+    if (messagesError) errors.messages = messagesError
+  }
   return errors
 }

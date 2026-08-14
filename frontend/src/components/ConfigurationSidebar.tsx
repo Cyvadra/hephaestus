@@ -1,4 +1,4 @@
-import { Bot, BriefcaseBusiness, ChevronDown, ChevronLeft, CircleUserRound, Plus, Search, Sparkles, Workflow, Wrench } from 'lucide-react'
+import { Bot, Braces, BriefcaseBusiness, ChevronDown, ChevronLeft, CircleUserRound, Plus, Search, Sparkles, Workflow, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listConfigurations } from '../api/client'
@@ -24,6 +24,7 @@ const ICONS = {
   concierges: Bot,
   workflows: Workflow,
   jobs: BriefcaseBusiness,
+  constants: Braces,
 }
 
 export default function ConfigurationSidebar({ activeKind, activeName, refreshKey, onBack, onSelect, onCreate, onListsChange }: Props) {

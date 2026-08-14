@@ -32,7 +32,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const [notification, setNotification] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteName, setDeleteName] = useState('')
-  const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [], plugin_descriptions: {} })
+  const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], constants: [], tools: [], plugins: [], plugin_descriptions: {} })
 
   const notify = (type: 'error' | 'success', message: string) => setNotification({ type, message })
 
@@ -79,7 +79,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
 
   if (kind == null) return <ConfigurationOverview lists={lists} onCreate={onCreate} onOpenNavigation={onOpenNavigation} />
   const meta = getConfigurationMeta(kind)
-  const validationDescriptors = currentValue == null ? {} : validateConfiguration(currentValue)
+  const validationDescriptors = currentValue == null ? {} : validateConfiguration(kind, currentValue, catalog.constants)
   const errors = Object.fromEntries(Object.entries(validationDescriptors).map(([field, descriptor]) => [field, renderDescriptor(t, descriptor)]))
 
   const save = async () => {
@@ -121,7 +121,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
         <div><span className="configuration-eyebrow"><Database size={14} />{t('configuration.databaseConfiguration')} · {t(`${meta.translationKey}.singular`)}</span><h1>{isNew ? t('configuration.createNamed', { name: t(`${meta.translationKey}.label`) }) : currentValue?.name ?? name}</h1><p>{t(`${meta.translationKey}.description`)}</p></div>
       </header>
       <div className="configuration-workspace-scroll">
-        {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
+        {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} onNotify={notify} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
       </div>
       {currentValue && !loading && <footer className="configuration-action-bar">
         <div>{!isNew && <button className="danger-quiet" type="button" onClick={() => { setDeleteName(''); setDeleteOpen(true) }}><Trash2 size={15} />{t('common.delete')}</button>}</div>

@@ -18,6 +18,14 @@ type Message struct {
 	Content string `toml:"content" yaml:"content" json:"content"`
 }
 
+// Constant is a named value available to prompt templates as {{name}}.
+type Constant struct {
+	RecordTimestamps
+
+	Name  string `json:"name" gorm:"primaryKey;size:255"`
+	Value string `json:"value" gorm:"type:text"`
+}
+
 // DefaultSystemPrompt is used when an Identity omits SystemPrompt.
 const DefaultSystemPrompt = "You're a helpful assistant."
 

@@ -146,6 +146,7 @@ export const CONFIGURATION_KINDS = [
   'concierges',
   'workflows',
   'jobs',
+  'constants',
 ] as const
 
 export type ConfigurationKind = typeof CONFIGURATION_KINDS[number]
@@ -216,6 +217,11 @@ export interface JobConfiguration {
   workflows: JobWorkflowBinding[]
   trigger: string
   max_executions_per_day: number
+}
+
+export interface ConstantConfiguration {
+  name: string
+  value: string
 }
 
 // 在线测试与运行记录
@@ -357,6 +363,7 @@ export interface ConfigurationByKind {
   concierges: ConciergeConfiguration
   workflows: WorkflowConfiguration
   jobs: JobConfiguration
+  constants: ConstantConfiguration
 }
 
 export type Configuration = ConfigurationByKind[ConfigurationKind]
@@ -368,6 +375,7 @@ export interface ConfigurationCatalog {
   concierges: string[]
   workflows: string[]
   jobs: string[]
+  constants: string[]
   tools: string[]
   plugins: string[]
 	plugin_descriptions: Record<string, string>

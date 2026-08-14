@@ -50,4 +50,4 @@ swagger.yaml
 # *.toml
 
 
-tmp/
+/tmp/

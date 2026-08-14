@@ -80,6 +80,48 @@ func TestApplyTurnOptionsWithoutOverridesPreservesDefaults(t *testing.T) {
 	}
 }
 
+func TestRenderSessionIdentityRendersSwitchedIdentity(t *testing.T) {
+	reg := &registry.Registry{
+		Identities: map[string]registry.Identity{
+			"default": {Name: "default", SystemPrompt: "default prompt"},
+			"Rose":    {Name: "Rose", SystemPrompt: "You know {{user_name}}."},
+		},
+		Constants: map[string]registry.Constant{
+			"user_name": {Name: "user_name", Value: "Jason"},
+		},
+	}
+
+	identity, err := renderSessionIdentity(reg, store.SessionSettings{Identity: "Rose"})
+	if err != nil {
+		t.Fatalf("renderSessionIdentity: %v", err)
+	}
+	if identity.Name != "Rose" || identity.SystemPrompt != "You know Jason." {
+		t.Fatalf("rendered switched identity = %+v", identity)
+	}
+	if reg.Identities["Rose"].SystemPrompt != "You know {{user_name}}." {
+		t.Fatal("rendering mutated the registry snapshot")
+	}
+}
+
+func TestStaticContextRendersActiveImpressionMessages(t *testing.T) {
+	reg := &registry.Registry{
+		Impressions: map[string]registry.Impression{
+			"relationship": {Name: "relationship", Enabled: true, Messages: []registry.Message{{Role: "system", Content: "{{project}}: {{session_title}} belongs to {{user_name}}."}}},
+		},
+		Constants: map[string]registry.Constant{
+			"user_name": {Name: "user_name", Value: "Jason"},
+		},
+	}
+
+	messages, err := (&Pipeline{}).staticContext(reg, store.SessionSettings{Impressions: []string{"relationship"}}, registry.PromptVars{"project": "default-workspace", "session_title": "Planning"})
+	if err != nil {
+		t.Fatalf("staticContext: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Content != "default-workspace: Planning belongs to Jason." {
+		t.Fatalf("rendered static context = %+v", messages)
+	}
+}
+
 type namedTool struct {
 	name string
 }

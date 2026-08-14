@@ -33,7 +33,7 @@ func (s *Server) configurationCatalog(c *gin.Context) {
 // listConfigurations godoc
 //
 //	@Summary		List configurations
-//	@Description	Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.
+//	@Description	Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, jobs, or constants.
 //	@Tags			configurations
 //	@Produce		json
 //	@Param			kind	path	string	true	"Configuration kind"

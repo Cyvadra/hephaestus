@@ -27,6 +27,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&WorkflowRun{}, &WorkflowStepRun{}, &JobRun{}, &JobState{},
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
+		&registry.Constant{},
 		&registry.TemplateState{},
 	); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
@@ -34,6 +35,7 @@ func Open(dsn string) (*gorm.DB, error) {
 	for _, model := range []any{
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
+		&registry.Constant{},
 	} {
 		if err := db.Model(model).
 			Where("created_at IS NULL OR updated_at IS NULL").

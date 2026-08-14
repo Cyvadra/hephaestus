@@ -8080,8 +8080,8 @@ body[data-ds-dark-theme] {
 .configuration-qa-question > span,.configuration-qa-answer-header > span { color: var(--dsw-alias-label-tertiary); font-size: 10px; font-weight: 600; text-transform: uppercase }
 .configuration-qa-question .configuration-auto-textarea { min-height: 42px; padding: 10px 11px; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font-family: inherit; font-size: 13px; line-height: 20px }
 .configuration-qa-question .configuration-auto-textarea:focus { border-color: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 11%,transparent) }
-.configuration-qa-answer-header { display: flex; align-items: center; min-height: 36px; padding: 0 9px 0 13px; background: color-mix(in srgb,var(--dsw-alias-bg-base) 70%,transparent) }
-.configuration-markdown-message-actions { display: flex; margin-left: auto }
+.configuration-qa-answer-header { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 9px 0 13px; background: color-mix(in srgb,var(--dsw-alias-bg-base) 70%,transparent) }
+.configuration-markdown-message-actions { display: flex; flex: none; margin-left: auto }
 .configuration-qa-answer-header button { display: inline-flex; align-items: center; gap: 4px; min-width: 54px; height: 26px; padding: 0 7px; color: var(--dsw-alias-label-secondary); background: transparent; border: 0; border-radius: 6px; font: inherit; font-size: 10px; cursor: pointer }
 .configuration-qa-answer-header button.active { color: var(--dsw-alias-button-primary-fill); background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 8%,transparent) }
 .configuration-qa-preview { min-height: 43px; padding: 11px 13px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: 12px; line-height: 19px }
@@ -8105,10 +8105,11 @@ body[data-ds-dark-theme] {
 .configuration-binding-input { display: grid; gap: 5px; margin-top: 10px }
 .configuration-binding-input > span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px }
 .configuration-binding-input > span small { opacity: .85 }
-.configuration-placeholder-editor { display: grid; gap: 6px; min-width: 0 }
-.configuration-placeholder-chips { display: flex; flex-wrap: wrap; gap: 5px }
-.configuration-placeholder-chips button { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; color: var(--dsw-alias-button-primary-fill); background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 7%,transparent); border: 1px solid color-mix(in srgb,var(--dsw-alias-button-primary-fill) 18%,transparent); border-radius: 11px; font: inherit; font-size: 10px; cursor: pointer }
-.configuration-placeholder-chips button:hover { background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 14%,transparent) }
+.configuration-placeholder-editor { display: flex; align-items: center; min-width: 0; color: var(--dsw-alias-label-tertiary); font-size: 10px; white-space: nowrap }
+.configuration-placeholder-editor > span { flex: none; margin-right: 7px }
+.configuration-placeholder-chips { display: flex; align-items: center; min-width: 0; overflow-x: auto }
+.configuration-placeholder-chips button { flex: none; height: 20px; padding: 0 6px; color: var(--dsw-alias-button-primary-fill); background: transparent; border: 0; border-left: 1px solid var(--dsw-alias-border-l2); border-radius: 0; font: inherit; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 10px; cursor: copy }
+.configuration-placeholder-chips button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover) }
 .configuration-placeholder-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; outline: 0; resize: vertical; font: inherit }
 .configuration-placeholder-editor textarea:focus { border-color: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 13%,transparent) }
 

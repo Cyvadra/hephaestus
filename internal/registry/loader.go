@@ -23,6 +23,7 @@ type Registry struct {
 	Concierges  map[string]Concierge
 	Workflows   map[string]Workflow
 	Jobs        map[string]Job
+	Constants   map[string]Constant
 }
 
 type fileKind struct {
@@ -178,6 +179,7 @@ func LoadTemplates(dir string) (*Registry, []Template, error) {
 		Concierges:  map[string]Concierge{},
 		Workflows:   map[string]Workflow{},
 		Jobs:        map[string]Job{},
+		Constants:   map[string]Constant{},
 	}
 	templates := make([]Template, 0)
 

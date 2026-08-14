@@ -24,6 +24,10 @@ type Client struct {
 	ds4 *ds4.Client
 }
 
+var (
+	maxTokensRangePattern = regexp.MustCompile(`(?i)valid range of max_tokens is\s*\[\s*\d+\s*,\s*(\d+)\s*\]`)
+)
+
 // New creates a Client authenticated with apiKey.
 func New(apiKey string) *Client {
 	return &Client{ds4: ds4.New(apiKey)}
@@ -263,8 +267,6 @@ func (c *Client) rawCall(ctx context.Context, systemPrompt, userPrompt string, m
 		MaxTokens(maxTokens).
 		DoWithContext(ctx)
 }
-
-var maxTokensRangePattern = regexp.MustCompile(`(?i)valid range of max_tokens is\s*\[\s*\d+\s*,\s*(\d+)\s*\]`)
 
 // maxTokensUpperBound returns the provider-reported maximum only for a 400
 // max_tokens range error and only when it lowers the original request.

@@ -9,6 +9,25 @@ import (
 // run once at startup, after tools/plugins have registered themselves in Go
 // code, and before any Concierge is used.
 func (r *Registry) Validate(knownTools, knownPlugins map[string]bool) error {
+	for name, identity := range r.Identities {
+		if err := r.validatePrompt(fmt.Sprintf("identity %q system prompt", name), identity.SystemPrompt); err != nil {
+			return err
+		}
+		for index, message := range identity.InjectedMessages {
+			if err := r.validatePrompt(fmt.Sprintf("identity %q injected message %d", name, index+1), message.Content); err != nil {
+				return err
+			}
+		}
+	}
+
+	for name, impression := range r.Impressions {
+		for index, message := range impression.Messages {
+			if err := r.validatePrompt(fmt.Sprintf("impression %q message %d", name, index+1), message.Content); err != nil {
+				return err
+			}
+		}
+	}
+
 	for name, tg := range r.ToolGroups {
 		for _, tool := range tg.Tools {
 			if !knownTools[tool] {

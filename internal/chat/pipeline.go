@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Cyvadra/ds4"
@@ -99,6 +100,7 @@ type turnPrep struct {
 	toolset    []toolkit.Tool
 	activePath []store.ChatMessage
 	compRow    *store.Compression
+	vars       registry.PromptVars
 	// workspace is the required Project directory bound to this session.
 	workspace string
 }
@@ -114,7 +116,6 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		return prep, err
 	}
 	prep.settings = settings
-	prep.identity = prep.registry.Identities[settings.Identity]
 
 	toolGroups := make(map[string]toolkit.ToolGroupTools, len(prep.registry.ToolGroups))
 	for name, tg := range prep.registry.ToolGroups {
@@ -139,6 +140,15 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		return prep, fmt.Errorf("chat: project %d not found", prep.sess.ProjectID)
 	}
 	prep.workspace = p.projects.Path(*proj)
+	prep.vars = registry.TimePromptVars(time.Now())
+	prep.vars["project"] = proj.Name
+	prep.vars["workspace"] = prep.workspace
+	prep.vars["session_id"] = strconv.FormatUint(uint64(prep.sess.ID), 10)
+	prep.vars["session_title"] = prep.sess.Title
+	prep.identity, err = renderSessionIdentity(prep.registry, settings, prep.vars)
+	if err != nil {
+		return prep, fmt.Errorf("chat: %w", err)
+	}
 
 	activePath, err := p.sessions.ActivePath(prep.sess)
 	if err != nil {
@@ -153,6 +163,10 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	prep.compRow = compRow
 
 	return prep, nil
+}
+
+func renderSessionIdentity(reg *registry.Registry, settings store.SessionSettings, vars ...registry.PromptVars) (registry.Identity, error) {
+	return reg.RenderIdentity(reg.Identities[settings.Identity], vars...)
 }
 
 // resolveSettings sanitizes a session's settings against the current
@@ -282,7 +296,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	}
 	prep.identity, prep.toolset = applyTurnOptions(prep.identity, prep.toolset, opts)
 
-	llmContext, err := p.buildContext(prep.registry, prep.settings, prep.activePath, prep.compRow)
+	llmContext, err := p.buildContext(prep.registry, prep.settings, prep.activePath, prep.compRow, prep.vars)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +386,7 @@ func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts
 		return nil, fmt.Errorf("chat: message %d is not a continuable incomplete assistant response", messageID)
 	}
 
-	contextMessages, err := p.buildContext(prep.registry, prep.settings, prep.activePath[:len(prep.activePath)-1], prep.compRow)
+	contextMessages, err := p.buildContext(prep.registry, prep.settings, prep.activePath[:len(prep.activePath)-1], prep.compRow, prep.vars)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +463,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	userMsg := prep.activePath[userIdx]
 	pathUpToUser := prep.activePath[:userIdx+1]
 
-	llmContext, err := p.buildContext(prep.registry, prep.settings, pathUpToUser, prep.compRow)
+	llmContext, err := p.buildContext(prep.registry, prep.settings, pathUpToUser, prep.compRow, prep.vars)
 	if err != nil {
 		return nil, err
 	}
@@ -568,8 +582,11 @@ func newTurnContext(sessionID uint, messages []store.ChatMessage, isFirstTurn bo
 // buildContext assembles the messages sent to the LLM ahead of the pending
 // user message: enabled impressions (in order), then either the unpacked
 // compression plus history after its coverage, or the full active path.
-func (p *Pipeline) buildContext(reg *registry.Registry, settings store.SessionSettings, activePath []store.ChatMessage, compRow *store.Compression) ([]store.ChatMessage, error) {
-	out := p.staticContext(reg, settings)
+func (p *Pipeline) buildContext(reg *registry.Registry, settings store.SessionSettings, activePath []store.ChatMessage, compRow *store.Compression, vars ...registry.PromptVars) ([]store.ChatMessage, error) {
+	out, err := p.staticContext(reg, settings, vars...)
+	if err != nil {
+		return nil, err
+	}
 
 	if compRow == nil {
 		return append(out, activePath...), nil
@@ -591,18 +608,22 @@ func (p *Pipeline) buildContext(reg *registry.Registry, settings store.SessionSe
 	return out, nil
 }
 
-func (p *Pipeline) staticContext(reg *registry.Registry, settings store.SessionSettings) []store.ChatMessage {
+func (p *Pipeline) staticContext(reg *registry.Registry, settings store.SessionSettings, vars ...registry.PromptVars) ([]store.ChatMessage, error) {
 	var out []store.ChatMessage
 	for _, name := range settings.Impressions {
 		imp, ok := reg.Impressions[name]
 		if !ok || !imp.Enabled {
 			continue
 		}
-		for _, m := range imp.Messages {
-			out = append(out, store.ChatMessage{Role: m.Role, Content: m.Content})
+		for index, m := range imp.Messages {
+			content, err := reg.RenderPrompt(m.Content, vars...)
+			if err != nil {
+				return nil, fmt.Errorf("chat: render impression %q message %d: %w", name, index+1, err)
+			}
+			out = append(out, store.ChatMessage{Role: m.Role, Content: content})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // compressIfNeeded fires HookContextCompression around the compression

@@ -21,11 +21,13 @@ interface Props {
   isNew: boolean
   catalog?: ConfigurationCatalog
   onChange: (value: Configuration) => void
+  onNotify: (type: 'error' | 'success', message: string) => void
 }
 
-const EMPTY_CATALOG: ConfigurationCatalog = { identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [], plugin_descriptions: {} }
+const EMPTY_CATALOG: ConfigurationCatalog = { identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], constants: [], tools: [], plugins: [], plugin_descriptions: {} }
+const PROMPT_BUILTIN_VARIABLES = ['now', 'date', 'time', 'project', 'workspace', 'session_id', 'session_title']
 
-export default function ConfigurationForm({ kind, value, errors, isNew, catalog = EMPTY_CATALOG, onChange }: Props) {
+export default function ConfigurationForm({ kind, value, errors, isNew, catalog = EMPTY_CATALOG, onChange, onNotify }: Props) {
   const { t } = useTranslation()
   const set = <T extends Configuration>(next: T) => onChange(next)
   const [projects, setProjects] = useState<string[]>([])
@@ -51,15 +53,15 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
           <Field label="Temperature" htmlFor="temperature"><NumberInput id="temperature" nullable min={0} step={0.1} value={identity.temperature} onChange={temperature => set({ ...identity, temperature })} /></Field>
           <Field label="Top P" htmlFor="top-p"><NumberInput id="top-p" nullable min={0} max={1} step={0.05} value={identity.top_p} onChange={top_p => set({ ...identity, top_p })} /></Field>
         </Section>
-        <Section title={t('configuration.form.systemPromptSection')} description={t('configuration.form.markdownSupport')}><Field label={t('configuration.form.systemPrompt')} wide><MarkdownMessageEditor className="configuration-identity-system-prompt" value={identity.system_prompt} onChange={system_prompt => set({ ...identity, system_prompt })} ariaLabel={t('configuration.form.systemPrompt')} placeholder={t('configuration.form.messagePlaceholder')} /></Field></Section>
-        <Section title={t('configuration.form.injectedMessages')} description={t('configuration.form.injectedMessagesDescription')}><Field label={t('configuration.form.messages')} wide><MessageEditor values={identity.injected_messages} onChange={injected_messages => set({ ...identity, injected_messages })} /></Field></Section>
+        <Section title={t('configuration.form.systemPromptSection')} description={t('configuration.form.markdownSupport')}><Field label={t('configuration.form.systemPrompt')} error={errors.systemPrompt} wide><MarkdownMessageEditor className="configuration-identity-system-prompt" showVariables value={identity.system_prompt} onChange={system_prompt => set({ ...identity, system_prompt })} onNotify={onNotify} ariaLabel={t('configuration.form.systemPrompt')} placeholder={t('configuration.form.messagePlaceholder')} /></Field></Section>
+        <Section title={t('configuration.form.injectedMessages')} description={t('configuration.form.injectedMessagesDescription')}><Field label={t('configuration.form.messages')} error={errors.injectedMessages} wide><MessageEditor values={identity.injected_messages} onChange={injected_messages => set({ ...identity, injected_messages })} onNotify={onNotify} /></Field></Section>
       </>
     }
     case 'impressions': {
       const impression = value as ConfigurationByKind['impressions']
       return <>
         <Section title={t('configuration.form.basic')}>{name}<Field label={t('configuration.form.enabledStatus')}><Toggle id="impression-enabled" checked={impression.enabled} onChange={enabled => set({ ...impression, enabled })} /></Field><Field label={t('configuration.form.description')} wide><TextArea id="impression-description" value={impression.description} onChange={description => set({ ...impression, description })} /></Field></Section>
-        <Section title={t('configuration.form.messageSequence')}><Field label={t('configuration.form.messages')} wide><MessageEditor values={impression.messages} onChange={messages => set({ ...impression, messages })} /></Field></Section>
+        <Section title={t('configuration.form.messageSequence')}><Field label={t('configuration.form.messages')} error={errors.messages} wide><MessageEditor values={impression.messages} onChange={messages => set({ ...impression, messages })} onNotify={onNotify} /></Field></Section>
       </>
     }
     case 'tool-groups': {
@@ -96,10 +98,14 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
         <Section title={t('configuration.form.workflows')} description={t('configuration.form.workflowDescription')}><Field label={t('configuration.form.workflowBindings')} wide><WorkflowBindings values={job.workflows} suggestions={catalog.workflows} projects={projects} onChange={workflows => set({ ...job, workflows })} /></Field></Section>
       </>
     }
+    case 'constants': {
+      const constant = value as ConfigurationByKind['constants']
+      return <Section title={t('configuration.form.constant')} description={t('configuration.form.constantDescription')}>{name}<Field label={t('configuration.form.value')} htmlFor="constant-value" wide><TextArea id="constant-value" value={constant.value} onChange={constantValue => set({ ...constant, value: constantValue })} /></Field></Section>
+    }
   }
 }
 
-function MessageEditor({ values, onChange }: { values: ConfigurationMessage[] | null; onChange: (values: ConfigurationMessage[]) => void }) {
+function MessageEditor({ values, onChange, onNotify }: { values: ConfigurationMessage[] | null; onChange: (values: ConfigurationMessage[]) => void; onNotify: Props['onNotify'] }) {
   const { t } = useTranslation()
   const messages = values ?? []
   const blocks = messageBlocks(messages)
@@ -122,11 +128,25 @@ function MessageEditor({ values, onChange }: { values: ConfigurationMessage[] | 
 
       return <article className="configuration-instruction-row" key={block.start}>
         <header><span>{message.role === 'system' ? t('configuration.form.instruction') : t('configuration.form.message', { count: block.start + 1 })}</span><select aria-label={t('configuration.form.messageRole', { count: block.start + 1 })} value={message.role} onChange={event => update(block.start, { role: event.target.value })}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option><option value="tool">tool</option></select>{order}<button type="button" aria-label={t('configuration.form.deleteMessage')} title={t('configuration.form.deleteMessage')} onClick={() => remove(block.start)}><Trash2 size={15} /></button></header>
-        {message.role === 'system' ? <MarkdownMessageEditor value={message.content} onChange={content => update(block.start, { content })} ariaLabel={t('configuration.form.messageContent', { count: block.start + 1 })} placeholder={t('configuration.form.messagePlaceholder')} /> : <AutoResizeTextArea aria-label={t('configuration.form.messageContent', { count: block.start + 1 })} value={message.content} onChange={content => update(block.start, { content })} placeholder={t('configuration.form.messagePlaceholder')} />}
+        {message.role === 'system' ? <MarkdownMessageEditor showVariables value={message.content} onChange={content => update(block.start, { content })} onNotify={onNotify} ariaLabel={t('configuration.form.messageContent', { count: block.start + 1 })} placeholder={t('configuration.form.messagePlaceholder')} /> : <AutoResizeTextArea aria-label={t('configuration.form.messageContent', { count: block.start + 1 })} value={message.content} onChange={content => update(block.start, { content })} placeholder={t('configuration.form.messagePlaceholder')} />}
       </article>
     })}
     <div className="configuration-message-actions"><button className="configuration-add-row" type="button" onClick={() => onChange([...messages, { role: 'system', content: '' }])}><Plus size={15} />{t('configuration.form.addInstruction')}</button><button className="configuration-add-row" type="button" onClick={() => onChange([...messages, { role: 'user', content: '' }, { role: 'assistant', content: '' }])}><Plus size={15} />{t('configuration.form.addConversation')}</button></div>
   </div>
+}
+
+function PromptVariableChips({ onNotify }: { onNotify: Props['onNotify'] }) {
+  const { t } = useTranslation()
+  const copy = async (name: string) => {
+    const token = `{{${name}}}`
+    try {
+      await navigator.clipboard.writeText(token)
+      onNotify('success', t('configuration.form.variableCopied', { token }))
+    } catch {
+      onNotify('error', t('configuration.form.variableCopyFailed'))
+    }
+  }
+  return <div className="configuration-placeholder-editor" aria-label={t('configuration.form.builtinVariables')}><span>{t('configuration.form.builtinVariables')}</span><div className="configuration-placeholder-chips">{PROMPT_BUILTIN_VARIABLES.map(name => <button type="button" key={name} title={t('configuration.form.copyVariable', { token: `{{${name}}}` })} onClick={() => void copy(name)}>{name}</button>)}</div></div>
 }
 
 function messageBlocks(values: ConfigurationMessage[]) {
@@ -159,11 +179,11 @@ function QuestionAnswerEditor({ question, answer, number, order, onQuestionChang
   </article>
 }
 
-function MarkdownMessageEditor({ className, label, value, onChange, ariaLabel, placeholder }: { className?: string; label?: string; value: string; onChange: (value: string) => void; ariaLabel: string; placeholder: string }) {
+function MarkdownMessageEditor({ className, label, showVariables = false, value, onChange, onNotify, ariaLabel, placeholder }: { className?: string; label?: string; showVariables?: boolean; value: string; onChange: (value: string) => void; onNotify?: Props['onNotify']; ariaLabel: string; placeholder: string }) {
   const { t } = useTranslation()
   const [preview, setPreview] = useState(true)
   return <div className={className}>
-    <div className="configuration-qa-answer-header">{label && <span>{label}</span>}<div className="configuration-markdown-message-actions"><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? t('configuration.form.editAnswer') : t('configuration.form.previewMarkdown')} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? t('configuration.form.edit') : t('configuration.form.preview')}</button></div></div>
+    <div className="configuration-qa-answer-header">{label && <span>{label}</span>}{showVariables && onNotify && <PromptVariableChips onNotify={onNotify} />}<div className="configuration-markdown-message-actions"><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? t('configuration.form.editAnswer') : t('configuration.form.previewMarkdown')} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? t('configuration.form.edit') : t('configuration.form.preview')}</button></div></div>
     {preview ? <div className="configuration-qa-preview">{value ? <Markdown>{value}</Markdown> : <span>{t('configuration.form.emptyMarkdownPreview')}</span>}</div> : <AutoResizeTextArea aria-label={ariaLabel} value={value} onChange={onChange} placeholder={placeholder} />}
   </div>
 }
