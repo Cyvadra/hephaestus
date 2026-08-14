@@ -94,8 +94,8 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
       const job = value as ConfigurationByKind['jobs']
       return <>
         <Section title={t('configuration.form.basic')}>{name}<Field label={t('configuration.form.title')} htmlFor="job-title"><TextInput id="job-title" value={job.title} onChange={title => set({ ...job, title })} /></Field><Field label={t('configuration.form.description')} wide><TextArea id="job-description" value={job.description} onChange={description => set({ ...job, description })} /></Field><Field label={t('configuration.form.goal')} wide><TextArea id="job-goal" value={job.goal} onChange={goal => set({ ...job, goal })} /></Field></Section>
-        <Section title={t('configuration.form.schedule')}><Field label={t('configuration.form.triggerExpression')} htmlFor="job-trigger" wide hint={t('configuration.form.triggerHint')}><TriggerEditor id="job-trigger" rows={3} value={job.trigger} onChange={trigger => set({ ...job, trigger })} /></Field><Field label={t('configuration.form.dailyMax')} htmlFor="job-max"><NumberInput id="job-max" min={0} value={job.max_executions_per_day} onChange={max_executions_per_day => set({ ...job, max_executions_per_day: max_executions_per_day ?? 0 })} /></Field></Section>
-        <Section title={t('configuration.form.workflows')} description={t('configuration.form.workflowDescription')}><Field label={t('configuration.form.workflowBindings')} wide><WorkflowBindings values={job.workflows} suggestions={catalog.workflows} projects={projects} onChange={workflows => set({ ...job, workflows })} /></Field></Section>
+        <Section title={t('configuration.form.schedule')}><Field label={t('configuration.form.triggerExpression')} htmlFor="job-trigger" wide hint={t('configuration.form.triggerHint')}><TriggerEditor id="job-trigger" rows={3} value={job.trigger} onChange={trigger => set({ ...job, trigger })} onNotify={onNotify} /></Field><Field label={t('configuration.form.dailyMax')} htmlFor="job-max"><NumberInput id="job-max" min={0} value={job.max_executions_per_day} onChange={max_executions_per_day => set({ ...job, max_executions_per_day: max_executions_per_day ?? 0 })} /></Field></Section>
+        <Section title={t('configuration.form.workflows')} description={t('configuration.form.workflowDescription')}><Field label={t('configuration.form.workflowBindings')} wide><WorkflowBindings values={job.workflows} suggestions={catalog.workflows} projects={projects} onChange={workflows => set({ ...job, workflows })} onNotify={onNotify} /></Field></Section>
       </>
     }
     case 'constants': {
@@ -135,10 +135,9 @@ function MessageEditor({ values, onChange, onNotify }: { values: ConfigurationMe
   </div>
 }
 
-function PromptVariableChips({ onNotify }: { onNotify: Props['onNotify'] }) {
+function PlaceholderChips({ items, label, onNotify }: { items: { label: string; token: string }[]; label?: string; onNotify: Props['onNotify'] }) {
   const { t } = useTranslation()
-  const copy = async (name: string) => {
-    const token = `{{${name}}}`
+  const copy = async (token: string) => {
     try {
       await navigator.clipboard.writeText(token)
       onNotify('success', t('configuration.form.variableCopied', { token }))
@@ -146,7 +145,12 @@ function PromptVariableChips({ onNotify }: { onNotify: Props['onNotify'] }) {
       onNotify('error', t('configuration.form.variableCopyFailed'))
     }
   }
-  return <div className="configuration-placeholder-editor" aria-label={t('configuration.form.builtinVariables')}><span>{t('configuration.form.builtinVariables')}</span><div className="configuration-placeholder-chips">{PROMPT_BUILTIN_VARIABLES.map(name => <button type="button" key={name} title={t('configuration.form.copyVariable', { token: `{{${name}}}` })} onClick={() => void copy(name)}>{name}</button>)}</div></div>
+  return <div className="configuration-placeholder-chips" aria-label={label}>{items.map(({ label: itemLabel, token }) => <button type="button" key={token} title={t('configuration.form.copyVariable', { token })} onClick={() => void copy(token)}>{itemLabel}</button>)}</div>
+}
+
+function PromptVariableChips({ onNotify }: { onNotify: Props['onNotify'] }) {
+  const { t } = useTranslation()
+  return <div className="configuration-placeholder-editor configuration-placeholder-editor-inline"><span>{t('configuration.form.builtinVariables')}</span><PlaceholderChips label={t('configuration.form.builtinVariables')} items={PROMPT_BUILTIN_VARIABLES.map(name => ({ label: name, token: `{{${name}}}` }))} onNotify={onNotify} /></div>
 }
 
 function messageBlocks(values: ConfigurationMessage[]) {
@@ -262,7 +266,7 @@ function JsonEditor({ value, onChange }: { value: unknown; onChange: (value: unk
   return <textarea className="configuration-json-editor" rows={10} value={source} onChange={event => setSource(event.target.value)} onBlur={event => { try { onChange(JSON.parse(source)); event.target.setCustomValidity('') } catch { event.target.setCustomValidity(t('configuration.form.validJson')); event.target.reportValidity() } }} />
 }
 
-function WorkflowBindings({ values, suggestions, projects, onChange }: { values: JobWorkflowBinding[]; suggestions: string[]; projects: string[]; onChange: (values: JobWorkflowBinding[]) => void }) {
+function WorkflowBindings({ values, suggestions, projects, onChange, onNotify }: { values: JobWorkflowBinding[]; suggestions: string[]; projects: string[]; onChange: (values: JobWorkflowBinding[]) => void; onNotify: Props['onNotify'] }) {
   const { t } = useTranslation()
   return <div className="configuration-repeat-list"><datalist id="workflow-suggestions">{suggestions.map(item => <option key={item} value={item} />)}</datalist><datalist id="project-suggestions">{projects.map(item => <option key={item} value={item} />)}</datalist>{values.map((binding, index) => {
     const update = (patch: Partial<JobWorkflowBinding>) => onChange(values.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
@@ -274,7 +278,7 @@ function WorkflowBindings({ values, suggestions, projects, onChange }: { values:
         <label><span>{t('configuration.form.retryDelay')}</span><input aria-label={t('configuration.form.retryDelay')} type="number" min={0} value={binding.retry_delay_seconds} onChange={event => update({ retry_delay_seconds: Number(event.target.value) })} /></label>
         <button type="button" aria-label={t('configuration.form.deleteBinding')} title={t('configuration.form.deleteBinding')} onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button>
       </div>
-      <div className="configuration-binding-input"><span>{t('configuration.form.input')} <small>{t('configuration.form.inputPlaceholderHint')}</small></span><InputJsonEditor value={binding.input} onChange={input => update({ input })} /></div>
+      <div className="configuration-binding-input"><span>{t('configuration.form.input')} <small>{t('configuration.form.inputPlaceholderHint')}</small></span><InputJsonEditor value={binding.input} onChange={input => update({ input })} onNotify={onNotify} /></div>
     </div>
   })}<button className="configuration-add-row" type="button" onClick={() => onChange([...values, { workflow: '', project: '', input: {}, max_attempts: 1, retry_delay_seconds: 0 }])}><Plus size={15} />{t('configuration.form.addWorkflow')}</button></div>
 }
@@ -287,47 +291,24 @@ function parseJSONLoose(source: string): unknown | undefined {
   }
 }
 
-// InputJsonEditor 是带 `${...}` 占位符一键插入的 JSON 输入框。
-function InputJsonEditor({ value, onChange }: { value: Record<string, unknown>; onChange: (value: Record<string, unknown>) => void }) {
+function InputJsonEditor({ value, onChange, onNotify }: { value: Record<string, unknown>; onChange: (value: Record<string, unknown>) => void; onNotify: Props['onNotify'] }) {
   const formatted = JSON.stringify(value ?? {}, null, 2)
   const [source, setSource] = useState(formatted)
-  const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => setSource(formatted), [formatted])
-  const insert = (name: string) => {
-    const token = `\${${name}}`
-    const el = ref.current
-    const start = el?.selectionStart ?? source.length
-    const end = el?.selectionEnd ?? source.length
-    const next = source.slice(0, start) + token + source.slice(end)
-    setSource(next)
-    const parsed = parseJSONLoose(next)
-    if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) onChange(parsed as Record<string, unknown>)
-    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + token.length, start + token.length) })
-  }
   return (
     <div className="configuration-placeholder-editor">
-      <div className="configuration-placeholder-chips">{JOB_INPUT_PLACEHOLDERS.map(name => <button type="button" key={name} onClick={() => insert(name)}>{name}</button>)}</div>
-      <textarea ref={ref} className="configuration-json-editor" rows={8} value={source} onChange={event => setSource(event.target.value)} onBlur={event => { const parsed = parseJSONLoose(source); if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) onChange(parsed as Record<string, unknown>); event.target.setCustomValidity('') }} />
+      <PlaceholderChips items={JOB_INPUT_PLACEHOLDERS.map(name => ({ label: name, token: `\${${name}}` }))} onNotify={onNotify} />
+      <textarea className="configuration-json-editor" rows={8} value={source} onChange={event => setSource(event.target.value)} onBlur={event => { const parsed = parseJSONLoose(source); if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) onChange(parsed as Record<string, unknown>); event.target.setCustomValidity('') }} />
     </div>
   )
 }
 
-// TriggerEditor 是带求值环境变量一键插入的触发表达式输入框。
-function TriggerEditor({ id, value, onChange, rows }: { id: string; value: string; onChange: (value: string) => void; rows: number }) {
+function TriggerEditor({ id, value, onChange, rows, onNotify }: { id: string; value: string; onChange: (value: string) => void; rows: number; onNotify: Props['onNotify'] }) {
   const { t } = useTranslation()
-  const ref = useRef<HTMLTextAreaElement>(null)
-  const insert = (token: string) => {
-    const el = ref.current
-    const start = el?.selectionStart ?? value.length
-    const end = el?.selectionEnd ?? value.length
-    const next = value.slice(0, start) + token + value.slice(end)
-    onChange(next)
-    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + token.length, start + token.length) })
-  }
   return (
     <div className="configuration-placeholder-editor">
-      <textarea ref={ref} id={id} rows={rows} value={value} onChange={event => onChange(event.target.value)} placeholder={t('configuration.form.triggerExample')} />
-      <div className="configuration-placeholder-chips">{JOB_TRIGGER_ENV.map(token => <button type="button" key={token} onClick={() => insert(token)}>{token}</button>)}</div>
+      <PlaceholderChips items={JOB_TRIGGER_ENV.map(token => ({ label: token, token }))} onNotify={onNotify} />
+      <textarea id={id} rows={rows} value={value} onChange={event => onChange(event.target.value)} placeholder={t('configuration.form.triggerExample')} />
     </div>
   )
 }

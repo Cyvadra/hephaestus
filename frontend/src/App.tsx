@@ -33,7 +33,7 @@ export default function App() {
   const mode = route.type.startsWith('configuration') ? 'configurations' : 'chat'
   const project = chatRoute?.project ?? storedProject
   const sessionId = route.type === 'chat' ? route.sessionId : null
-  const configurationKind = configurationRoute?.kind ?? null
+  const configurationKind = route.type === 'configuration-constants' ? 'constants' : configurationRoute?.kind ?? null
   const configurationName = route.type === 'configuration-edit' ? route.name : null
   const configurationIsNew = route.type === 'configuration-new'
   const isChoosingConcierge = route.type === 'chat-new' && draftConcierge == null
@@ -85,6 +85,10 @@ export default function App() {
   }, [navigate])
   const handleConfigurationCreate = useCallback((kind: ConfigurationKind) => {
     navigate(routes.configurationNew(kind))
+    setConfigurationSidebarOpen(false)
+  }, [navigate])
+  const handleOpenConstants = useCallback(() => {
+    navigate(routes.constants())
     setConfigurationSidebarOpen(false)
   }, [navigate])
 
@@ -159,6 +163,7 @@ export default function App() {
         configurationRefreshKey={configurationRefreshKey}
         onConfigurationSelect={handleConfigurationSelect}
         onConfigurationCreate={handleConfigurationCreate}
+        onConfigurationOpenConstants={handleOpenConstants}
         onConfigurationListsChange={setConfigurationLists}
       />
       <main className="main-panel">
@@ -166,6 +171,7 @@ export default function App() {
         {mode === 'configurations' ? <ConfigurationWorkspace
           kind={configurationKind}
           name={configurationName}
+          isConstantsOverview={route.type === 'configuration-constants'}
           isNew={configurationIsNew}
           lists={configurationLists}
           selectionKey={`${configurationKind ?? 'overview'}:${configurationName ?? (configurationIsNew ? 'new' : '')}`}
@@ -175,7 +181,7 @@ export default function App() {
           onSaved={(kind, name) => {
             handleConfigurationDirtyChange(false)
             setConfigurationRefreshKey(value => value + 1)
-            navigate(routes.configurationEdit(kind, name), { replace: configurationIsNew })
+            navigate(kind === 'constants' && !name ? routes.constants() : routes.configurationEdit(kind, name), { replace: configurationIsNew })
           }}
           onDeleted={() => {
             setConfigurationRefreshKey(value => value + 1)

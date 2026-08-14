@@ -1,8 +1,8 @@
-import { AlertCircle, Check, Database, ListTree, LoaderCircle, RotateCcw, Save, Trash2, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AlertCircle, Check, Database, ListTree, LoaderCircle, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, replaceConfiguration } from '../api/client'
-import type { Configuration, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind } from '../api/types'
+import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, listConfigurations, replaceConfiguration } from '../api/client'
+import type { Configuration, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConstantConfiguration } from '../api/types'
 import ConfigurationForm from './configuration/ConfigurationForm'
 import { CONFIGURATION_META, createEmptyConfiguration, findUndefinedPromptVariables, getConfigurationMeta, type TranslationDescriptor, validateConfiguration } from './configuration/model'
 import { JobRunsPanel, WorkflowRunTester } from './configuration/RunTester'
@@ -11,6 +11,7 @@ import type { ConfigurationLists } from './ConfigurationSidebar'
 interface Props {
   kind: ConfigurationKind | null
   name: string | null
+  isConstantsOverview: boolean
   isNew: boolean
   lists: ConfigurationLists
   selectionKey: string
@@ -22,7 +23,7 @@ interface Props {
   onOpenNavigation: () => void
 }
 
-export default function ConfigurationWorkspace({ kind, name, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSaved, onDeleted, onOpenNavigation }: Props) {
+export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSaved, onDeleted, onOpenNavigation }: Props) {
   const { t } = useTranslation()
   const [value, setValue] = useState<Configuration | null>(null)
   const [valueSelectionKey, setValueSelectionKey] = useState('')
@@ -80,6 +81,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
   if (kind == null) return <ConfigurationOverview lists={lists} onCreate={onCreate} onOpenNavigation={onOpenNavigation} />
+  if (isConstantsOverview) return <ConstantsWorkspace refreshKey={refreshKey} onDirtyChange={onDirtyChange} onSaved={() => { onDirtyChange(false); onSaved('constants', '') }} onOpenNavigation={onOpenNavigation} />
   const meta = getConfigurationMeta(kind)
   const validationDescriptors = currentValue == null ? {} : validateConfiguration(kind, currentValue, catalog.constants)
   const errors = Object.fromEntries(Object.entries(validationDescriptors).map(([field, descriptor]) => [field, renderDescriptor(t, descriptor)]))
@@ -186,6 +188,62 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
 function ConfigurationOverview({ lists, onCreate, onOpenNavigation }: { lists: ConfigurationLists; onCreate: (kind: ConfigurationKind) => void; onOpenNavigation: () => void }) {
   const { t } = useTranslation()
   return <div className="configuration-overview"><button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button><div className="configuration-overview-heading"><span>{t('configuration.registryConsole')}</span><h1>{t('configuration.databaseConfiguration')}</h1><p>{t('configuration.overview')}</p></div><div className="configuration-overview-grid">{CONFIGURATION_META.map(meta => <button className="configuration-overview-item" type="button" key={meta.kind} onClick={() => onCreate(meta.kind)}><strong>{t(`${meta.translationKey}.label`)}</strong><span>{t(`${meta.translationKey}.description`)}</span><small>{t('configuration.recordCount', { count: lists[meta.kind]?.length ?? 0 })}</small></button>)}</div></div>
+}
+
+type ConstantDraft = ConstantConfiguration & { id: number }
+
+function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onOpenNavigation }: { refreshKey: number; onDirtyChange: (dirty: boolean) => void; onSaved: () => void; onOpenNavigation: () => void }) {
+  const { t } = useTranslation()
+  const nextDraftID = useRef(0)
+  const createDraft = (constant: ConstantConfiguration): ConstantDraft => ({ ...constant, id: nextDraftID.current++ })
+  const [constants, setConstants] = useState<ConstantDraft[]>([])
+  const [baseline, setBaseline] = useState<ConstantDraft[]>([])
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [notification, setNotification] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
+  const dirty = JSON.stringify(constants) !== JSON.stringify(baseline)
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    void listConfigurations('constants').then(values => {
+      if (!active) return
+      const drafts = values.map(createDraft)
+      setConstants(drafts)
+      setBaseline(drafts)
+    }).catch(reason => { if (active) setNotification({ type: 'error', message: reason instanceof Error ? reason.message : t('configuration.loadFailed') }) }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [refreshKey, t])
+
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
+
+  const update = (index: number, patch: Partial<ConstantConfiguration>) => setConstants(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
+  const valid = constants.every(item => /^[A-Za-z_][A-Za-z0-9_]*$/.test(item.name)) && new Set(constants.map(item => item.name)).size === constants.length
+  const save = async () => {
+    if (!valid) return
+    setSubmitting(true)
+    try {
+      const initial = new Map(baseline.map(item => [item.name, item]))
+      const current = new Map(constants.map(item => [item.name, item]))
+      const deleted = baseline.filter(item => !current.has(item.name))
+      const changed = constants.filter(item => initial.get(item.name)?.value !== item.value)
+      await Promise.all([...deleted.map(item => deleteConfiguration('constants', item.name)), ...changed.map(({ id: _, ...item }) => initial.has(item.name) ? replaceConfiguration('constants', item.name, item) : createConfiguration('constants', item))])
+      setBaseline(constants)
+      setNotification({ type: 'success', message: t('configuration.saved') })
+      onSaved()
+    } catch (reason) {
+      setNotification({ type: 'error', message: reason instanceof Error ? reason.message : t('configuration.saveFailed') })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return <div className="configuration-workspace">
+    <header className="configuration-workspace-header"><button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button><div><span className="configuration-eyebrow"><Database size={14} />{t('configuration.databaseConfiguration')}</span><h1>{t('configuration.kinds.constants.label')}</h1><p>{t('configuration.kinds.constants.description')}</p></div></header>
+    <div className="configuration-workspace-scroll"><div className="configuration-constants-editor">{loading ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <>{constants.map((item, index) => <div className="configuration-constant-row" key={item.id}><input aria-label={t('configuration.form.name')} value={item.name} placeholder="variable_name" onChange={event => update(index, { name: event.target.value })} /><input aria-label={t('configuration.form.value')} value={item.value} placeholder={t('configuration.form.value')} onChange={event => update(index, { value: event.target.value })} /><button type="button" aria-label={t('common.delete')} title={t('common.delete')} onClick={() => setConstants(current => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button></div>)}<button className="configuration-add-row" type="button" onClick={() => setConstants(current => [...current, createDraft({ name: '', value: '' })])}><Plus size={15} />{t('common.create')}</button>{!valid && <p className="configuration-constants-error">{t('configuration.validation.constantNameInvalid')}</p>}</>}</div></div>
+    {!loading && <footer className="configuration-action-bar"><div /><div><button type="button" disabled={!dirty || submitting} onClick={() => setConstants(baseline)}><RotateCcw size={15} />{t('common.reset')}</button><button className="primary" type="button" disabled={!dirty || submitting || !valid} onClick={() => void save()}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{t('common.saveChanges')}</button></div></footer>}
+    {notification && <div className={`configuration-toast ${notification.type}`} role={notification.type === 'error' ? 'alert' : 'status'}><span>{notification.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}</span><p>{notification.message}</p><button type="button" aria-label={t('common.close')} onClick={() => setNotification(null)}><X size={15} /></button></div>}
+  </div>
 }
 
 function renderDescriptor(t: ReturnType<typeof useTranslation>['t'], descriptor: TranslationDescriptor) {

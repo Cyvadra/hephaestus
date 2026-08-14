@@ -14,6 +14,7 @@ interface Props {
   onBack: () => void
   onSelect: (kind: ConfigurationKind, name: string) => void
   onCreate: (kind: ConfigurationKind) => void
+  onOpenConstants: () => void
   onListsChange: (lists: ConfigurationLists) => void
 }
 
@@ -27,7 +28,7 @@ const ICONS = {
   constants: Braces,
 }
 
-export default function ConfigurationSidebar({ activeKind, activeName, refreshKey, onBack, onSelect, onCreate, onListsChange }: Props) {
+export default function ConfigurationSidebar({ activeKind, activeName, refreshKey, onBack, onSelect, onCreate, onOpenConstants, onListsChange }: Props) {
   const { t } = useTranslation()
   const [lists, setLists] = useState<ConfigurationLists>({})
   const [errors, setErrors] = useState<Partial<Record<ConfigurationKind, string>>>({})
@@ -75,13 +76,23 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
           const label = t(`${meta.translationKey}.label`)
           const visible = values.filter(value => `${value.name} ${renderDescriptor(t, configurationSummary(meta.kind, value))}`.toLowerCase().includes(query.trim().toLowerCase()))
           const isCollapsed = collapsed.includes(meta.kind) && !(query.trim() && visible.length > 0)
+          if (meta.kind === 'constants') return (
+            <section className="configuration-sidebar-group" key={meta.kind}>
+              <div className="configuration-group-heading">
+                <button className={`configuration-group-toggle${activeKind === 'constants' && activeName == null ? ' active' : ''}`} type="button" onClick={onOpenConstants}>
+                  <ChevronDown className="configuration-group-entry-icon" size={13} aria-hidden="true" /><Icon size={15} /><span>{label}</span><small>{values.length}</small>
+                </button>
+                <span className="configuration-group-trailing" aria-hidden="true" />
+              </div>
+            </section>
+          )
           return (
             <section className="configuration-sidebar-group" key={meta.kind}>
               <div className="configuration-group-heading">
                 <button className="configuration-group-toggle" type="button" aria-expanded={!isCollapsed} onClick={() => setCollapsed(current => current.includes(meta.kind) ? current.filter(kind => kind !== meta.kind) : [...current, meta.kind])}>
                   <ChevronDown size={13} /><Icon size={15} /><span>{label}</span><small>{values.length}</small>
                 </button>
-                <button type="button" aria-label={t('configuration.create', { name: label })} title={t('configuration.create', { name: label })} onClick={() => onCreate(meta.kind)}><Plus size={14} /></button>
+                <button className="configuration-group-create configuration-group-trailing" type="button" aria-label={t('configuration.create', { name: label })} title={t('configuration.create', { name: label })} onClick={() => onCreate(meta.kind)}><Plus size={14} /></button>
               </div>
               {!isCollapsed && <div className="configuration-group-items">
                 {loading.includes(meta.kind) && values.length === 0 ? <div className="configuration-list-skeleton"><i /><i /></div> : errors[meta.kind] ? <button className="configuration-list-error" type="button" onClick={() => void load([meta.kind])}>{t('configuration.retryLoading')}</button> : visible.length === 0 ? <button className="configuration-list-empty" type="button" onClick={() => onCreate(meta.kind)}>{query ? t('configuration.noMatches') : t('configuration.createFirst', { name: label })}</button> : visible.map(value => (

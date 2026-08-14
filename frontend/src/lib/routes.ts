@@ -15,6 +15,7 @@ export const routes = {
   chatNew: (project: string) => `/projects/${encodeURIComponent(project)}/chats/new`,
   chat: (project: string, sessionId: number) => `/projects/${encodeURIComponent(project)}/chats/${sessionId}`,
   configurations: () => '/configurations',
+  constants: () => '/configurations/constants',
   configurationNew: (kind: ConfigurationKind) => `/configurations/${kind}/new`,
   configurationEdit: (kind: ConfigurationKind, name: string) => `/configurations/${kind}/edit/${encodeURIComponent(name)}`,
 }
@@ -24,6 +25,7 @@ export type RouteState =
   | { type: 'chat-new'; project: string }
   | { type: 'chat'; project: string; sessionId: number }
   | { type: 'configurations' }
+  | { type: 'configuration-constants' }
   | { type: 'configuration-new'; kind: ConfigurationKind }
   | { type: 'configuration-edit'; kind: ConfigurationKind; name: string }
   | { type: 'invalid' }
@@ -47,6 +49,7 @@ export function parseRoute(pathname: string): RouteState {
   }
 
   if (pathname === '/configurations') return { type: 'configurations' }
+  if (pathname === '/configurations/constants') return { type: 'configuration-constants' }
 
   const configurationNewMatch = matchPath('/configurations/:kind/new', pathname)
   if (configurationNewMatch) {

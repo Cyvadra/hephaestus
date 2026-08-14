@@ -27,10 +27,11 @@ interface Props {
   configurationRefreshKey: number
   onConfigurationSelect: (kind: ConfigurationKind, name: string) => void
   onConfigurationCreate: (kind: ConfigurationKind) => void
+  onConfigurationOpenConstants: () => void
   onConfigurationListsChange: (lists: ConfigurationLists) => void
 }
 
-export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationListsChange }: Props) {
+export default function SessionSidebar({ mode, configurationSidebarOpen, activeSessionId, refreshKey, sessionUpdate, project, onProjectChange, onProjectsLoaded, onSelect, onOpenNewSession, onOpenConfigurations, onCloseConfigurations, configurationKind, configurationName, configurationRefreshKey, onConfigurationSelect, onConfigurationCreate, onConfigurationOpenConstants, onConfigurationListsChange }: Props) {
   const { t } = useTranslation()
   const [sessions, setSessions] = useState<Session[]>([])
   const [menu, setMenu] = useState<{ sessionID: number; left: number; top: number } | null>(null)
@@ -131,6 +132,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
         onBack={onCloseConfigurations}
         onSelect={onConfigurationSelect}
         onCreate={onConfigurationCreate}
+        onOpenConstants={onConfigurationOpenConstants}
         onListsChange={onConfigurationListsChange}
       /> : <><button
         className="sidebar-new-btn"
