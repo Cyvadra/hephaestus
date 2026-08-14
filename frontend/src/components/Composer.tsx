@@ -30,6 +30,16 @@ const reasoningChoices: ReasoningEffort[] = [
   'none',
 ]
 
+const SEND_SHORTCUT_STORAGE_KEY = 'hephaestus.sendShortcut'
+type SendShortcut = 'enter' | 'ctrlEnter'
+
+const sendShortcutChoices: SendShortcut[] = ['enter', 'ctrlEnter']
+
+function getStoredSendShortcut(): SendShortcut {
+  const stored = localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY)
+  return sendShortcutChoices.includes(stored as SendShortcut) ? stored as SendShortcut : 'enter'
+}
+
 export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
@@ -38,6 +48,9 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   const firstMatchedCommandRef = useRef<HTMLButtonElement>(null)
   const reasoningRef = useRef<HTMLDivElement>(null)
   const reasoningMenu = useHoverMenu(reasoningRef)
+  const sendShortcutTimerRef = useRef<number | null>(null)
+  const [sendShortcutMenuOpen, setSendShortcutMenuOpen] = useState(false)
+  const [sendShortcut, setSendShortcut] = useState<SendShortcut>(getStoredSendShortcut)
 
   const isCommand = text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
@@ -57,6 +70,10 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
     firstMatchedCommandRef.current?.scrollIntoView({ block: 'nearest' })
   }, [commandQuery, commandHelp])
 
+  useEffect(() => () => {
+    if (sendShortcutTimerRef.current != null) window.clearTimeout(sendShortcutTimerRef.current)
+  }, [])
+
   const handleTextChange = (value: string) => {
     setText(value)
     if (value.trimStart().startsWith('/')) onCommandHelpRequest()
@@ -72,12 +89,43 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   }
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    const isModifiedSubmit = e.ctrlKey || e.metaKey
     const isCommandSubmit = isCommand && !e.shiftKey && !e.altKey
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing && (isModifiedSubmit || isCommandSubmit)) {
+    const isShortcutSubmit = sendShortcut === 'ctrlEnter'
+      ? e.ctrlKey || e.metaKey
+      : !e.shiftKey && !e.altKey
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing && (isShortcutSubmit || isCommandSubmit)) {
       e.preventDefault()
       submit()
     }
+  }
+
+  const selectSendShortcut = (shortcut: SendShortcut) => {
+    setSendShortcut(shortcut)
+    localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, shortcut)
+    setSendShortcutMenuOpen(false)
+  }
+
+  const cancelSendShortcutTimer = () => {
+    if (sendShortcutTimerRef.current == null) return
+    window.clearTimeout(sendShortcutTimerRef.current)
+    sendShortcutTimerRef.current = null
+  }
+
+  const openSendShortcutMenu = () => {
+    cancelSendShortcutTimer()
+    if (disabled || sendShortcutMenuOpen) return
+    sendShortcutTimerRef.current = window.setTimeout(() => {
+      sendShortcutTimerRef.current = null
+      setSendShortcutMenuOpen(true)
+    }, 1500)
+  }
+
+  const closeSendShortcutMenu = () => {
+    cancelSendShortcutTimer()
+    sendShortcutTimerRef.current = window.setTimeout(() => {
+      sendShortcutTimerRef.current = null
+      setSendShortcutMenuOpen(false)
+    }, 250)
   }
 
   return (
@@ -233,16 +281,34 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
                   </button>
                   <span id="upload-file-limits" role="tooltip">{t('chat.files.uploadLimits')}</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={submit}
-                  disabled={!text.trim()}
-                  className="composer-send-btn composer-send-icon-btn"
-                  aria-label={t('chat.compose.send')}
-                  title={t('chat.compose.send')}
-                >
-                  <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
-                </button>
+                <div className="composer-send-shortcut-control" onMouseEnter={openSendShortcutMenu} onMouseLeave={closeSendShortcutMenu}>
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={!text.trim()}
+                    className="composer-send-btn composer-send-icon-btn"
+                    aria-label={t('chat.compose.send')}
+                    title={t('chat.compose.send')}
+                  >
+                    <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
+                  </button>
+                  {sendShortcutMenuOpen && (
+                    <div className="composer-options-menu composer-send-shortcut-menu" role="menu" aria-label={t('chat.compose.sendShortcut.select')} onMouseEnter={cancelSendShortcutTimer} onMouseLeave={closeSendShortcutMenu}>
+                      {sendShortcutChoices.map(shortcut => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={sendShortcut === shortcut}
+                          key={shortcut}
+                          onClick={() => selectSendShortcut(shortcut)}
+                        >
+                          <span>{t(`chat.compose.sendShortcut.${shortcut}`)}</span>
+                          {sendShortcut === shortcut && <Check aria-hidden="true" size={14} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 </>
               )}
             </div>
