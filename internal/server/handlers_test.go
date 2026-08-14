@@ -61,8 +61,9 @@ func TestBindMessageRequestParsesMultipartGenerationOptions(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for name, value := range map[string]string{
-		"text":             "hello",
-		"reasoning_effort": "high",
+		"text":                   "hello",
+		"reasoning_effort":       "high",
+		"active_leaf_message_id": "0",
 	} {
 		if err := writer.WriteField(name, value); err != nil {
 			t.Fatal(err)
@@ -94,6 +95,9 @@ func TestBindMessageRequestParsesMultipartGenerationOptions(t *testing.T) {
 	if len(req.DisabledTools) != 2 || req.DisabledTools[0] != "web_search" || req.DisabledTools[1] != "web_fetch" {
 		t.Fatalf("unexpected disabled tools: %#v", req.DisabledTools)
 	}
+	if req.ActiveLeafMessageID != nil {
+		t.Fatalf("expected zero active leaf to be treated as unset, got %d", *req.ActiveLeafMessageID)
+	}
 }
 
 func TestBindMessageRequestAllowsGenerationOnlyJSON(t *testing.T) {
@@ -110,6 +114,28 @@ func TestBindMessageRequestAllowsGenerationOnlyJSON(t *testing.T) {
 	}
 	if req.Text != "" || req.ReasoningEffort != "high" || len(req.DisabledTools) != 1 || req.DisabledTools[0] != "web_search" {
 		t.Fatalf("unexpected request fields: %+v", req)
+	}
+}
+
+func TestSendMessageRequestNormalizesZeroActiveLeaf(t *testing.T) {
+	zero := uint(0)
+	req := sendMessageRequest{ActiveLeafMessageID: &zero}
+
+	req.normalizeActiveLeaf()
+
+	if req.ActiveLeafMessageID != nil {
+		t.Fatalf("expected zero active leaf to mean no active leaf, got %d", *req.ActiveLeafMessageID)
+	}
+}
+
+func TestSendMessageRequestSelectRootOverridesActiveLeaf(t *testing.T) {
+	leaf := uint(42)
+	req := sendMessageRequest{ActiveLeafMessageID: &leaf, SelectRoot: true}
+
+	req.normalizeActiveLeaf()
+
+	if req.ActiveLeafMessageID != nil {
+		t.Fatalf("expected select_root to clear active leaf, got %d", *req.ActiveLeafMessageID)
 	}
 }
 

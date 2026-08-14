@@ -226,6 +226,7 @@ type sendMessageRequest struct {
 	// branch before the message is processed (see design doc's session
 	// branching semantics). Required for every continuation, per doc.
 	ActiveLeafMessageID *uint    `json:"active_leaf_message_id"`
+	SelectRoot          bool     `json:"select_root"`
 	Text                string   `json:"text"`
 	ReasoningEffort     string   `json:"reasoning_effort"`
 	DisabledTools       []string `json:"disabled_tools"`
@@ -237,6 +238,15 @@ func (r sendMessageRequest) turnOptions(onDelta func(chat.StreamEvent)) chat.Tur
 		OnDelta:         onDelta,
 		ReasoningEffort: r.ReasoningEffort,
 		DisabledTools:   r.DisabledTools,
+	}
+}
+
+func (r *sendMessageRequest) normalizeActiveLeaf() {
+	if r.SelectRoot {
+		r.ActiveLeafMessageID = nil
+	}
+	if r.ActiveLeafMessageID != nil && *r.ActiveLeafMessageID == 0 {
+		r.ActiveLeafMessageID = nil
 	}
 }
 
@@ -470,9 +480,16 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return 0, sendMessageRequest{}, nil, false
 	}
+	req.normalizeActiveLeaf()
 	if strings.TrimSpace(req.Text) == "" {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: "text is required"})
 		return 0, sendMessageRequest{}, nil, false
+	}
+	if req.SelectRoot {
+		if err := s.sessions.SelectRoot(sessionID); err != nil {
+			internalError(c, err)
+			return 0, sendMessageRequest{}, nil, false
+		}
 	}
 	if req.ActiveLeafMessageID != nil {
 		if err := s.sessions.SelectActiveLeaf(sessionID, *req.ActiveLeafMessageID); err != nil {
@@ -536,13 +553,16 @@ func (s *Server) bindMessageRequest(c *gin.Context, req *sendMessageRequest) ([]
 	req.Text = c.PostForm("text")
 	if leaf := c.PostForm("active_leaf_message_id"); leaf != "" {
 		parsed, err := strconv.ParseUint(leaf, 10, 64)
-		if err != nil || parsed == 0 {
+		if err != nil {
 			return nil, errValidation("invalid active leaf message id")
 		}
-		value := uint(parsed)
-		req.ActiveLeafMessageID = &value
+		if parsed != 0 {
+			value := uint(parsed)
+			req.ActiveLeafMessageID = &value
+		}
 	}
 	req.ReasoningEffort = c.PostForm("reasoning_effort")
+	req.SelectRoot = c.PostForm("select_root") == "true"
 	req.DisabledTools = c.PostFormArray("disabled_tools")
 	return c.Request.MultipartForm.File["files"], nil
 }

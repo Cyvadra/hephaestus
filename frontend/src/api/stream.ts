@@ -54,13 +54,19 @@ export async function* streamMessage(
     ? (() => {
         const form = new FormData()
         form.set('text', text)
-        if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId ?? 0))
+        if (activeLeafMessageId === null) form.set('select_root', 'true')
+        else if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId))
         form.set('reasoning_effort', options.reasoningEffort)
         generationPayload(options).disabled_tools.forEach(tool => form.append('disabled_tools', tool))
         files.forEach(file => form.append('files', file))
         return form
       })()
-    : JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId ?? 0, ...generationPayload(options) })
+    : JSON.stringify({
+        text,
+        ...(activeLeafMessageId === null ? { select_root: true } : {}),
+        ...(activeLeafMessageId === undefined || activeLeafMessageId === null ? {} : { active_leaf_message_id: activeLeafMessageId }),
+        ...generationPayload(options),
+      })
   yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/stream`, {
     method: 'POST',
     headers: files.length > 0 ? undefined : { 'Content-Type': 'application/json' },

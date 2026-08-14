@@ -370,6 +370,19 @@ func (s *Service) SelectActiveLeaf(sessionID, leafID uint) error {
 	})
 }
 
+// SelectRoot makes the root of the session's message tree active, so the next
+// appended message starts a separate root branch.
+func (s *Service) SelectRoot(sessionID uint) error {
+	result := s.db.Model(&store.Session{}).Where("id = ?", sessionID).Update("active_leaf_message_id", nil)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 // EditAssistantAtLeaf creates an edited sibling of messageID and makes it
 // the active leaf. The original message and all of its descendants remain
 // unchanged and reachable through the session's message tree.
