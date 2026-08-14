@@ -45,7 +45,7 @@ function requireString(data: unknown): string {
 export async function* streamMessage(
   sessionId: number,
   text: string,
-  activeLeafMessageId?: number,
+  activeLeafMessageId?: number | null,
   files: File[] = [],
   options: GenerationOptions = { reasoningEffort: 'high', webSearch: false },
   signal?: AbortSignal,
@@ -54,13 +54,13 @@ export async function* streamMessage(
     ? (() => {
         const form = new FormData()
         form.set('text', text)
-        if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId))
+        if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId ?? 0))
         form.set('reasoning_effort', options.reasoningEffort)
         generationPayload(options).disabled_tools.forEach(tool => form.append('disabled_tools', tool))
         files.forEach(file => form.append('files', file))
         return form
       })()
-    : JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId, ...generationPayload(options) })
+    : JSON.stringify({ text, active_leaf_message_id: activeLeafMessageId ?? 0, ...generationPayload(options) })
   yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/stream`, {
     method: 'POST',
     headers: files.length > 0 ? undefined : { 'Content-Type': 'application/json' },

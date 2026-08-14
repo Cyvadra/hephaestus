@@ -353,7 +353,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const displayMessages = groupToolChains(path)
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
 
-  const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number) => {
+  const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
       return
     }
@@ -405,7 +405,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setActiveSession(updated)
       }
 
-      const gen = streamMessage(targetSessionId, text, leafId ?? undefined, files, generationOptions, controller.signal)
+      const gen = streamMessage(targetSessionId, text, leafId, files, generationOptions, controller.signal)
       await consumeStream(gen, controller.signal, {
         setStreamingText,
         setStreamingActivities,
@@ -694,7 +694,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               processMessages={item.processMessages}
               childrenMap={childrenMap}
               onBranchSwitch={handleBranchSwitch}
-              onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID ?? undefined)}
+              onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID)}
               onEditAssistant={(content, reasoningContent) => handleEditAssistant(item.message.ID, content, reasoningContent)}
               editSaving={editingMessageId === item.message.ID}
               editDisabled={streaming || editingMessageId != null}

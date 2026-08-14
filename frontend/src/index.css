@@ -5527,6 +5527,41 @@ body {
     outline: none
 }
 
+.sidebar-settings-option-label {
+    display: flex;
+    align-items: center;
+    gap: 8px
+}
+
+.sidebar-settings-switch {
+    box-sizing: border-box;
+    width: 28px;
+    height: 16px;
+    padding: 2px;
+    flex: none;
+    background: var(--dsw-alias-border-l4);
+    border-radius: 8px;
+    transition: background-color .15s ease
+}
+
+.sidebar-settings-switch > span {
+    display: block;
+    width: 12px;
+    height: 12px;
+    background: var(--dsw-static-neutral-bluish-00);
+    border-radius: 50%;
+    box-shadow: var(--dsw-shadow-lv1);
+    transition: transform .15s ease
+}
+
+.sidebar-settings-option[aria-checked="true"] .sidebar-settings-switch {
+    background: var(--dsw-alias-button-primary-fill)
+}
+
+.sidebar-settings-option[aria-checked="true"] .sidebar-settings-switch > span {
+    transform: translateX(12px)
+}
+
 .sidebar-settings-heading {
     display: flex;
     align-items: center;

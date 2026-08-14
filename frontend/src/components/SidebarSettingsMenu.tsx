@@ -1,8 +1,10 @@
-import { Check, Globe2, Settings } from 'lucide-react'
-import { useRef } from 'react'
+import { Check, Globe2, Moon, Settings } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supportedLanguages } from '../i18n'
 import { useHoverMenu } from '../lib/useHoverMenu'
+
+const NIGHT_MODE_STORAGE_KEY = 'hephaestus.nightMode'
 
 interface Props {
   mode: 'chat' | 'configurations'
@@ -14,7 +16,14 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
   const { t, i18n } = useTranslation()
   const rootRef = useRef<HTMLDivElement>(null)
   const menu = useHoverMenu(rootRef)
+  const [nightMode, setNightMode] = useState(() => localStorage.getItem(NIGHT_MODE_STORAGE_KEY) === 'true')
   const configurationLabel = mode === 'configurations' ? t('app.returnToChat') : t('app.configurationManagement')
+
+  useLayoutEffect(() => {
+    document.body.toggleAttribute('data-ds-dark-theme', nightMode)
+    document.body.classList.toggle('dark', nightMode)
+    localStorage.setItem(NIGHT_MODE_STORAGE_KEY, String(nightMode))
+  }, [nightMode])
 
   const openConfiguration = () => {
     if (mode === 'configurations') onCloseConfigurations()
@@ -49,6 +58,16 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
           {i18n.resolvedLanguage === language && <Check aria-label={t('app.selectedLanguage', { language: t(`app.languages.${language}`) })} size={15} />}
         </button>)}
         <div className="sidebar-settings-divider" />
+        <button
+          className="sidebar-settings-option"
+          type="button"
+          role="menuitemcheckbox"
+          aria-checked={nightMode}
+          onClick={() => setNightMode(enabled => !enabled)}
+        >
+          <span className="sidebar-settings-option-label"><Moon aria-hidden="true" size={15} />{t('app.nightMode')}</span>
+          <span className="sidebar-settings-switch" aria-hidden="true"><span /></span>
+        </button>
         <button className="sidebar-settings-option" type="button" role="menuitem" onClick={openConfiguration}>
           <Settings aria-hidden="true" size={15} />
           <span>{configurationLabel}</span>
