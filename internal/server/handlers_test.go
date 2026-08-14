@@ -1,20 +1,18 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
-	"context"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/registry"
+	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/gin-gonic/gin"
+	"gorm.io/datatypes"
 )
 
 func TestValidateGenerationOptions(t *testing.T) {
@@ -133,50 +131,40 @@ func TestBindMessageRequestAllowsGenerationOnlyJSON(t *testing.T) {
 	}
 }
 
-func TestStreamTurnFlushesProgressBeforeCompletion(t *testing.T) {
+func TestPrepareMessageRunFromRequestExecutesSlashCommand(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	release := make(chan struct{})
 	server := &Server{commands: command.NewService(nil, nil, nil, nil, nil, nil, nil, nil)}
-	engine := gin.New()
-	engine.GET("/stream", func(c *gin.Context) {
-		server.streamTurn(c, 1, func(_ context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-			onDelta(chat.StreamEvent{Type: "tool_output", ToolCall: &chat.StreamToolCall{
-				CallIndex: 0,
-				Index:     0,
-				ID:        "call-1",
-				Name:      "shell",
-				Result:    "started\n",
-				Status:    "calling",
-			}})
-			<-release
-			return &chat.TurnResult{}, nil
-		})
-	})
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Params = gin.Params{{Key: "id", Value: "7"}}
 
-	httpServer := httptest.NewServer(engine)
-	defer httpServer.Close()
+	_, _, _, execute, _ := server.prepareMessageRunFromRequest(context, "/ping", sendMessageRequest{})
+	if execute != nil {
+		t.Fatal("slash command should not create a chat run executor")
+	}
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"command_response":"pong"`) {
+		t.Fatalf("unexpected command response: status %d body %s", recorder.Code, recorder.Body.String())
+	}
+}
 
-	response, err := http.Get(httpServer.URL + "/stream")
-	if err != nil {
-		t.Fatal(err)
+func TestEmitRunDoneUsesStoredSendMessageResponse(t *testing.T) {
+	messageID := uint(9)
+	run := &store.ChatRun{Status: store.ChatRunSucceeded, Result: datatypes.JSON([]byte(`{"message":{"ID":9},"metadata":{"uploads":{"attachments":[]}},"branch_not_activated":true}`))}
+	var event string
+	var data any
+	emitRunDone(func(name string, payload any) {
+		event = name
+		data = payload
+	}, run)
+	done, ok := data.(chatRunDone)
+	if event != "done" || !ok {
+		t.Fatalf("expected done sendMessageResponse, got %q %#v", event, data)
 	}
-	defer response.Body.Close()
-	if response.Header.Get("X-Accel-Buffering") != "no" {
-		t.Fatalf("expected proxy buffering to be disabled, got %q", response.Header.Get("X-Accel-Buffering"))
+	response := done.Response
+	if response.Message == nil || response.Message.ID != messageID || !response.BranchNotActivated {
+		t.Fatalf("unexpected done response: %+v", response)
 	}
-
-	lineCh := make(chan string, 1)
-	go func() {
-		line, _ := bufio.NewReader(response.Body).ReadString('\n')
-		lineCh <- line
-	}()
-	select {
-	case line := <-lineCh:
-		if !strings.Contains(line, "event:tool_output") {
-			t.Fatalf("expected tool_output before completion, got %q", line)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("tool output was not flushed before turn completion")
+	if _, ok := response.Metadata["uploads"]; !ok {
+		t.Fatalf("expected upload metadata, got %+v", response.Metadata)
 	}
-	close(release)
 }

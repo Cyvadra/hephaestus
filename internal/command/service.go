@@ -56,6 +56,7 @@ type Service struct {
 	db           *gorm.DB
 	projects     *project.Service
 	interactions *interaction.Manager
+	runCanceler  func(uint) error
 
 	mu       sync.Mutex
 	lastList map[uint]map[Kind][]string
@@ -96,6 +97,14 @@ func NewService(registries *registry.Store, toolReg *toolkit.Registry, pluginReg
 		lastList:     map[uint]map[Kind][]string{},
 		cancels:      map[uint]cancelRegistration{},
 	}
+}
+
+// SetRunCanceler registers cancellation for durable, transport-independent
+// chat runs. It supplements legacy request-bound cancellation registrations.
+func (s *Service) SetRunCanceler(cancel func(uint) error) {
+	s.mu.Lock()
+	s.runCanceler = cancel
+	s.mu.Unlock()
 }
 
 func (s *Service) currentRegistry() *registry.Registry {
@@ -333,12 +342,16 @@ var kindDescriptors = map[Kind]kindDescriptor{
 func (s *Service) stop(sessionID uint) string {
 	s.mu.Lock()
 	registration, ok := s.cancels[sessionID]
+	runCanceler := s.runCanceler
 	s.mu.Unlock()
-	if !ok {
-		return "Nothing is currently running for this session."
+	if ok {
+		registration.cancel()
+		return "Stopping current task."
 	}
-	registration.cancel()
-	return "Stopping current task."
+	if runCanceler != nil && runCanceler(sessionID) == nil {
+		return "Stopping current task."
+	}
+	return "Nothing is currently running for this session."
 }
 
 func (s *Service) status(sessionID uint) (string, error) {

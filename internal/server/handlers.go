@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
+	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -412,37 +413,6 @@ func (s *Server) sendMessage(c *gin.Context) {
 	})
 }
 
-// streamMessage godoc
-//
-//	@Summary		Send a message with streaming
-//	@Description	Like sendMessage, including per-turn reasoning_effort and disabled_tools overrides, but streams typed assistant progress as Server-Sent Events ("delta", "reasoning", "tool_call", "tool_output", "tool_result", and "session_updated" events), finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
-//	@Tags			sessions
-//	@Accept			json
-//	@Accept			mpfd
-//	@Produce		text/event-stream
-//	@Param			id		path	int					true	"Session ID"
-//	@Param			request	body	sendMessageRequest	true	"Message to send"
-//	@Success		200
-//	@Failure		400	{object}	errorResponse
-//	@Router			/sessions/{id}/messages/stream [post]
-func (s *Server) streamMessage(c *gin.Context) {
-	sessionID, req, uploadResult, ok := s.prepareMessage(c)
-	if !ok {
-		return
-	}
-
-	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-		result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(onDelta))
-		if result == nil {
-			rollbackUpload(uploadResult)
-			return nil, err
-		}
-		commitUpload(uploadResult)
-		result.Metadata = mergeMetadata(result.Metadata, uploadResult)
-		return result, err
-	})
-}
-
 func rollbackUpload(result *upload.Result) {
 	if result != nil {
 		_ = result.Rollback()
@@ -617,140 +587,6 @@ func (s *Server) regenerate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sendMessageResponse{Message: result.Message, Metadata: result.Metadata})
-}
-
-// streamRegenerate godoc
-//
-//	@Summary		Regenerate the last reply with streaming
-//	@Description	Like regenerate, but streams typed assistant progress as Server-Sent Events, finishing with a "done" event.
-//	@Tags			sessions
-//	@Accept			json
-//	@Produce		text/event-stream
-//	@Param			id	path	int	true	"Session ID"
-//	@Param			request	body	sendMessageRequest	false	"Per-turn generation overrides"
-//	@Success		200
-//	@Failure		400	{object}	errorResponse
-//	@Router			/sessions/{id}/regenerate/stream [post]
-func (s *Server) streamRegenerate(c *gin.Context) {
-	sessionID, err := parseSessionID(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	var req sendMessageRequest
-	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return
-		}
-	}
-	if err := validateGenerationOptions(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-	if err := validateBranchSelection(req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-		return s.pipeline.Regenerate(ctx, sessionID, req.turnOptions(onDelta))
-	})
-}
-
-// streamContinue godoc
-//
-//	@Summary		Resume an incomplete assistant reply with streaming
-//	@Description	Resumes generation at messageID, an incomplete assistant message on the session's active path, using its persisted content as the model's prefix. Streams only the newly generated suffix as Server-Sent Events, finishing with a "done" event carrying the same body sendMessage would return (or an "error" event).
-//	@Tags			sessions
-//	@Produce		text/event-stream
-//	@Param			id			path	int	true	"Session ID"
-//	@Param			messageID	path	int	true	"Incomplete assistant message ID"
-//	@Success		200
-//	@Failure		400	{object}	errorResponse
-//	@Router			/sessions/{id}/messages/{messageID}/continue/stream [post]
-func (s *Server) streamContinue(c *gin.Context) {
-	sessionID, err := parseSessionID(c)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-	messageID, err := parseUintParam(c, "messageID", "message id")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-
-	s.streamTurn(c, sessionID, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error) {
-		return s.pipeline.Continue(ctx, sessionID, messageID, chat.TurnOptions{OnDelta: onDelta})
-	})
-}
-
-// streamTurn runs a turn-producing closure and streams its progress events
-// as Server-Sent Events, finishing with a "done" event carrying the same
-// body sendMessage would return (or an "error" event). It owns the cancel
-// registration, the delta fan-out, and the SSE sequence numbering shared by
-// every streaming endpoint.
-func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chat.TurnResult, error)) {
-	ctx, cancel := context.WithCancel(c.Request.Context())
-	defer cancel()
-	registrationID := s.commands.RegisterCancel(sessionID, cancel)
-	defer s.commands.UnregisterCancel(sessionID, registrationID)
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache, no-transform")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-	c.Writer.Flush()
-
-	deltas := make(chan chat.StreamEvent, 16)
-	type turnOutcome struct {
-		result *chat.TurnResult
-		err    error
-	}
-	outcomes := make(chan turnOutcome, 1)
-
-	go func() {
-		defer close(deltas)
-		result, err := run(ctx, func(delta chat.StreamEvent) {
-			select {
-			case deltas <- delta:
-			case <-ctx.Done():
-			}
-		})
-		outcomes <- turnOutcome{result: result, err: err}
-	}()
-
-	sequence := uint64(0)
-	streamEvent := func(event string, data any) {
-		sequence++
-		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
-		c.Writer.Flush()
-	}
-	for delta := range deltas {
-		if delta.Interaction != nil {
-			streamEvent(delta.Type, delta.Interaction)
-		} else if delta.Session != nil {
-			streamEvent(delta.Type, delta.Session)
-		} else if delta.ToolCall != nil {
-			streamEvent(delta.Type, delta.ToolCall)
-		} else {
-			streamEvent(delta.Type, delta.Text)
-		}
-	}
-
-	outcome := <-outcomes
-	if outcome.err != nil && outcome.result == nil {
-		streamEvent("error", turnErrorMessage(outcome.err))
-		return
-	}
-	streamEvent("done", sendMessageResponse{
-		Message:            outcome.result.Message,
-		Metadata:           outcome.result.Metadata,
-		BranchNotActivated: outcome.result.Metadata["stale_active_leaf"] == true,
-	})
 }
 
 type errorResponse struct {
@@ -986,6 +822,13 @@ func (s *Server) deleteSession(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if _, err := s.chatRuns.ActiveForSession(sessionID); err == nil {
+		c.JSON(http.StatusConflict, errorResponse{Error: "cannot delete a session while chat generation is running"})
+		return
+	} else if !errors.Is(err, chatrun.ErrRunNotFound) {
+		internalError(c, err)
 		return
 	}
 

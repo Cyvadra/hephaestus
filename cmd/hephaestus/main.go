@@ -22,6 +22,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/bootstrap"
 	channelruntime "github.com/Cyvadra/hephaestus/internal/channel"
 	"github.com/Cyvadra/hephaestus/internal/chat"
+	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/job"
@@ -163,7 +164,12 @@ func main() {
 	}
 
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
+	chatRunSvc := chatrun.New(db)
+	if err := chatRunSvc.Reconcile(); err != nil {
+		log.Fatalf("chat runs: reconcile stale runs: %v", err)
+	}
 	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
+	commands.SetRunCanceler(chatRunSvc.CancelSession)
 	var configuredChannels []channels.Channel
 	if cfg.QQAppID != "" {
 		qqChannel, err := channels.New("qq", channelqq.Config{
@@ -192,7 +198,7 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc)
+	srv := server.New(registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc, chatRunSvc)
 	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
 	var schedulerWG sync.WaitGroup
 	schedulerWG.Add(1)
@@ -207,6 +213,7 @@ func main() {
 	// The server returned after ctx was canceled: stop the scheduler, cancel
 	// any active runs, and wait for workers to finalize their statuses.
 	workflowSvc.Shutdown()
+	chatRunSvc.Shutdown()
 	jobSvc.Shutdown()
 	stop()
 	if err := channelService.Stop(context.Background()); err != nil {

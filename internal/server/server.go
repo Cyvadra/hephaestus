@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
+	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -32,6 +33,7 @@ type Server struct {
 	configs    *registry.Service
 	workflows  workflowRunner
 	jobs       jobRunner
+	chatRuns   *chatrun.Service
 	// streamDoneGrace keeps a workflow-run SSE connection open after the
 	// done event so the client can close its EventSource instead of the
 	// browser auto-reconnecting. Zero disables the grace (tests).
@@ -39,7 +41,7 @@ type Server struct {
 }
 
 // New builds the Gin engine and registers every route.
-func New(registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner) *Server {
+func New(registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner, chatRuns *chatrun.Service) *Server {
 	s := &Server{
 		engine:          gin.Default(),
 		registries:      registries,
@@ -51,6 +53,7 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 		configs:         configs,
 		workflows:       workflows,
 		jobs:            jobs,
+		chatRuns:        chatRuns,
 		streamDoneGrace: 3 * time.Second,
 	}
 
@@ -60,14 +63,17 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 	api.PATCH("/sessions/:id", s.updateSession)
 	api.DELETE("/sessions/:id", s.deleteSession)
 	api.GET("/sessions/:id/history", s.getHistory)
+	api.GET("/sessions/:id/chat-run", s.getActiveChatRun)
+	api.POST("/sessions/:id/chat-runs", s.startChatRun)
+	api.POST("/sessions/:id/chat-runs/cancel", s.cancelActiveChatRun)
 	api.GET("/sessions/:id/attachments/:attachmentID/download", s.downloadAttachment)
 	api.POST("/sessions/:id/messages", s.sendMessage)
 	api.POST("/sessions/:id/messages/:messageID/fork", s.forkSessionAtMessage)
 	api.POST("/sessions/:id/messages/:messageID/edit", s.editAssistantMessage)
-	api.POST("/sessions/:id/messages/stream", s.streamMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)
-	api.POST("/sessions/:id/regenerate/stream", s.streamRegenerate)
-	api.POST("/sessions/:id/messages/:messageID/continue/stream", s.streamContinue)
+	api.GET("/chat-runs/:id", s.getChatRun)
+	api.GET("/chat-runs/:id/stream", s.streamChatRun)
+	api.POST("/chat-runs/:id/cancel", s.cancelChatRun)
 	api.GET("/concierges", s.listConcierges)
 	api.GET("/projects", s.listProjects)
 	api.POST("/projects", s.createProject)
