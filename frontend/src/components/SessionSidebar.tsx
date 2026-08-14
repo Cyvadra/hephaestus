@@ -51,7 +51,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
     setSessions(current => {
       const withoutUpdated = current.filter(session => session.ID !== sessionUpdate.ID)
       return [sessionUpdate, ...withoutUpdated].sort((left, right) =>
-        new Date(right.UpdatedAt).getTime() - new Date(left.UpdatedAt).getTime(),
+		new Date(right.LastMessageTime).getTime() - new Date(left.LastMessageTime).getTime(),
       )
     })
   }, [sessionUpdate])
@@ -303,8 +303,8 @@ function groupSessions(sessions: Session[], t: ReturnType<typeof useTranslation>
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
 
-  const ageInDays = (updatedAt: string): number => {
-    const date = new Date(updatedAt)
+  const ageInDays = (lastMessageTime: string): number => {
+	const date = new Date(lastMessageTime)
     if (Number.isNaN(date.getTime())) return 0
     date.setHours(0, 0, 0, 0)
     return Math.max(0, Math.round((startOfToday.getTime() - date.getTime()) / dayMs))
@@ -319,6 +319,6 @@ function groupSessions(sessions: Session[], t: ReturnType<typeof useTranslation>
   ]
 
   return buckets
-    .map(bucket => ({ key: bucket.key, label: bucket.label, sessions: sessions.filter(session => bucket.match(ageInDays(session.UpdatedAt))) }))
+    .map(bucket => ({ key: bucket.key, label: bucket.label, sessions: sessions.filter(session => bucket.match(ageInDays(session.LastMessageTime))) }))
     .filter(group => group.sessions.length > 0)
 }

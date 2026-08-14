@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
@@ -89,6 +90,15 @@ type legacySessionProjectID struct {
 
 func (legacySessionProjectID) TableName() string { return "sessions" }
 
+// legacySessionLastMessageTime adds the activity column as nullable so
+// existing rows can be backfilled before Session's non-null constraint is
+// applied.
+type legacySessionLastMessageTime struct {
+	LastMessageTime *time.Time `gorm:"column:last_message_time"`
+}
+
+func (legacySessionLastMessageTime) TableName() string { return "sessions" }
+
 type legacySession struct {
 	ID        uint
 	ProjectID *uint
@@ -107,6 +117,11 @@ func migrateSessions(db *gorm.DB, defaultProjectID uint) error {
 	if !db.Migrator().HasColumn(&Session{}, "ProjectID") {
 		if err := db.Migrator().AddColumn(&legacySessionProjectID{}, "ProjectID"); err != nil {
 			return fmt.Errorf("store: add nullable sessions.project_id: %w", err)
+		}
+	}
+	if !db.Migrator().HasColumn(&Session{}, "LastMessageTime") {
+		if err := db.Migrator().AddColumn(&legacySessionLastMessageTime{}, "LastMessageTime"); err != nil {
+			return fmt.Errorf("store: add nullable sessions.last_message_time: %w", err)
 		}
 	}
 
@@ -129,6 +144,17 @@ func migrateSessions(db *gorm.DB, defaultProjectID uint) error {
 			if err := tx.Model(&legacySession{}).Where("id = ?", sess.ID).Update("project_id", projectID).Error; err != nil {
 				return fmt.Errorf("bind project for session %d: %w", sess.ID, err)
 			}
+		}
+		if err := tx.Exec(`
+			UPDATE sessions
+			SET last_message_time = COALESCE(
+				(SELECT timestamp FROM chat_messages WHERE id = sessions.active_leaf_message_id),
+				created_at,
+				CURRENT_TIMESTAMP
+			)
+			WHERE last_message_time IS NULL
+		`).Error; err != nil {
+			return fmt.Errorf("backfill session last message times: %w", err)
 		}
 		return nil
 	}); err != nil {

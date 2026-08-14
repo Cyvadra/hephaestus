@@ -22,6 +22,7 @@ export interface Session {
   FlagPinned: number
   ReasoningEffort: string
   EnableWebSearch: boolean | null
+  LastMessageTime: string
   CreatedAt: string
   UpdatedAt: string
 }

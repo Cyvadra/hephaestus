@@ -304,7 +304,7 @@ var kindDescriptors = map[Kind]kindDescriptor{
 	KindSession: {
 		names: func(s *Service) ([]listItem, error) {
 			var sessions []store.Session
-			if err := s.db.Order("updated_at desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
+			if err := s.db.Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
 				return nil, err
 			}
 			return sessionListItems(sessions, 0), nil
@@ -437,7 +437,7 @@ func (s *Service) listItems(sessionID uint, kind Kind, desc kindDescriptor) ([]l
 		return desc.names(s)
 	}
 	var sessions []store.Session
-	if err := s.db.Order("updated_at desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
+	if err := s.db.Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
 		return nil, err
 	}
 	return sessionListItems(sessions, sessionID), nil

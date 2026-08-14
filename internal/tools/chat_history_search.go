@@ -215,7 +215,7 @@ func (t ChatHistorySearchTool) targetSessions(ctx context.Context, includeArchiv
 		query = query.Where("flag_archived = ?", false)
 	}
 	var sessions []store.Session
-	if err := query.Order("updated_at DESC").Find(&sessions).Error; err != nil {
+	if err := query.Order("last_message_time DESC, id DESC").Find(&sessions).Error; err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 	return sessions, nil

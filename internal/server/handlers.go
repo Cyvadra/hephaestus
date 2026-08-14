@@ -651,7 +651,7 @@ func parseUintParam(c *gin.Context, param, label string) (uint, error) {
 // listSessions godoc
 //
 //	@Summary		List all sessions
-//	@Description	Returns every session ordered by updated_at descending.
+//	@Description	Returns every session ordered by last_message_time descending.
 //	@Tags			sessions
 //	@Produce		json
 //	@Success		200	{array}		store.Session

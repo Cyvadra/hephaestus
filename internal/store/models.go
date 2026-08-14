@@ -146,6 +146,11 @@ type Session struct {
 	FlagArchived bool  `gorm:"default:false"`
 	FlagPinned   uint8 `gorm:"default:0"`
 
+	// LastMessageTime is the activity time of the current active message
+	// branch. It is independent from UpdatedAt so metadata writes do not
+	// affect conversation ordering.
+	LastMessageTime time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_session_last_message_time"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

@@ -112,6 +112,62 @@ func TestIntegration_AppendMessagesAndActivePath(t *testing.T) {
 	}
 }
 
+func TestIntegration_LastMessageTimeTracksActiveLeaf(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-last-message-time")
+
+	firstTime := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
+	lastTime := firstTime.Add(time.Minute)
+	saved, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "hello", Timestamp: firstTime},
+		{Role: "assistant", Content: "hi", Timestamp: lastTime},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+
+	var reloaded store.Session
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if !reloaded.LastMessageTime.Equal(lastTime) {
+		t.Fatalf("LastMessageTime = %s, want final active message time %s", reloaded.LastMessageTime, lastTime)
+	}
+
+	detachedTime := lastTime.Add(time.Hour)
+	if _, err := svc.AppendMessagesDetached(sess.ID, &saved[0].ID, []store.ChatMessage{{Role: "assistant", Content: "detached", Timestamp: detachedTime}}); err != nil {
+		t.Fatalf("AppendMessagesDetached: %v", err)
+	}
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload after detached append: %v", err)
+	}
+	if !reloaded.LastMessageTime.Equal(lastTime) {
+		t.Fatalf("detached append changed LastMessageTime to %s, want %s", reloaded.LastMessageTime, lastTime)
+	}
+
+	if _, err := svc.AppendMessagesAtLeaf(sess.ID, &saved[1].ID, &saved[0].ID, []store.ChatMessage{{Role: "user", Content: "stale", Timestamp: detachedTime}}); !errors.Is(err, session.ErrStaleActiveLeaf) {
+		t.Fatalf("expected ErrStaleActiveLeaf, got %v", err)
+	}
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload after stale append: %v", err)
+	}
+	if !reloaded.LastMessageTime.Equal(lastTime) {
+		t.Fatalf("stale append changed LastMessageTime to %s, want %s", reloaded.LastMessageTime, lastTime)
+	}
+
+	title := "renamed"
+	if _, err := svc.Update(sess.ID, session.Patch{Title: &title}); err != nil {
+		t.Fatalf("Update title: %v", err)
+	}
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload after title update: %v", err)
+	}
+	if !reloaded.LastMessageTime.Equal(lastTime) {
+		t.Fatalf("metadata update changed LastMessageTime to %s, want %s", reloaded.LastMessageTime, lastTime)
+	}
+}
+
 func TestIntegration_DeleteSessionRemovesChannelBindings(t *testing.T) {
 	db := openTestDB(t)
 	svc := session.New(db)

@@ -64,7 +64,7 @@ func (s *Service) Get(sessionID uint) (*store.Session, error) {
 // ListByProject returns sessions in one Project ordered for chat lists.
 func (s *Service) ListByProject(projectID uint) ([]store.Session, error) {
 	var sessions []store.Session
-	if err := s.db.Where("project_id = ?", projectID).Order("updated_at desc").Find(&sessions).Error; err != nil {
+	if err := s.db.Where("project_id = ?", projectID).Order("last_message_time desc, id desc").Find(&sessions).Error; err != nil {
 		return nil, err
 	}
 	return sessions, nil
@@ -102,12 +102,14 @@ func (s *Service) MessageAttachments(messageID uint) ([]store.MessageAttachment,
 // derived from the identity and persisted atomically with the session row.
 func (s *Service) CreateFromConcierge(concierge registry.Concierge, projectID uint, reasoningEffort string) (*store.Session, error) {
 	enableWebSearch := true
+	now := time.Now()
 	sess := &store.Session{
 		SourceConcierge: concierge.Name,
 		ProjectID:       projectID,
 		Settings:        datatypes.NewJSONType(SettingsFromConcierge(concierge)),
 		ReasoningEffort: reasoningEffort,
 		EnableWebSearch: &enableWebSearch,
+		LastMessageTime: now,
 	}
 	if err := s.db.Create(sess).Error; err != nil {
 		return nil, fmt.Errorf("session: create: %w", err)
@@ -215,7 +217,7 @@ func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMe
 			return fmt.Errorf("session: append message: %w", err)
 		}
 		if err := tx.Model(&store.Session{}).Where("id = ?", sessionID).
-			Update("active_leaf_message_id", msg.ID).Error; err != nil {
+			Updates(map[string]any{"active_leaf_message_id": msg.ID, "last_message_time": msg.Timestamp}).Error; err != nil {
 			return fmt.Errorf("session: advance active leaf: %w", err)
 		}
 		return nil
@@ -242,20 +244,20 @@ func (s *Service) AppendMessagesAtLeaf(sessionID uint, parentID, expectedLeaf *u
 // AppendMessagesAtLeafWithDeliveries is AppendMessagesAtLeaf with explicit
 // assistant file deliveries atomically attached to the final message.
 func (s *Service) AppendMessagesAtLeafWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, expectedLeaf, true, msgs, deliveries)
+	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, expectedLeaf, true, true, msgs, deliveries)
 }
 
 // AppendMessagesDetachedWithDeliveries persists an inactive branch and its
 // final-message attachments without changing the active leaf.
 func (s *Service) AppendMessagesDetachedWithDeliveries(sessionID, projectID uint, parentID *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, nil, false, msgs, deliveries)
+	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, nil, false, false, msgs, deliveries)
 }
 
 func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, expectedLeaf, checkActiveLeaf, msgs, nil)
+	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, expectedLeaf, true, checkActiveLeaf, msgs, nil)
 }
 
-func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
+func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, advanceActiveLeaf, checkActiveLeaf bool, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
 	if len(msgs) == 0 {
 		return nil, nil
 	}
@@ -284,20 +286,25 @@ func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parent
 			}
 			final.Attachments = attachments
 		}
-		result := tx.Model(&store.Session{}).Where("id = ?", sessionID)
-		if checkActiveLeaf {
-			if expectedLeaf == nil {
-				result = result.Where("active_leaf_message_id IS NULL")
-			} else {
-				result = result.Where("active_leaf_message_id = ?", *expectedLeaf)
+		if advanceActiveLeaf {
+			result := tx.Model(&store.Session{}).Where("id = ?", sessionID)
+			if checkActiveLeaf {
+				if expectedLeaf == nil {
+					result = result.Where("active_leaf_message_id IS NULL")
+				} else {
+					result = result.Where("active_leaf_message_id = ?", *expectedLeaf)
+				}
 			}
-		}
-		updated := result.Update("active_leaf_message_id", out[len(out)-1].ID)
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
-			return ErrStaleActiveLeaf
+			updated := result.Updates(map[string]any{
+				"active_leaf_message_id": out[len(out)-1].ID,
+				"last_message_time":      out[len(out)-1].Timestamp,
+			})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return ErrStaleActiveLeaf
+			}
 		}
 		return nil
 	})
@@ -436,7 +443,10 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 		} else {
 			updated = updated.Where("active_leaf_message_id = ?", *previousLeaf)
 		}
-		updated = updated.Update("active_leaf_message_id", edited.ID)
+		updated = updated.Updates(map[string]any{
+			"active_leaf_message_id": edited.ID,
+			"last_message_time":      edited.Timestamp,
+		})
 		if updated.Error != nil {
 			return fmt.Errorf("session: activate edited assistant message: %w", updated.Error)
 		}
@@ -464,7 +474,7 @@ func hasToolCalls(raw datatypes.JSON) bool {
 
 // Replace archives sessionID and creates its replacement in one transaction.
 func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
-	next := &store.Session{SourceConcierge: sourceConcierge, Settings: datatypes.NewJSONType(settings)}
+	next := &store.Session{SourceConcierge: sourceConcierge, Settings: datatypes.NewJSONType(settings), LastMessageTime: time.Now()}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		var previous store.Session
 		if err := tx.First(&previous, sessionID).Error; err != nil {
@@ -508,6 +518,7 @@ func (s *Service) fork(sessionID uint, leafID *uint) (*store.Session, error) {
 			ReasoningEffort: source.ReasoningEffort,
 			EnableWebSearch: copyBool(source.EnableWebSearch),
 			Title:           forkTitle(source.Title),
+			LastMessageTime: time.Now(),
 		}
 		if err := tx.Create(&fork).Error; err != nil {
 			return fmt.Errorf("session: create fork: %w", err)

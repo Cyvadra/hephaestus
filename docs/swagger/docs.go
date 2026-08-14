@@ -66,7 +66,7 @@ const docTemplate = `{
         },
         "/configurations/{kind}": {
             "get": {
-                "description": "Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, or jobs.",
+                "description": "Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, jobs, or constants.",
                 "produces": [
                     "application/json"
                 ],
@@ -489,7 +489,7 @@ const docTemplate = `{
         },
         "/sessions": {
             "get": {
-                "description": "Returns every session ordered by updated_at descending.",
+                "description": "Returns every session ordered by last_message_time descending.",
                 "produces": [
                     "application/json"
                 ],
@@ -775,90 +775,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/sessions/{id}/messages/stream": {
-            "post": {
-                "description": "Like sendMessage, including per-turn reasoning_effort and disabled_tools overrides, but streams typed assistant progress as Server-Sent Events (\"delta\", \"reasoning\", \"tool_call\", \"tool_output\", \"tool_result\", and \"session_updated\" events), finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
-                "consumes": [
-                    "application/json",
-                    "multipart/form-data"
-                ],
-                "produces": [
-                    "text/event-stream"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Send a message with streaming",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Message to send",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_server.sendMessageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/internal_server.errorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/sessions/{id}/messages/{messageID}/continue/stream": {
-            "post": {
-                "description": "Resumes generation at messageID, an incomplete assistant message on the session's active path, using its persisted content as the model's prefix. Streams only the newly generated suffix as Server-Sent Events, finishing with a \"done\" event carrying the same body sendMessage would return (or an \"error\" event).",
-                "produces": [
-                    "text/event-stream"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Resume an incomplete assistant reply with streaming",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Incomplete assistant message ID",
-                        "name": "messageID",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/internal_server.errorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/sessions/{id}/messages/{messageID}/edit": {
             "post": {
                 "description": "Creates an edited sibling of an assistant message without invoking the LLM, then makes the new message the session's active leaf.",
@@ -1024,49 +940,6 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/internal_server.errorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/sessions/{id}/regenerate/stream": {
-            "post": {
-                "description": "Like regenerate, but streams typed assistant progress as Server-Sent Events, finishing with a \"done\" event.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "text/event-stream"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "Regenerate the last reply with streaming",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Session ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Per-turn generation overrides",
-                        "name": "request",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/internal_server.sendMessageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    },
-                    "400": {
-                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/internal_server.errorResponse"
                         }
@@ -1327,6 +1200,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "constants": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "identities": {
                     "type": "array",
                     "items": {
@@ -1574,6 +1453,10 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "lastMessageTime": {
+                    "description": "LastMessageTime is the activity time of the current active message\nbranch. It is independent from UpdatedAt so metadata writes do not\naffect conversation ordering.",
+                    "type": "string"
                 },
                 "project": {
                     "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Project"
@@ -1886,7 +1769,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "active_leaf_message_id": {
-                    "description": "ActiveLeafMessageID, when set, switches the session onto this\nbranch before the message is processed (see design doc's session\nbranching semantics). Required for every continuation, per doc.",
+                    "description": "ActiveLeafMessageID selects the branch whose context the new turn\ncontinues from. SelectRoot instead starts the turn from an empty path.\nNeither selector changes session state until the turn is persisted.",
                     "type": "integer"
                 },
                 "disabled_tools": {
@@ -1897,6 +1780,9 @@ const docTemplate = `{
                 },
                 "reasoning_effort": {
                     "type": "string"
+                },
+                "select_root": {
+                    "type": "boolean"
                 },
                 "text": {
                     "type": "string"
