@@ -51,6 +51,11 @@ export const resources = {
           selectToolGroups: '选择工具组',
           plugins: '插件',
           selectPlugins: '选择插件',
+          sendShortcut: {
+            select: '选择发送快捷键',
+            enter: 'Enter 发送',
+            ctrlEnter: 'Ctrl+Enter 发送',
+          },
           stop: '停止',
           send: '发送',
         },
@@ -185,6 +190,7 @@ export const resources = {
           concierge: 'Identity · {{identity}}', notConfigured: '未设置', steps: '{{count}} 个步骤', workflows: '{{count}} 个工作流',
         },
         validation: { nameRequired: '名称不能为空', constantNameInvalid: '变量名只能包含字母、数字和下划线，且不能以数字开头', nicknameTooLong: '昵称不能超过 20 字', promptConstantsMissing: '以下提示词变量尚未定义：{{names}}', promptPlaceholdersInvalid: '以下提示词占位符格式无效：{{names}}' },
+        undefinedVariablesTitle: '设置变量默认值', undefinedVariablesBody: '以下变量尚未定义。设置默认值后将自动创建它们，并保存当前 Identity。', variableDefaultValue: '{{name}} 的默认值', createVariablesAndSave: '创建并保存',
       },
       project: {
         loading: '正在加载项目',
@@ -277,6 +283,11 @@ export const resources = {
           selectToolGroups: 'Select tool groups',
           plugins: 'Plugins',
           selectPlugins: 'Select plugins',
+          sendShortcut: {
+            select: 'Select send shortcut',
+            enter: 'Enter to send',
+            ctrlEnter: 'Ctrl+Enter to send',
+          },
           stop: 'Stop',
           send: 'Send',
         },
@@ -396,6 +407,7 @@ export const resources = {
           concierge: 'Identity · {{identity}}', notConfigured: 'Not configured', steps: '{{count}} steps', workflows: '{{count}} workflows',
         },
         validation: { nameRequired: 'Name is required', constantNameInvalid: 'Variable names may contain letters, numbers, and underscores, and cannot start with a number', nicknameTooLong: 'Nickname cannot exceed 20 characters', promptConstantsMissing: 'These prompt variables are undefined: {{names}}', promptPlaceholdersInvalid: 'These prompt placeholders are invalid: {{names}}' },
+        undefinedVariablesTitle: 'Set variable defaults', undefinedVariablesBody: 'These variables are undefined. Their defaults will be saved as new constants before this Identity is saved.', variableDefaultValue: 'Default value for {{name}}', createVariablesAndSave: 'Create and save',
       },
       project: {
         loading: 'Loading projects',

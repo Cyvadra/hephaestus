@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, replaceConfiguration } from '../api/client'
 import type { Configuration, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind } from '../api/types'
 import ConfigurationForm from './configuration/ConfigurationForm'
-import { CONFIGURATION_META, createEmptyConfiguration, getConfigurationMeta, type TranslationDescriptor, validateConfiguration } from './configuration/model'
+import { CONFIGURATION_META, createEmptyConfiguration, findUndefinedPromptVariables, getConfigurationMeta, type TranslationDescriptor, validateConfiguration } from './configuration/model'
 import { JobRunsPanel, WorkflowRunTester } from './configuration/RunTester'
 import type { ConfigurationLists } from './ConfigurationSidebar'
 
@@ -32,6 +32,8 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const [notification, setNotification] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteName, setDeleteName] = useState('')
+  const [undefinedVariables, setUndefinedVariables] = useState<string[] | null>(null)
+  const [variableDefaults, setVariableDefaults] = useState<Record<string, string>>({})
   const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], constants: [], tools: [], plugins: [], plugin_descriptions: {} })
 
   const notify = (type: 'error' | 'success', message: string) => setNotification({ type, message })
@@ -82,8 +84,8 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const validationDescriptors = currentValue == null ? {} : validateConfiguration(kind, currentValue, catalog.constants)
   const errors = Object.fromEntries(Object.entries(validationDescriptors).map(([field, descriptor]) => [field, renderDescriptor(t, descriptor)]))
 
-  const save = async () => {
-    if (currentValue == null || Object.keys(errors).length > 0) return
+  const persist = async () => {
+    if (currentValue == null) return
     setSubmitting(true)
     try {
       const saved = isNew ? await createConfiguration(kind, currentValue as never) : await replaceConfiguration(kind, name ?? currentValue.name, currentValue as never)
@@ -93,6 +95,53 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       notify('success', t('configuration.saved'))
       onDirtyChange(false)
       onSaved(kind, saved.name)
+    } catch (reason) {
+      notify('error', reason instanceof Error ? reason.message : t('configuration.saveFailed'))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const save = async () => {
+    if (currentValue == null || Object.keys(errors).length > 0) return
+    if (kind !== 'identities') {
+      await persist()
+      return
+    }
+    setSubmitting(true)
+    try {
+      const refreshedCatalog = await getConfigurationCatalog()
+      setCatalog(refreshedCatalog)
+      const identity = currentValue as ConfigurationByKind['identities']
+      const missing = findUndefinedPromptVariables(
+        [identity.system_prompt, ...identity.injected_messages.map(message => message.content)],
+        refreshedCatalog.constants,
+      )
+      if (missing.length > 0) {
+        setVariableDefaults(Object.fromEntries(missing.map(variable => [variable, ''])))
+        setUndefinedVariables(missing)
+        return
+      }
+    } catch (reason) {
+      notify('error', reason instanceof Error ? reason.message : t('configuration.saveFailed'))
+      return
+    } finally {
+      setSubmitting(false)
+    }
+    await persist()
+  }
+
+  const createVariablesAndSave = async () => {
+    if (undefinedVariables == null) return
+    setSubmitting(true)
+    try {
+      const latestCatalog = await getConfigurationCatalog()
+      const missing = undefinedVariables.filter(name => !latestCatalog.constants.includes(name))
+      await Promise.all(missing.map(name => createConfiguration('constants', { name, value: variableDefaults[name] ?? '' })))
+      setUndefinedVariables(null)
+      const refreshedCatalog = await getConfigurationCatalog()
+      setCatalog(refreshedCatalog)
+      await persist()
     } catch (reason) {
       notify('error', reason instanceof Error ? reason.message : t('configuration.saveFailed'))
     } finally {
@@ -129,6 +178,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       </footer>}
       {notification && <div className={`configuration-toast ${notification.type}`} role={notification.type === 'error' ? 'alert' : 'status'}><span>{notification.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}</span><p>{notification.message}</p><button type="button" aria-label={t('common.close')} onClick={() => setNotification(null)}><X size={15} /></button></div>}
       {deleteOpen && <div className="configuration-dialog-backdrop" role="presentation"><div className="configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-configuration-title"><h2 id="delete-configuration-title">{t('configuration.deleteTitle')}</h2><p>{t('configuration.deleteBody', { name })}</p><input autoFocus value={deleteName} onChange={event => setDeleteName(event.target.value)} placeholder={name ?? ''} /><div><button type="button" onClick={() => setDeleteOpen(false)}>{t('common.cancel')}</button><button className="danger" type="button" disabled={deleteName !== name || submitting} onClick={() => void remove()}>{t('configuration.confirmDelete')}</button></div></div></div>}
+      {undefinedVariables && <div className="configuration-dialog-backdrop" role="presentation"><div className="configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="undefined-variables-title"><h2 id="undefined-variables-title">{t('configuration.undefinedVariablesTitle')}</h2><p>{t('configuration.undefinedVariablesBody')}</p>{undefinedVariables.map((variable, index) => <label className="configuration-variable-default" key={variable}><span>{`{{${variable}}}`}</span><input autoFocus={index === 0} value={variableDefaults[variable] ?? ''} onChange={event => setVariableDefaults(defaults => ({ ...defaults, [variable]: event.target.value }))} aria-label={t('configuration.variableDefaultValue', { name: variable })} /></label>)}<div><button type="button" disabled={submitting} onClick={() => setUndefinedVariables(null)}>{t('common.cancel')}</button><button className="primary" type="button" disabled={submitting} onClick={() => void createVariablesAndSave()}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{t('configuration.createVariablesAndSave')}</button></div></div></div>}
     </div>
   )
 }

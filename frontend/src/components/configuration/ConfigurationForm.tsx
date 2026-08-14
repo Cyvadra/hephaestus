@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Eye, PenLine, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listProjects } from '../../api/client'
 import type {
@@ -182,16 +182,67 @@ function QuestionAnswerEditor({ question, answer, number, order, onQuestionChang
 function MarkdownMessageEditor({ className, label, showVariables = false, value, onChange, onNotify, ariaLabel, placeholder }: { className?: string; label?: string; showVariables?: boolean; value: string; onChange: (value: string) => void; onNotify?: Props['onNotify']; ariaLabel: string; placeholder: string }) {
   const { t } = useTranslation()
   const [preview, setPreview] = useState(true)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const pendingCaret = useRef<{ offset: number; clientY: number } | null>(null)
+  useLayoutEffect(() => {
+    if (preview) return
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.focus()
+    const caret = pendingCaret.current
+    pendingCaret.current = null
+    if (caret) {
+      textarea.setSelectionRange(caret.offset, caret.offset)
+      const scrollContainer = textarea.closest<HTMLElement>('.configuration-workspace-scroll')
+      if (scrollContainer) {
+        const caretY = measureTextareaCaretY(textarea, caret.offset)
+        scrollContainer.scrollTop += textarea.getBoundingClientRect().top + caretY - caret.clientY
+      }
+    }
+  }, [preview])
   return <div className={className}>
-    <div className="configuration-qa-answer-header">{label && <span>{label}</span>}{showVariables && onNotify && <PromptVariableChips onNotify={onNotify} />}<div className="configuration-markdown-message-actions"><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? t('configuration.form.editAnswer') : t('configuration.form.previewMarkdown')} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? t('configuration.form.edit') : t('configuration.form.preview')}</button></div></div>
-    {preview ? <div className="configuration-qa-preview">{value ? <Markdown>{value}</Markdown> : <span>{t('configuration.form.emptyMarkdownPreview')}</span>}</div> : <AutoResizeTextArea aria-label={ariaLabel} value={value} onChange={onChange} placeholder={placeholder} />}
+    <div className="configuration-qa-answer-header">{label && <span>{label}</span>}{showVariables && onNotify && <PromptVariableChips onNotify={onNotify} />}<div className="configuration-markdown-message-actions"><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? t('configuration.form.editAnswer') : t('configuration.form.previewMarkdown')} onMouseDown={event => event.preventDefault()} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? t('configuration.form.edit') : t('configuration.form.preview')}</button></div></div>
+    {preview ? <div className="configuration-qa-preview" onDoubleClick={event => { pendingCaret.current = { offset: findMarkdownOffsetAtPoint(event.currentTarget, event.clientX, event.clientY, value), clientY: event.clientY }; setPreview(false) }}>{value ? <Markdown>{value}</Markdown> : <span>{t('configuration.form.emptyMarkdownPreview')}</span>}</div> : <AutoResizeTextArea ref={textareaRef} aria-label={ariaLabel} value={value} onChange={onChange} onBlur={() => setPreview(true)} placeholder={placeholder} />}
   </div>
 }
 
-function AutoResizeTextArea({ value, onChange, ...props }: Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange'> & { value: string; onChange: (value: string) => void }) {
-  const ref = useRef<HTMLTextAreaElement>(null)
+function findMarkdownOffsetAtPoint(preview: HTMLElement, clientX: number, clientY: number, source: string): number {
+  const range = document.caretRangeFromPoint?.(clientX, clientY)
+  if (!range || !preview.contains(range.startContainer)) return 0
+  const prefix = document.createRange()
+  prefix.selectNodeContents(preview)
+  prefix.setEnd(range.startContainer, range.startOffset)
+  return mapRenderedTextOffsetToSource(prefix.toString(), source)
+}
+
+function mapRenderedTextOffsetToSource(renderedPrefix: string, source: string): number {
+  let sourceOffset = 0
+  for (const character of renderedPrefix) {
+    const matchedOffset = source.indexOf(character, sourceOffset)
+    if (matchedOffset < 0) break
+    sourceOffset = matchedOffset + character.length
+  }
+  return sourceOffset
+}
+
+function measureTextareaCaretY(textarea: HTMLTextAreaElement, offset: number): number {
+  const styles = window.getComputedStyle(textarea)
+  const mirror = document.createElement('div')
+  mirror.style.cssText = `position:absolute;visibility:hidden;white-space:pre-wrap;overflow-wrap:break-word;word-break:${styles.wordBreak};box-sizing:border-box;width:${textarea.clientWidth}px;padding:${styles.padding};border:${styles.border};font:${styles.font};letter-spacing:${styles.letterSpacing};line-height:${styles.lineHeight}`
+  mirror.textContent = textarea.value.slice(0, offset)
+  const marker = document.createElement('span')
+  marker.textContent = '|'
+  mirror.append(marker)
+  document.body.append(mirror)
+  const caretY = marker.offsetTop
+  mirror.remove()
+  return caretY
+}
+
+const AutoResizeTextArea = forwardRef<HTMLTextAreaElement, Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange'> & { value: string; onChange: (value: string) => void }>(function AutoResizeTextArea({ value, onChange, ...props }, externalRef) {
+  const internalRef = useRef<HTMLTextAreaElement>(null)
   const resize = () => {
-    const element = ref.current
+    const element = internalRef.current
     if (!element) return
     const scrollContainer = element.closest<HTMLElement>('.configuration-workspace-scroll')
     const scrollTop = scrollContainer?.scrollTop
@@ -200,8 +251,8 @@ function AutoResizeTextArea({ value, onChange, ...props }: Omit<React.TextareaHT
     if (scrollContainer && scrollTop !== undefined) scrollContainer.scrollTop = scrollTop
   }
   useLayoutEffect(resize, [value])
-  return <textarea {...props} ref={ref} className="configuration-auto-textarea" rows={1} value={value} onChange={event => onChange(event.target.value)} />
-}
+  return <textarea {...props} ref={element => { internalRef.current = element; if (typeof externalRef === 'function') externalRef(element); else if (externalRef) externalRef.current = element }} className="configuration-auto-textarea" rows={1} value={value} onChange={event => onChange(event.target.value)} />
+})
 
 function JsonEditor({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {
   const { t } = useTranslation()

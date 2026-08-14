@@ -48,19 +48,30 @@ export interface TranslationDescriptor {
 const PROMPT_PLACEHOLDER = /\{\{([^{}]*)\}\}/g
 const PROMPT_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
-function validatePromptTemplates(contents: string[], constants: string[]): TranslationDescriptor | null {
+function validatePromptTemplates(contents: string[], constants?: string[]): TranslationDescriptor | null {
   const missing = new Set<string>()
   const invalid = new Set<string>()
   for (const content of contents) {
     for (const match of content.matchAll(PROMPT_PLACEHOLDER)) {
       const name = match[1]
       if (!PROMPT_VARIABLE.test(name)) invalid.add(match[0])
-      else if (!constants.includes(name)) missing.add(name)
+      else if (constants != null && !constants.includes(name)) missing.add(name)
     }
   }
   if (invalid.size > 0) return { key: 'configuration.validation.promptPlaceholdersInvalid', values: { names: [...invalid].join(', ') } }
   if (missing.size > 0) return { key: 'configuration.validation.promptConstantsMissing', values: { names: [...missing].join(', ') } }
   return null
+}
+
+export function findUndefinedPromptVariables(contents: string[], constants: string[]): string[] {
+  const missing = new Set<string>()
+  for (const content of contents) {
+    for (const match of content.matchAll(PROMPT_PLACEHOLDER)) {
+      const name = match[1]
+      if (PROMPT_VARIABLE.test(name) && !constants.includes(name)) missing.add(name)
+    }
+  }
+  return [...missing]
 }
 
 export function configurationSummary(kind: ConfigurationKind, value: Configuration): TranslationDescriptor | null {
@@ -100,14 +111,14 @@ export function validateConfiguration(kind: ConfigurationKind, value: Configurat
 
 	if (kind === 'identities') {
 		const identity = value as ConfigurationByKind['identities']
-		const systemPromptError = validatePromptTemplates([identity.system_prompt], constants)
+    const systemPromptError = validatePromptTemplates([identity.system_prompt])
     if (systemPromptError) errors.systemPrompt = systemPromptError
-		const messagesError = validatePromptTemplates(identity.injected_messages.map(message => message.content), constants)
+    const messagesError = validatePromptTemplates(identity.injected_messages.map(message => message.content))
     if (messagesError) errors.injectedMessages = messagesError
   }
 	if (kind === 'impressions') {
 		const impression = value as ConfigurationByKind['impressions']
-		const messagesError = validatePromptTemplates(impression.messages.map(message => message.content), constants)
+    const messagesError = validatePromptTemplates(impression.messages.map(message => message.content), constants)
     if (messagesError) errors.messages = messagesError
   }
   return errors
