@@ -12,7 +12,6 @@ import type {
 } from '../../api/types'
 import { JOB_INPUT_PLACEHOLDERS, JOB_TRIGGER_ENV } from '../../api/types'
 import Markdown from '../Markdown'
-import MarkdownEditor from './MarkdownEditor'
 import { Field, NumberInput, Section, StringListEditor, SuggestionInput, TagsInput, TextArea, TextInput, Toggle } from './fields'
 
 interface Props {
@@ -52,7 +51,7 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
           <Field label="Temperature" htmlFor="temperature"><NumberInput id="temperature" nullable min={0} step={0.1} value={identity.temperature} onChange={temperature => set({ ...identity, temperature })} /></Field>
           <Field label="Top P" htmlFor="top-p"><NumberInput id="top-p" nullable min={0} max={1} step={0.05} value={identity.top_p} onChange={top_p => set({ ...identity, top_p })} /></Field>
         </Section>
-        <Section title={t('configuration.form.systemPromptSection')} description={t('configuration.form.markdownSupport')}><Field label={t('configuration.form.systemPrompt')} wide><MarkdownEditor value={identity.system_prompt} onChange={system_prompt => set({ ...identity, system_prompt })} /></Field></Section>
+        <Section title={t('configuration.form.systemPromptSection')} description={t('configuration.form.markdownSupport')}><Field label={t('configuration.form.systemPrompt')} wide><MarkdownMessageEditor className="configuration-identity-system-prompt" value={identity.system_prompt} onChange={system_prompt => set({ ...identity, system_prompt })} ariaLabel={t('configuration.form.systemPrompt')} placeholder={t('configuration.form.messagePlaceholder')} /></Field></Section>
         <Section title={t('configuration.form.injectedMessages')} description={t('configuration.form.injectedMessagesDescription')}><Field label={t('configuration.form.messages')} wide><MessageEditor values={identity.injected_messages} onChange={injected_messages => set({ ...identity, injected_messages })} /></Field></Section>
       </>
     }
@@ -123,7 +122,7 @@ function MessageEditor({ values, onChange }: { values: ConfigurationMessage[] | 
 
       return <article className="configuration-instruction-row" key={block.start}>
         <header><span>{message.role === 'system' ? t('configuration.form.instruction') : t('configuration.form.message', { count: block.start + 1 })}</span><select aria-label={t('configuration.form.messageRole', { count: block.start + 1 })} value={message.role} onChange={event => update(block.start, { role: event.target.value })}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option><option value="tool">tool</option></select>{order}<button type="button" aria-label={t('configuration.form.deleteMessage')} title={t('configuration.form.deleteMessage')} onClick={() => remove(block.start)}><Trash2 size={15} /></button></header>
-        <AutoResizeTextArea aria-label={t('configuration.form.messageContent', { count: block.start + 1 })} value={message.content} onChange={content => update(block.start, { content })} placeholder={t('configuration.form.messagePlaceholder')} />
+        {message.role === 'system' ? <MarkdownMessageEditor value={message.content} onChange={content => update(block.start, { content })} ariaLabel={t('configuration.form.messageContent', { count: block.start + 1 })} placeholder={t('configuration.form.messagePlaceholder')} /> : <AutoResizeTextArea aria-label={t('configuration.form.messageContent', { count: block.start + 1 })} value={message.content} onChange={content => update(block.start, { content })} placeholder={t('configuration.form.messagePlaceholder')} />}
       </article>
     })}
     <div className="configuration-message-actions"><button className="configuration-add-row" type="button" onClick={() => onChange([...messages, { role: 'system', content: '' }])}><Plus size={15} />{t('configuration.form.addInstruction')}</button><button className="configuration-add-row" type="button" onClick={() => onChange([...messages, { role: 'user', content: '' }, { role: 'assistant', content: '' }])}><Plus size={15} />{t('configuration.form.addConversation')}</button></div>
@@ -153,12 +152,20 @@ function MessageOrderControls({ index, total, onMove }: { index: number; total: 
 
 function QuestionAnswerEditor({ question, answer, number, order, onQuestionChange, onAnswerChange, onRemove }: { question: ConfigurationMessage; answer: ConfigurationMessage; number: number; order: React.ReactNode; onQuestionChange: (content: string) => void; onAnswerChange: (content: string) => void; onRemove: () => void }) {
   const { t } = useTranslation()
-  const [preview, setPreview] = useState(true)
   return <article className="configuration-qa-row">
     <header><span>{t('configuration.form.conversation', { count: number })}</span>{order}<button type="button" aria-label={t('configuration.form.deleteConversation')} title={t('configuration.form.deleteConversation')} onClick={onRemove}><Trash2 size={15} /></button></header>
     <label className="configuration-qa-question"><span>User</span><AutoResizeTextArea aria-label={t('configuration.form.userQuestion', { count: number })} value={question.content} onChange={onQuestionChange} placeholder={t('configuration.form.userQuestionPlaceholder')} /></label>
-    <div className="configuration-qa-answer"><div className="configuration-qa-answer-header"><span>Assistant</span><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? t('configuration.form.editAnswer') : t('configuration.form.previewMarkdown')} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? t('configuration.form.edit') : t('configuration.form.preview')}</button></div>{preview ? <div className="configuration-qa-preview">{answer.content ? <Markdown>{answer.content}</Markdown> : <span>{t('configuration.form.emptyMarkdownPreview')}</span>}</div> : <AutoResizeTextArea aria-label={t('configuration.form.assistantAnswer', { count: number })} value={answer.content} onChange={onAnswerChange} placeholder={t('configuration.form.assistantAnswerPlaceholder')} />}</div>
+    <MarkdownMessageEditor className="configuration-qa-answer" label="Assistant" value={answer.content} onChange={onAnswerChange} ariaLabel={t('configuration.form.assistantAnswer', { count: number })} placeholder={t('configuration.form.assistantAnswerPlaceholder')} />
   </article>
+}
+
+function MarkdownMessageEditor({ className, label, value, onChange, ariaLabel, placeholder }: { className?: string; label?: string; value: string; onChange: (value: string) => void; ariaLabel: string; placeholder: string }) {
+  const { t } = useTranslation()
+  const [preview, setPreview] = useState(true)
+  return <div className={className}>
+    <div className="configuration-qa-answer-header">{label && <span>{label}</span>}<div className="configuration-markdown-message-actions"><button type="button" className={preview ? 'active' : ''} aria-pressed={preview} title={preview ? t('configuration.form.editAnswer') : t('configuration.form.previewMarkdown')} onClick={() => setPreview(current => !current)}>{preview ? <PenLine size={14} /> : <Eye size={14} />}{preview ? t('configuration.form.edit') : t('configuration.form.preview')}</button></div></div>
+    {preview ? <div className="configuration-qa-preview">{value ? <Markdown>{value}</Markdown> : <span>{t('configuration.form.emptyMarkdownPreview')}</span>}</div> : <AutoResizeTextArea aria-label={ariaLabel} value={value} onChange={onChange} placeholder={placeholder} />}
+  </div>
 }
 
 function AutoResizeTextArea({ value, onChange, ...props }: Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange'> & { value: string; onChange: (value: string) => void }) {

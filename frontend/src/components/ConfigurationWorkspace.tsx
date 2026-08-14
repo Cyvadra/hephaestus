@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Database, ListTree, LoaderCircle, RotateCcw, Save, Trash2 } from 'lucide-react'
+import { AlertCircle, Check, Database, ListTree, LoaderCircle, RotateCcw, Save, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, replaceConfiguration } from '../api/client'
@@ -29,11 +29,18 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const [baseline, setBaseline] = useState('')
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
+  const [notification, setNotification] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteName, setDeleteName] = useState('')
-  const [notice, setNotice] = useState('')
   const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], tools: [], plugins: [], plugin_descriptions: {} })
+
+  const notify = (type: 'error' | 'success', message: string) => setNotification({ type, message })
+
+  useEffect(() => {
+    if (notification == null) return
+    const timeout = window.setTimeout(() => setNotification(null), 3000)
+    return () => window.clearTimeout(timeout)
+  }, [notification])
 
   useEffect(() => {
     let active = true
@@ -45,8 +52,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
 
   useEffect(() => {
     if (kind == null) { setValue(null); setValueSelectionKey(''); setBaseline(''); return }
-    setError('')
-    setNotice('')
+    setNotification(null)
     if (isNew) {
       const empty = createEmptyConfiguration(kind) as Configuration
       setValue(empty)
@@ -62,7 +68,7 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       setValue(result)
       setValueSelectionKey(selectionKey)
       setBaseline(JSON.stringify(result))
-    }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : t('configuration.loadFailed')) }).finally(() => { if (active) setLoading(false) })
+    }).catch(reason => { if (active) notify('error', reason instanceof Error ? reason.message : t('configuration.loadFailed')) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [kind, name, isNew, selectionKey, t])
 
@@ -79,17 +85,16 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const save = async () => {
     if (currentValue == null || Object.keys(errors).length > 0) return
     setSubmitting(true)
-    setError('')
     try {
       const saved = isNew ? await createConfiguration(kind, currentValue as never) : await replaceConfiguration(kind, name ?? currentValue.name, currentValue as never)
       setValue(saved)
       setValueSelectionKey(selectionKey)
       setBaseline(JSON.stringify(saved))
-      setNotice(t('configuration.saved'))
+      notify('success', t('configuration.saved'))
       onDirtyChange(false)
       onSaved(kind, saved.name)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t('configuration.saveFailed'))
+      notify('error', reason instanceof Error ? reason.message : t('configuration.saveFailed'))
     } finally {
       setSubmitting(false)
     }
@@ -98,13 +103,12 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
   const remove = async () => {
     if (name == null || deleteName !== name) return
     setSubmitting(true)
-    setError('')
     try {
       await deleteConfiguration(kind, name)
       setDeleteOpen(false)
       onDeleted()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t('configuration.deleteFailed'))
+      notify('error', reason instanceof Error ? reason.message : t('configuration.deleteFailed'))
     } finally {
       setSubmitting(false)
     }
@@ -115,18 +119,16 @@ export default function ConfigurationWorkspace({ kind, name, isNew, lists, selec
       <header className="configuration-workspace-header">
         <button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button>
         <div><span className="configuration-eyebrow"><Database size={14} />{t('configuration.databaseConfiguration')} · {t(`${meta.translationKey}.singular`)}</span><h1>{isNew ? t('configuration.createNamed', { name: t(`${meta.translationKey}.label`) }) : currentValue?.name ?? name}</h1><p>{t(`${meta.translationKey}.description`)}</p></div>
-        <div className="configuration-restart-note"><AlertCircle size={15} /><span>{t('configuration.changesApplyImmediately')}</span></div>
       </header>
       <div className="configuration-workspace-scroll">
-        {error && <div className="configuration-alert error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
-        {notice && <div className="configuration-alert success" role="status"><Check size={16} /><span>{notice}</span></div>}
         {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
       </div>
       {currentValue && !loading && <footer className="configuration-action-bar">
         <div>{!isNew && <button className="danger-quiet" type="button" onClick={() => { setDeleteName(''); setDeleteOpen(true) }}><Trash2 size={15} />{t('common.delete')}</button>}</div>
         <div><button type="button" disabled={!dirty || submitting} onClick={() => setValue(JSON.parse(baseline) as Configuration)}><RotateCcw size={15} />{t('common.reset')}</button><button className="primary" form="configuration-form" type="submit" disabled={!dirty || submitting || Object.keys(errors).length > 0}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{isNew ? t('common.create') : t('common.saveChanges')}</button></div>
       </footer>}
-      {deleteOpen && <div className="configuration-dialog-backdrop" role="presentation"><div className="configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-configuration-title"><h2 id="delete-configuration-title">{t('configuration.deleteTitle')}</h2><p>{t('configuration.deleteBody', { name })}</p>{error && <div className="configuration-dialog-error">{error}</div>}<input autoFocus value={deleteName} onChange={event => setDeleteName(event.target.value)} placeholder={name ?? ''} /><div><button type="button" onClick={() => setDeleteOpen(false)}>{t('common.cancel')}</button><button className="danger" type="button" disabled={deleteName !== name || submitting} onClick={() => void remove()}>{t('configuration.confirmDelete')}</button></div></div></div>}
+      {notification && <div className={`configuration-toast ${notification.type}`} role={notification.type === 'error' ? 'alert' : 'status'}><span>{notification.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}</span><p>{notification.message}</p><button type="button" aria-label={t('common.close')} onClick={() => setNotification(null)}><X size={15} /></button></div>}
+      {deleteOpen && <div className="configuration-dialog-backdrop" role="presentation"><div className="configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-configuration-title"><h2 id="delete-configuration-title">{t('configuration.deleteTitle')}</h2><p>{t('configuration.deleteBody', { name })}</p><input autoFocus value={deleteName} onChange={event => setDeleteName(event.target.value)} placeholder={name ?? ''} /><div><button type="button" onClick={() => setDeleteOpen(false)}>{t('common.cancel')}</button><button className="danger" type="button" disabled={deleteName !== name || submitting} onClick={() => void remove()}>{t('configuration.confirmDelete')}</button></div></div></div>}
     </div>
   )
 }
