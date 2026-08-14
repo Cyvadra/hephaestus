@@ -16,6 +16,78 @@ const (
 	MessageStatusIncomplete = "incomplete"
 )
 
+// ChatRunStatus is the durable lifecycle state of a background chat turn.
+type ChatRunStatus string
+
+const (
+	ChatRunPending     ChatRunStatus = "pending"
+	ChatRunRunning     ChatRunStatus = "running"
+	ChatRunSucceeded   ChatRunStatus = "succeeded"
+	ChatRunFailed      ChatRunStatus = "failed"
+	ChatRunCancelled   ChatRunStatus = "cancelled"
+	ChatRunInterrupted ChatRunStatus = "interrupted"
+)
+
+// IsTerminal reports whether a chat run can no longer receive progress.
+func (s ChatRunStatus) IsTerminal() bool {
+	return s == ChatRunSucceeded || s == ChatRunFailed || s == ChatRunCancelled || s == ChatRunInterrupted
+}
+
+// ChatRunKind identifies the pipeline entry point being executed.
+type ChatRunKind string
+
+const (
+	ChatRunMessage    ChatRunKind = "message"
+	ChatRunRegenerate ChatRunKind = "regenerate"
+	ChatRunContinue   ChatRunKind = "continue"
+)
+
+// ChatRunSnapshot is the terminal aggregate retained for quick inspection.
+type ChatRunSnapshot struct {
+	Sequence         uint64         `json:"sequence"`
+	Content          string         `json:"content"`
+	ReasoningContent string         `json:"reasoning_content"`
+	ToolCalls        datatypes.JSON `json:"tool_calls"`
+	Interaction      datatypes.JSON `json:"interaction"`
+	SessionUpdate    datatypes.JSON `json:"session_update"`
+}
+
+// ChatRunEvent is one durable progress update. Its sequence is monotonically
+// increasing within a run and permits exact replay after a reconnect.
+type ChatRunEvent struct {
+	ID        uint           `gorm:"primaryKey;autoIncrement"`
+	RunID     uint           `gorm:"not null;index:idx_chat_run_events_sequence,unique,priority:1"`
+	Sequence  uint64         `gorm:"not null;index:idx_chat_run_events_sequence,unique,priority:2"`
+	Type      string         `gorm:"size:32;not null"`
+	Payload   datatypes.JSON `gorm:"type:jsonb;not null"`
+	CreatedAt time.Time
+}
+
+// ChatRun represents one durable, background chat generation. A partial
+// unique index permits at most one pending/running run for each session.
+type ChatRun struct {
+	ID        uint          `gorm:"primaryKey;autoIncrement"`
+	SessionID uint          `gorm:"not null;index:idx_chat_runs_active_session,unique,where:status = 'pending' OR status = 'running';index"`
+	ProjectID uint          `gorm:"not null;index"`
+	Kind      ChatRunKind   `gorm:"size:32;not null"`
+	Status    ChatRunStatus `gorm:"size:32;not null;index"`
+
+	// Request stores immutable normalized turn input/options for diagnosis.
+	Request  datatypes.JSONType[map[string]any]  `gorm:"type:jsonb"`
+	Snapshot datatypes.JSONType[ChatRunSnapshot] `gorm:"type:jsonb"`
+	Result   datatypes.JSON                      `gorm:"type:jsonb"`
+
+	FinalMessageID *uint
+	Error          string `gorm:"type:text"`
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// Terminal implements runctrl.TerminalRow.
+func (r ChatRun) Terminal() bool { return r.Status.IsTerminal() }
+
 // SessionSettings is the mutable, per-session snapshot of which identity,
 // impressions, tool groups and plugins are active. It starts as a copy of
 // the source Concierge and may diverge from it over the session's lifetime.
