@@ -222,9 +222,9 @@ func (s *Server) downloadAttachment(c *gin.Context) {
 }
 
 type sendMessageRequest struct {
-	// ActiveLeafMessageID, when set, switches the session onto this
-	// branch before the message is processed (see design doc's session
-	// branching semantics). Required for every continuation, per doc.
+	// ActiveLeafMessageID selects the branch whose context the new turn
+	// continues from. SelectRoot instead starts the turn from an empty path.
+	// Neither selector changes session state until the turn is persisted.
 	ActiveLeafMessageID *uint    `json:"active_leaf_message_id"`
 	SelectRoot          bool     `json:"select_root"`
 	Text                string   `json:"text"`
@@ -234,19 +234,11 @@ type sendMessageRequest struct {
 
 func (r sendMessageRequest) turnOptions(onDelta func(chat.StreamEvent)) chat.TurnOptions {
 	return chat.TurnOptions{
-		ExpectedLeaf:    r.ActiveLeafMessageID,
+		SelectedLeaf:    r.ActiveLeafMessageID,
+		SelectRoot:      r.SelectRoot,
 		OnDelta:         onDelta,
 		ReasoningEffort: r.ReasoningEffort,
 		DisabledTools:   r.DisabledTools,
-	}
-}
-
-func (r *sendMessageRequest) normalizeActiveLeaf() {
-	if r.SelectRoot {
-		r.ActiveLeafMessageID = nil
-	}
-	if r.ActiveLeafMessageID != nil && *r.ActiveLeafMessageID == 0 {
-		r.ActiveLeafMessageID = nil
 	}
 }
 
@@ -273,6 +265,16 @@ func validateGenerationOptions(req *sendMessageRequest) error {
 		tools = append(tools, name)
 	}
 	req.DisabledTools = tools
+	return nil
+}
+
+func validateBranchSelection(req sendMessageRequest) error {
+	if req.SelectRoot && req.ActiveLeafMessageID != nil {
+		return errValidation("select_root and active_leaf_message_id cannot both be set")
+	}
+	if req.ActiveLeafMessageID != nil && *req.ActiveLeafMessageID == 0 {
+		return errValidation("invalid active leaf message id")
+	}
 	return nil
 }
 
@@ -394,15 +396,11 @@ func (s *Server) sendMessage(c *gin.Context) {
 	result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(nil))
 	if err != nil && result == nil {
 		rollbackUpload(uploadResult)
-		if errors.Is(err, session.ErrStaleActiveLeaf) {
-			writeStaleLeaf(c)
-			return
-		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
 			return
 		}
-		internalError(c, err)
+		writeTurnError(c, err)
 		return
 	}
 	commitUpload(uploadResult)
@@ -480,22 +478,13 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return 0, sendMessageRequest{}, nil, false
 	}
-	req.normalizeActiveLeaf()
+	if err := validateBranchSelection(req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return 0, sendMessageRequest{}, nil, false
+	}
 	if strings.TrimSpace(req.Text) == "" {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: "text is required"})
 		return 0, sendMessageRequest{}, nil, false
-	}
-	if req.SelectRoot {
-		if err := s.sessions.SelectRoot(sessionID); err != nil {
-			internalError(c, err)
-			return 0, sendMessageRequest{}, nil, false
-		}
-	}
-	if req.ActiveLeafMessageID != nil {
-		if err := s.sessions.SelectActiveLeaf(sessionID, *req.ActiveLeafMessageID); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-			return 0, sendMessageRequest{}, nil, false
-		}
 	}
 	if command.IsCommand(req.Text) {
 		if len(files) > 0 {
@@ -553,13 +542,11 @@ func (s *Server) bindMessageRequest(c *gin.Context, req *sendMessageRequest) ([]
 	req.Text = c.PostForm("text")
 	if leaf := c.PostForm("active_leaf_message_id"); leaf != "" {
 		parsed, err := strconv.ParseUint(leaf, 10, 64)
-		if err != nil {
+		if err != nil || parsed == 0 {
 			return nil, errValidation("invalid active leaf message id")
 		}
-		if parsed != 0 {
-			value := uint(parsed)
-			req.ActiveLeafMessageID = &value
-		}
+		value := uint(parsed)
+		req.ActiveLeafMessageID = &value
 	}
 	req.ReasoningEffort = c.PostForm("reasoning_effort")
 	req.SelectRoot = c.PostForm("select_root") == "true"
@@ -610,6 +597,10 @@ func (s *Server) regenerate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
+	if err := validateBranchSelection(req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
 
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	registrationID := s.commands.RegisterCancel(sessionID, cancel)
@@ -621,7 +612,7 @@ func (s *Server) regenerate(c *gin.Context) {
 			c.JSON(http.StatusRequestTimeout, errorResponse{Error: "stopped"})
 			return
 		}
-		internalError(c, err)
+		writeTurnError(c, err)
 		return
 	}
 
@@ -655,6 +646,10 @@ func (s *Server) streamRegenerate(c *gin.Context) {
 		}
 	}
 	if err := validateGenerationOptions(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if err := validateBranchSelection(req); err != nil {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
@@ -748,11 +743,7 @@ func (s *Server) streamTurn(c *gin.Context, sessionID uint, run func(ctx context
 
 	outcome := <-outcomes
 	if outcome.err != nil && outcome.result == nil {
-		if errors.Is(outcome.err, session.ErrStaleActiveLeaf) {
-			streamEvent("error", staleLeafMessage)
-		} else {
-			streamEvent("error", outcome.err.Error())
-		}
+		streamEvent("error", turnErrorMessage(outcome.err))
 		return
 	}
 	streamEvent("done", sendMessageResponse{
@@ -772,6 +763,32 @@ const staleLeafMessage = "session changed; refresh and retry"
 
 func writeStaleLeaf(c *gin.Context) {
 	c.JSON(http.StatusConflict, errorResponse{Error: staleLeafMessage})
+}
+
+func writeTurnError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, session.ErrStaleActiveLeaf):
+		writeStaleLeaf(c)
+	case errors.Is(err, session.ErrInvalidParent):
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "active leaf message does not belong to session"})
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+	default:
+		internalError(c, err)
+	}
+}
+
+func turnErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, session.ErrStaleActiveLeaf):
+		return staleLeafMessage
+	case errors.Is(err, session.ErrInvalidParent):
+		return "active leaf message does not belong to session"
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return "session not found"
+	default:
+		return "internal server error"
+	}
 }
 
 func internalError(c *gin.Context, err error) {

@@ -227,12 +227,13 @@ func keepKnownPlugins(names []string, reg *plugin.Registry, dirty *bool) []strin
 	return out
 }
 
-// TurnOptions carries the optional axes of a turn. ExpectedLeaf enables
-// optimistic-concurrency on HTTP continuations (the turn commits only if
-// that leaf is still active); OnDelta enables streaming of assistant
-// progress events. Either may be nil.
+// TurnOptions carries optional per-turn settings, an optional branch to
+// continue from, and a caller-provided optimistic concurrency guard. Branch
+// selection is read-only until the turn is committed.
 type TurnOptions struct {
 	ExpectedLeaf    *uint
+	SelectedLeaf    *uint
+	SelectRoot      bool
 	OnDelta         func(StreamEvent)
 	ReasoningEffort string
 	DisabledTools   []string
@@ -283,16 +284,27 @@ func (p *Pipeline) prepareTurn(ctx context.Context, sessionID uint, opts TurnOpt
 // user/assistant/tool messages as a single transaction. On an error or
 // cancellation, the latest records that were obtained are persisted, with
 // an incomplete assistant response marked accordingly. With
-// opts.ExpectedLeaf set, persistence is skipped when that leaf is no longer
-// active; with opts.OnDelta set, assistant content deltas are streamed as
-// they arrive while persistence still only happens once the turn completes.
+// with opts.OnDelta set, assistant content deltas are streamed as they arrive
+// while persistence still only happens once the turn completes.
 func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
 	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
 	if err != nil {
 		return nil, err
 	}
-	if !sameMessageID(prep.sess.ActiveLeafMessageID, opts.ExpectedLeaf) {
-		return nil, session.ErrStaleActiveLeaf
+	expectedLeaf := prep.sess.ActiveLeafMessageID
+	if opts.ExpectedLeaf != nil {
+		if !sameMessageID(prep.sess.ActiveLeafMessageID, opts.ExpectedLeaf) {
+			return nil, session.ErrStaleActiveLeaf
+		}
+		expectedLeaf = opts.ExpectedLeaf
+	}
+	if opts.SelectRoot {
+		prep.activePath = nil
+	} else if opts.SelectedLeaf != nil {
+		prep.activePath, err = p.sessions.PathAtLeaf(prep.sess, opts.SelectedLeaf)
+		if err != nil {
+			return nil, err
+		}
 	}
 	prep.identity, prep.toolset = applyTurnOptions(prep.identity, prep.toolset, opts)
 
@@ -320,7 +332,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	if err != nil {
 		return nil, err
 	}
-	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, opts.ExpectedLeaf, &editedUser, opts.OnDelta)
+	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, &editedUser, opts.OnDelta)
 	if result != nil && err == nil {
 		summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
 		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)

@@ -355,34 +355,6 @@ func insertChain(tx *gorm.DB, sessionID uint, parentID *uint, msgs []store.ChatM
 	return nil
 }
 
-// SelectActiveLeaf validates that leafID belongs to sessionID before making
-// it the active branch.
-func (s *Service) SelectActiveLeaf(sessionID, leafID uint) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var count int64
-		if err := tx.Model(&store.ChatMessage{}).Where("id = ? AND session_id = ?", leafID, sessionID).Count(&count).Error; err != nil {
-			return err
-		}
-		if count == 0 {
-			return ErrInvalidParent
-		}
-		return tx.Model(&store.Session{}).Where("id = ?", sessionID).Update("active_leaf_message_id", leafID).Error
-	})
-}
-
-// SelectRoot makes the root of the session's message tree active, so the next
-// appended message starts a separate root branch.
-func (s *Service) SelectRoot(sessionID uint) error {
-	result := s.db.Model(&store.Session{}).Where("id = ?", sessionID).Update("active_leaf_message_id", nil)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
 // EditAssistantAtLeaf creates an edited sibling of messageID and makes it
 // the active leaf. The original message and all of its descendants remain
 // unchanged and reachable through the session's message tree.
@@ -674,6 +646,23 @@ func (s *Service) ActivePath(sess store.Session) ([]store.ChatMessage, error) {
 		return nil, err
 	}
 	return walkActivePath(all, sess.ActiveLeafMessageID)
+}
+
+// PathAtLeaf returns the root-to-leaf path for leafID after confirming that
+// the message belongs to sess. It does not change the session's active leaf.
+func (s *Service) PathAtLeaf(sess store.Session, leafID *uint) ([]store.ChatMessage, error) {
+	if leafID == nil {
+		return nil, nil
+	}
+	all, err := loadMessages(s.db, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	path, err := walkActivePath(all, leafID)
+	if err != nil {
+		return nil, ErrInvalidParent
+	}
+	return path, nil
 }
 
 // loadMessages loads every ChatMessage of sessionID in ascending id order.
