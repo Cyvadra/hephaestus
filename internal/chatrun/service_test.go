@@ -92,6 +92,17 @@ func TestIsActiveRunConflictRecognizesPostgresConstraint(t *testing.T) {
 	}
 }
 
+func TestActiveForSessionReturnsNotFoundWhenNoRunIsActive(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+
+	_, err := svc.ActiveForSession(projectID)
+	if !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("expected no active run to return ErrRunNotFound, got %v", err)
+	}
+}
+
 func TestStartRejectsConcurrentRunForSession(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()

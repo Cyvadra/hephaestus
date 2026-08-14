@@ -232,11 +232,12 @@ func (s *Service) Get(runID uint) (*store.ChatRun, error) {
 // ActiveForSession returns the pending or running run for a session.
 func (s *Service) ActiveForSession(sessionID uint) (*store.ChatRun, error) {
 	var run store.ChatRun
-	if err := s.db.Where("session_id = ? AND status IN ?", sessionID, []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).First(&run).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrRunNotFound
-		}
-		return nil, fmt.Errorf("chatrun: active session run: %w", err)
+	result := s.db.Where("session_id = ? AND status IN ?", sessionID, []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).Limit(1).Find(&run)
+	if result.Error != nil {
+		return nil, fmt.Errorf("chatrun: active session run: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, ErrRunNotFound
 	}
 	return &run, nil
 }
