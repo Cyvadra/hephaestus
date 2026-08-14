@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Eye, PenLine, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listProjects } from '../../api/client'
 import type {
@@ -193,11 +193,14 @@ function AutoResizeTextArea({ value, onChange, ...props }: Omit<React.TextareaHT
   const resize = () => {
     const element = ref.current
     if (!element) return
+    const scrollContainer = element.closest<HTMLElement>('.configuration-workspace-scroll')
+    const scrollTop = scrollContainer?.scrollTop
     element.style.height = 'auto'
     element.style.height = `${element.scrollHeight}px`
+    if (scrollContainer && scrollTop !== undefined) scrollContainer.scrollTop = scrollTop
   }
-  useEffect(resize, [value])
-  return <textarea {...props} ref={ref} className="configuration-auto-textarea" rows={1} value={value} onChange={event => { onChange(event.target.value); resize() }} />
+  useLayoutEffect(resize, [value])
+  return <textarea {...props} ref={ref} className="configuration-auto-textarea" rows={1} value={value} onChange={event => onChange(event.target.value)} />
 }
 
 function JsonEditor({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {

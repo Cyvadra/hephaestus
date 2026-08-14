@@ -62,8 +62,10 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
   return (
     <>
       <div className="configuration-sidebar-header">
-        <button type="button" aria-label={t('app.returnToChat')} title={t('app.returnToChat')} onClick={onBack}><ChevronLeft size={17} /></button>
-        <div><strong>{t('app.configurationManagement')}</strong><span>{t('configuration.registryConsole')}</span></div>
+        <button type="button" aria-label={t('app.returnToChat')} title={t('app.returnToChat')} onClick={onBack}>
+          <ChevronLeft size={17} />
+          <div><strong>{t('app.configurationManagement')}</strong><span>{t('configuration.registryConsole')}</span></div>
+        </button>
       </div>
       <div className="configuration-search"><Search aria-hidden="true" size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('configuration.search')} /></div>
       <div className="configuration-sidebar-list">

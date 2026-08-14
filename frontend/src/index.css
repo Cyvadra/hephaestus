@@ -7978,11 +7978,11 @@ body[data-ds-dark-theme] {
 /* Database configuration workspace */
 .sidebar.configuration-mode { padding-bottom: 10px }
 .sidebar.configuration-mode .sidebar-brand { margin-bottom: 7px }
-.configuration-sidebar-header { display: flex; align-items: center; gap: 8px; padding: 5px 3px 11px }
+.configuration-sidebar-header { padding: 0 }
 .configuration-sidebar-header > button,.configuration-group-heading button,.configuration-repeat-row button,.configuration-instruction-row button,.configuration-qa-row button,.configuration-binding-row button { display: grid; place-items: center; flex: none; padding: 0; color: var(--dsw-alias-label-secondary); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
-.configuration-sidebar-header > button { width: 28px; height: 28px }
+.configuration-sidebar-header > button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 5px 3px 11px; text-align: left }
 .configuration-sidebar-header > button:hover,.configuration-group-heading button:hover,.configuration-repeat-row button:hover,.configuration-instruction-row button:hover,.configuration-qa-row button:hover,.configuration-binding-row button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover) }
-.configuration-sidebar-header > div { display: grid; min-width: 0 }
+.configuration-sidebar-header > button > div { display: grid; min-width: 0 }
 .configuration-sidebar-header strong { font-size: 13px; line-height: 18px; font-weight: 600 }
 .configuration-sidebar-header span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px; text-transform: uppercase }
 .configuration-search { display: flex; align-items: center; gap: 7px; height: 34px; margin: 0 0 10px; padding: 0 9px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px }

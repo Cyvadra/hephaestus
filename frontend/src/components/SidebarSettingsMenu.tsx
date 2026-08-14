@@ -30,17 +30,12 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
         aria-label={t('app.settings')}
         aria-expanded={menu.open}
         aria-haspopup="menu"
-        onClick={menu.togglePinned}
+        onClick={openConfiguration}
         onFocus={menu.pinOpen}
       >
         <Settings aria-hidden="true" size={16} strokeWidth={1.7} />
       </button>
       {menu.open && <div className="sidebar-settings-popover" role="menu" aria-label={t('app.settings')}>
-        <button className="sidebar-settings-option" type="button" role="menuitem" onClick={openConfiguration}>
-          <Settings aria-hidden="true" size={15} />
-          <span>{configurationLabel}</span>
-        </button>
-        <div className="sidebar-settings-divider" />
         <div className="sidebar-settings-heading"><Globe2 aria-hidden="true" size={14} />{t('app.language')}</div>
         {supportedLanguages.map(language => <button
           className="sidebar-settings-option"
@@ -53,6 +48,11 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
           <span>{t(`app.languages.${language}`)}</span>
           {i18n.resolvedLanguage === language && <Check aria-label={t('app.selectedLanguage', { language: t(`app.languages.${language}`) })} size={15} />}
         </button>)}
+        <div className="sidebar-settings-divider" />
+        <button className="sidebar-settings-option" type="button" role="menuitem" onClick={openConfiguration}>
+          <Settings aria-hidden="true" size={15} />
+          <span>{configurationLabel}</span>
+        </button>
       </div>}
     </div>
   )
