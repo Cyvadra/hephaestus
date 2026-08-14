@@ -83,6 +83,36 @@ export interface StreamToolCall {
   output_carriage_return?: boolean
 }
 
+export type ChatRunKind = 'message' | 'regenerate' | 'continue'
+export type ChatRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+
+export interface ChatRunSnapshot {
+  sequence: number
+  content: string
+  reasoning_content: string
+  tool_calls: StreamToolCall[] | null
+  interaction: InteractionRequest | null
+  session_update: Session | null
+}
+
+export interface ChatRun {
+  id: number
+  session_id: number
+  project_id: number
+  kind: ChatRunKind
+  status: ChatRunStatus
+  final_message_id?: number
+  error?: string
+  started_at?: string
+  finished_at?: string
+}
+
+export interface ChatRunDone {
+  status: ChatRunStatus
+  error?: string
+  response: SendMessageResponse
+}
+
 export interface InteractionRequest {
   id: number
   session_id: number

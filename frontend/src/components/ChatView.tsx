@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
 import { UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { createSession, editAssistantMessage, forkSessionAtMessage, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
-import { streamContinue, streamMessage, streamRegenerate, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
+import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
+import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
+import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer from './Composer'
@@ -81,11 +81,14 @@ async function consumeStream(
     setStreamingText: (updater: (text: string) => string) => void
     setStreamingActivities: (updater: (activities: StreamActivity[]) => StreamActivity[]) => void
     onSessionUpdated?: (session: Session) => void
-    onDone: (data: SendMessageResponse) => void | Promise<void>
+    onSnapshot?: (run: ChatRun) => void
+      onDone: (data: SendMessageResponse) => void | Promise<void>
     onError: (message: string) => void
+    isCurrent?: () => boolean
   },
 ) {
   for await (const ev of gen) {
+    if (handlers.isCurrent && !handlers.isCurrent()) continue
     if (ev.type === 'delta') {
       handlers.setStreamingText(t => t + ev.data)
     } else if (ev.type === 'reasoning') {
@@ -97,8 +100,11 @@ async function consumeStream(
     } else if (ev.type === 'ask_permission') {
       handlers.setStreamingActivities(current => [...current, { type: 'permission', sequence: ev.sequence, request: ev.data }])
       notifyPermissionRequest(ev.data)
+    } else if (ev.type === 'snapshot') {
+      handlers.onSnapshot?.(ev.data)
     } else if (ev.type === 'done') {
-      await handlers.onDone(ev.data)
+      if (ev.data.status === 'succeeded') await handlers.onDone(ev.data.response)
+      else if (!signal.aborted) handlers.onError(ev.data.error || 'chat generation failed')
     } else if (ev.type === 'error') {
       if (!signal.aborted) handlers.onError(ev.data)
     }
@@ -134,22 +140,45 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
+  const streamSessionRef = useRef<number | null>(null)
+  const currentSessionRef = useRef<number | null>(sessionId)
+	const viewEpochRef = useRef(0)
   const shouldAutoScrollRef = useRef(true)
   const initializedOptionsSessionRef = useRef<number | null>(null)
   const createdSessionRef = useRef<number | null>(null)
   const cancelledTitleEditRef = useRef(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const isPromotingDraftSession = sessionId != null && streamSessionRef.current === sessionId
+    if (isPromotingDraftSession) {
+      currentSessionRef.current = sessionId
+      setResolvedSessionId(sessionId)
+      return
+    }
+
+		viewEpochRef.current++
+    currentSessionRef.current = sessionId
+    if (streamSessionRef.current != null && streamSessionRef.current !== sessionId) {
+      streamAbortRef.current?.abort()
+      streamAbortRef.current = null
+      streamSessionRef.current = null
+    }
     setResolvedSessionId(sessionId)
     setActiveSession(null)
+    setStreaming(false)
+    setStreamingText('')
+    setStreamingActivities([])
+    setOptimisticUserMessage(null)
+    setRegeneratingMessageId(null)
+    setContinuingMessageId(null)
     initializedOptionsSessionRef.current = null
     createdSessionRef.current = null
     shouldAutoScrollRef.current = true
   }, [sessionId])
 
-  const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal) => {
+  const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal, epoch = viewEpochRef.current) => {
     const h = await getHistory(targetSessionId, signal)
-    if (signal?.aborted) return
+    if (signal?.aborted || epoch !== viewEpochRef.current) return
     setActiveSession(h.session)
     setMessages(h.messages)
     setLocalLeafId(h.session.ActiveLeafMessageID)
@@ -178,6 +207,44 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setUploadWarnings([])
     return () => controller.abort()
   }, [resolvedSessionId, loadHistory])
+
+  useEffect(() => {
+    if (resolvedSessionId == null) return
+    if (streamAbortRef.current != null && streamSessionRef.current === resolvedSessionId) return
+    let disposed = false
+    const controller = new AbortController()
+    const epoch = viewEpochRef.current
+    const isCurrent = () => !disposed && !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
+    void getActiveChatRun(resolvedSessionId).then(async run => {
+    if (!isCurrent()) return
+      setStreaming(true)
+      streamAbortRef.current = controller
+      streamSessionRef.current = resolvedSessionId
+      await consumeStream(streamRun(run.id, controller.signal), controller.signal, {
+        setStreamingText,
+        setStreamingActivities,
+        onSessionUpdated,
+        onDone: async () => {
+			if (isCurrent()) await loadHistory(resolvedSessionId, undefined, epoch)
+        },
+        onError: setError,
+			isCurrent,
+      })
+    }).catch((cause: unknown) => {
+      if (!disposed && !controller.signal.aborted && !(cause instanceof Error && cause.message === 'no active chat run')) setError(String(cause))
+    }).finally(() => {
+			if (isCurrent()) {
+        setStreaming(false)
+        setStreamingText('')
+        setStreamingActivities([])
+      }
+    })
+    return () => {
+      disposed = true
+      controller.abort()
+      if (streamAbortRef.current === controller) streamAbortRef.current = null
+    }
+  }, [resolvedSessionId, loadHistory, onSessionUpdated])
 
   useEffect(() => {
     void listConcierges(project ?? undefined).then(items => {
@@ -384,6 +451,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const controller = new AbortController()
     streamAbortRef.current = controller
     let targetSessionId = resolvedSessionId
+    streamSessionRef.current = targetSessionId
+		const epoch = viewEpochRef.current
+		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === targetSessionId
     let switchedSession = false
     try {
       if (targetSessionId == null) {
@@ -397,6 +467,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         initializedOptionsSessionRef.current = created.ID
         createdSessionRef.current = created.ID
         setResolvedSessionId(created.ID)
+        streamSessionRef.current = created.ID
         onSessionCreated?.(created.ID)
         const updated = await updateSession(created.ID, {
           reasoningEffort: generationOptions.reasoningEffort,
@@ -419,21 +490,25 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           }
           const uploads = data.metadata?.uploads as UploadResult | undefined
           setUploadWarnings(uploads?.warnings ?? [])
-          await loadHistory(targetSessionId!)
+          if (!isCurrent()) return
+          await loadHistory(targetSessionId!, undefined, epoch)
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
+			isCurrent,
       })
     } catch (cause) {
       if (leafOverride !== undefined) setLocalLeafId(previousLeafId)
       if (!controller.signal.aborted) setError(String(cause))
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
-    if (!switchedSession && targetSessionId != null) await loadHistory(targetSessionId)
-      setStreaming(false)
-      setStreamingText('')
-      setStreamingActivities([])
-      setOptimisticUserMessage(null)
+      if (!switchedSession && targetSessionId != null && currentSessionRef.current === targetSessionId) await loadHistory(targetSessionId)
+      if (currentSessionRef.current === targetSessionId) {
+        setStreaming(false)
+        setStreamingText('')
+        setStreamingActivities([])
+        setOptimisticUserMessage(null)
+      }
     }
   }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, t])
 
@@ -448,6 +523,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     shouldAutoScrollRef.current = true
     const controller = new AbortController()
     streamAbortRef.current = controller
+    streamSessionRef.current = resolvedSessionId
+		const epoch = viewEpochRef.current
+		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
     try {
       const gen = streamRegenerate(resolvedSessionId, generationOptions, controller.signal)
       await consumeStream(gen, controller.signal, {
@@ -455,20 +533,24 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
-          await loadHistory(resolvedSessionId)
+          if (!isCurrent()) return
+          await loadHistory(resolvedSessionId, undefined, epoch)
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
+			isCurrent,
       })
     } catch (cause) {
       if (!controller.signal.aborted) setError(String(cause))
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
-      await loadHistory(resolvedSessionId)
-      setStreaming(false)
-      setStreamingText('')
-      setStreamingActivities([])
-      setRegeneratingMessageId(null)
+      if (currentSessionRef.current === resolvedSessionId) {
+        await loadHistory(resolvedSessionId)
+        setStreaming(false)
+        setStreamingText('')
+        setStreamingActivities([])
+        setRegeneratingMessageId(null)
+      }
     }
   }, [resolvedSessionId, loadHistory, onSessionUpdated, generationOptions])
 
@@ -483,6 +565,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     shouldAutoScrollRef.current = true
     const controller = new AbortController()
     streamAbortRef.current = controller
+    streamSessionRef.current = resolvedSessionId
+		const epoch = viewEpochRef.current
+		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
     try {
       const gen = streamContinue(resolvedSessionId, messageId, controller.signal)
       await consumeStream(gen, controller.signal, {
@@ -490,20 +575,24 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
-          await loadHistory(resolvedSessionId)
+          if (!isCurrent()) return
+          await loadHistory(resolvedSessionId, undefined, epoch)
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
+			isCurrent,
       })
     } catch (cause) {
       if (!controller.signal.aborted) setError(String(cause))
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
-      await loadHistory(resolvedSessionId)
-      setStreaming(false)
-      setStreamingText('')
-      setStreamingActivities([])
-      setContinuingMessageId(null)
+      if (currentSessionRef.current === resolvedSessionId) {
+        await loadHistory(resolvedSessionId)
+        setStreaming(false)
+        setStreamingText('')
+        setStreamingActivities([])
+        setContinuingMessageId(null)
+      }
     }
   }, [resolvedSessionId, loadHistory, onSessionUpdated])
 
@@ -537,11 +626,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const handleStop = useCallback(async () => {
     if (resolvedSessionId == null) return
     try {
-      await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: '/stop' }),
-      })
+      await cancelActiveChatRun(resolvedSessionId)
     } catch (cause) {
       setError(String(cause))
     }
@@ -772,11 +857,26 @@ function appendReasoningActivity(current: StreamActivity[], sequence: number, co
 
 function mergeToolActivity(current: StreamActivity[], sequence: number, incoming: StreamToolCall): StreamActivity[] {
   const maxDisplayedToolOutput = 1024 * 1024
-  const index = current.findIndex(activity =>
-    activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && (
-      activity.toolCall.index === incoming.index || Boolean(incoming.id && activity.toolCall.id === incoming.id)
-    ),
+  let index = current.findIndex(activity =>
+    activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && Boolean(incoming.id && activity.toolCall.id === incoming.id),
   )
+  if (index === -1) {
+    index = current.findIndex(activity =>
+      activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && activity.toolCall.index === incoming.index,
+    )
+  }
+  if (index === -1) {
+    // Providers may stream a tool's name and id after its initial argument
+    // fragments. Until then, associate the fragment with the latest pending
+    // call in this LLM response rather than rendering one card per chunk.
+    for (let currentIndex = current.length - 1; currentIndex >= 0; currentIndex--) {
+      const activity = current[currentIndex]
+      if (activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && activity.toolCall.status === 'calling') {
+        index = currentIndex
+        break
+      }
+    }
+  }
   if (index === -1) return [...current, { type: 'tool', sequence, toolCall: incoming }]
 
   const existing = current[index]

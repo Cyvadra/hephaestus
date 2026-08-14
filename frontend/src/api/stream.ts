@@ -1,9 +1,5 @@
-import type { GenerationOptions, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
-
-const generationPayload = (options: GenerationOptions) => ({
-  reasoning_effort: options.reasoningEffort,
-  disabled_tools: options.webSearch ? [] : ['web_search', 'web_fetch'],
-})
+import { startChatRun, startChatRunWithFiles } from './client'
+import type { ChatRun, ChatRunDone, GenerationOptions, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
 
 export type StreamEvent =
   | { sequence: number; type: 'delta'; data: string }
@@ -13,8 +9,9 @@ export type StreamEvent =
   | { sequence: number; type: 'tool_result'; data: StreamToolCall }
   | { sequence: number; type: 'session_updated'; data: Session }
   | { sequence: number; type: 'ask_permission'; data: InteractionRequest }
-  | { sequence: number; type: 'done'; data: SendMessageResponse }
+  | { sequence: number; type: 'done'; data: ChatRunDone }
   | { sequence: number; type: 'error'; data: string }
+  | { sequence: number; type: 'snapshot'; data: ChatRun }
 
 interface EventEnvelope {
   sequence: number
@@ -27,7 +24,7 @@ function parseEnvelope(raw: string): EventEnvelope {
     typeof parsed !== 'object' ||
     parsed === null ||
     !Number.isSafeInteger((parsed as EventEnvelope).sequence) ||
-    (parsed as EventEnvelope).sequence < 1 ||
+    (parsed as EventEnvelope).sequence < 0 ||
     !('data' in parsed)
   ) {
     throw new Error('Invalid SSE event envelope')
@@ -40,6 +37,10 @@ function requireString(data: unknown): string {
   return data
 }
 
+function isChatRun(value: ChatRun | SendMessageResponse): value is ChatRun {
+  return typeof (value as ChatRun).id === 'number'
+}
+
 // EventSource only supports GET; we need POST, so we use fetch + ReadableStream
 // and parse the SSE wire format manually.
 export async function* streamMessage(
@@ -50,45 +51,30 @@ export async function* streamMessage(
   options: GenerationOptions = { reasoningEffort: 'high', webSearch: false },
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
-  const body = files.length > 0
-    ? (() => {
-        const form = new FormData()
-        form.set('text', text)
-        if (activeLeafMessageId === null) form.set('select_root', 'true')
-        else if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId))
-        form.set('reasoning_effort', options.reasoningEffort)
-        generationPayload(options).disabled_tools.forEach(tool => form.append('disabled_tools', tool))
-        files.forEach(file => form.append('files', file))
-        return form
-      })()
-    : JSON.stringify({
-        text,
-        ...(activeLeafMessageId === null ? { select_root: true } : {}),
-        ...(activeLeafMessageId === undefined || activeLeafMessageId === null ? {} : { active_leaf_message_id: activeLeafMessageId }),
-        ...generationPayload(options),
-      })
-  yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/stream`, {
-    method: 'POST',
-    headers: files.length > 0 ? undefined : { 'Content-Type': 'application/json' },
-    body,
-    signal,
-  })
+  const run = files.length === 0
+    ? await startChatRun(sessionId, 'message', text, options, undefined, activeLeafMessageId)
+    : await startChatRunWithFiles(sessionId, text, files, options, activeLeafMessageId)
+  if (!isChatRun(run)) {
+    yield { sequence: 0, type: 'done', data: { status: 'succeeded', response: run } }
+    return
+  }
+  yield* streamRun(run.id, signal)
 }
 
 export async function* streamRegenerate(sessionId: number, options: GenerationOptions, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
-  yield* streamResponse(`/api/v1/sessions/${sessionId}/regenerate/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(generationPayload(options)),
-    signal,
-  })
+  const run = await startChatRun(sessionId, 'regenerate', '', options)
+  if (!isChatRun(run)) return
+  yield* streamRun(run.id, signal)
 }
 
 export async function* streamContinue(sessionId: number, messageId: number, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
-   yield* streamResponse(`/api/v1/sessions/${sessionId}/messages/${messageId}/continue/stream`, {
-    method: 'POST',
-    signal,
-  })
+  const run = await startChatRun(sessionId, 'continue', '', { reasoningEffort: 'high', webSearch: false }, messageId)
+  if (!isChatRun(run)) return
+  yield* streamRun(run.id, signal)
+}
+
+export async function* streamRun(runId: number, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
+  yield* streamResponse(`/api/v1/chat-runs/${runId}/stream`, { signal })
 }
 
 async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {
@@ -99,19 +85,12 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
     throw new Error(body.error ?? res.statusText)
   }
 
-  const contentType = res.headers.get('content-type') ?? ''
-  if (!contentType.includes('text/event-stream')) {
-    const payload: SendMessageResponse = await res.json()
-    yield { sequence: 0, type: 'done', data: payload }
-    return
-  }
-
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
   let eventName = ''
   let dataLines: string[] = []
-  let expectedSequence = 1
+  let expectedSequence = 0
 
   const dispatch = async function* (): AsyncGenerator<StreamEvent> {
     if (!eventName && dataLines.length === 0) {
@@ -130,20 +109,22 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
     }
     expectedSequence++
 
-    if (eventName === 'delta') {
-      yield { sequence: envelope.sequence, type: 'delta', data: requireString(envelope.data) }
-    } else if (eventName === 'reasoning') {
-      yield { sequence: envelope.sequence, type: 'reasoning', data: requireString(envelope.data) }
+    const progress = envelope.data as { type?: string, text?: string, tool_call?: StreamToolCall, session?: Session, interaction?: InteractionRequest }
+    if (eventName === 'snapshot') {
+      yield { sequence: envelope.sequence, type: 'snapshot', data: envelope.data as ChatRun }
+    } else if (eventName === 'delta' || eventName === 'reasoning') {
+      yield { sequence: envelope.sequence, type: eventName, data: requireString(progress.text) }
     } else if (eventName === 'tool_call' || eventName === 'tool_output' || eventName === 'tool_result') {
-      yield { sequence: envelope.sequence, type: eventName, data: envelope.data as StreamToolCall }
+      if (!progress.tool_call) throw new Error('Invalid SSE tool event data')
+      yield { sequence: envelope.sequence, type: eventName, data: progress.tool_call }
     } else if (eventName === 'session_updated') {
-      yield { sequence: envelope.sequence, type: 'session_updated', data: envelope.data as Session }
-	} else if (eventName === 'ask_permission') {
-	  yield { sequence: envelope.sequence, type: 'ask_permission', data: envelope.data as InteractionRequest }
+      if (!progress.session) throw new Error('Invalid SSE session event data')
+      yield { sequence: envelope.sequence, type: 'session_updated', data: progress.session }
+    } else if (eventName === 'ask_permission') {
+      if (!progress.interaction) throw new Error('Invalid SSE interaction event data')
+      yield { sequence: envelope.sequence, type: 'ask_permission', data: progress.interaction }
     } else if (eventName === 'done') {
-      yield { sequence: envelope.sequence, type: 'done', data: envelope.data as SendMessageResponse }
-    } else if (eventName === 'error') {
-      yield { sequence: envelope.sequence, type: 'error', data: requireString(envelope.data) }
+      yield { sequence: envelope.sequence, type: 'done', data: envelope.data as ChatRunDone }
     } else {
       throw new Error(`Unknown SSE event: ${eventName}`)
     }

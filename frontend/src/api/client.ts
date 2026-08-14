@@ -1,4 +1,4 @@
-import type { ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, WorkflowRun, WorkflowRunDetail } from './types'
+import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, WorkflowRun, WorkflowRunDetail } from './types'
 
 const BASE = '/api/v1'
 
@@ -79,6 +79,40 @@ export const deleteSession = async (sessionId: number) => {
 
 export const getHistory = (sessionId: number, signal?: AbortSignal) =>
   fetchJSON<HistoryResponse>(`${BASE}/sessions/${sessionId}/history`, { signal })
+
+export const getActiveChatRun = (sessionId: number) =>
+  fetchJSON<ChatRun>(`${BASE}/sessions/${sessionId}/chat-run`)
+
+export const startChatRun = (sessionId: number, kind: ChatRunKind, text: string, options: GenerationOptions, messageId?: number, activeLeafMessageId?: number | null) =>
+  fetchJSON<ChatRun | SendMessageResponse>(`${BASE}/sessions/${sessionId}/chat-runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind,
+      text,
+      message_id: messageId,
+      options: {
+        reasoning_effort: options.reasoningEffort,
+        disabled_tools: options.webSearch ? [] : ['web_search', 'web_fetch'],
+        ...(activeLeafMessageId === null ? { select_root: true } : {}),
+        ...(activeLeafMessageId === undefined || activeLeafMessageId === null ? {} : { active_leaf_message_id: activeLeafMessageId }),
+      },
+    }),
+  })
+
+export const startChatRunWithFiles = (sessionId: number, text: string, files: File[], options: GenerationOptions, activeLeafMessageId?: number | null) => {
+  const form = new FormData()
+  form.set('text', text)
+  if (activeLeafMessageId === null) form.set('select_root', 'true')
+  else if (activeLeafMessageId !== undefined) form.set('active_leaf_message_id', String(activeLeafMessageId))
+  form.set('reasoning_effort', options.reasoningEffort)
+  ;(options.webSearch ? [] : ['web_search', 'web_fetch']).forEach(tool => form.append('disabled_tools', tool))
+  files.forEach(file => form.append('files', file))
+  return fetchJSON<ChatRun>(`${BASE}/sessions/${sessionId}/chat-runs`, { method: 'POST', body: form })
+}
+
+export const cancelActiveChatRun = (sessionId: number) =>
+  fetchJSON<{ status: string }>(`${BASE}/sessions/${sessionId}/chat-runs/cancel`, { method: 'POST' })
 
 export const editAssistantMessage = (
   sessionId: number,
