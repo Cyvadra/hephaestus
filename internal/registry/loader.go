@@ -32,7 +32,7 @@ type fileKind struct {
 }
 
 // loader describes how one config kind is decoded and registered. Keeping
-// the six kinds as data instead of a switch makes adding a kind a one-line
+// the config kinds as data instead of a switch makes adding a kind a one-line
 // table entry.
 type loader[T any] struct {
 	kind   fileKind
@@ -95,6 +95,8 @@ func kindForPrefix(prefix string) Kind {
 		return KindWorkflow
 	case "job-":
 		return KindJob
+	case "constant-":
+		return KindConstant
 	default:
 		panic("registry: unknown loader prefix " + prefix)
 	}
@@ -153,6 +155,18 @@ var loaders = []kindLoader{
 		dest:   func(r *Registry) map[string]Job { return r.Jobs },
 		name:   func(v Job) string { return v.Name },
 		extra:  func(_ string, v *Job) error { return normalizeJob(v) },
+	}),
+	loadInto(loader[Constant]{
+		kind:   fileKind{prefix: "constant-", ext: "toml"},
+		decode: decodeTOML,
+		dest:   func(r *Registry) map[string]Constant { return r.Constants },
+		name:   func(v Constant) string { return v.Name },
+		extra: func(_ string, v *Constant) error {
+			if !validPromptVariable(v.Name) {
+				return fmt.Errorf("registry: constant name must match [A-Za-z_][A-Za-z0-9_]*")
+			}
+			return nil
+		},
 	}),
 }
 

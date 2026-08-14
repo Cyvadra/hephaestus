@@ -22,8 +22,8 @@ type Message struct {
 type Constant struct {
 	RecordTimestamps
 
-	Name  string `json:"name" gorm:"primaryKey;size:255"`
-	Value string `json:"value" gorm:"type:text"`
+	Name  string `toml:"name" json:"name" gorm:"primaryKey;size:255"`
+	Value string `toml:"value" json:"value" gorm:"type:text"`
 }
 
 // DefaultSystemPrompt is used when an Identity omits SystemPrompt.

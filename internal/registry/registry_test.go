@@ -69,6 +69,10 @@ workflows:
 trigger: "true"
 max_executions_per_day: 1
 `)
+	writeFile(t, dir, "constant-proxy_url.toml", `
+name = "proxy_url"
+value = "https://proxy.example.test"
+`)
 
 	reg, err := Load(dir)
 	if err != nil {
@@ -92,6 +96,9 @@ max_executions_per_day: 1
 	}
 	if _, ok := reg.Jobs["morning-brief"]; !ok {
 		t.Error("expected job 'morning-brief' to be loaded")
+	}
+	if got := reg.Constants["proxy_url"].Value; got != "https://proxy.example.test" {
+		t.Errorf("constant proxy_url = %q, want configured value", got)
 	}
 
 	if err := reg.Validate(map[string]bool{"shell": true}, map[string]bool{}); err != nil {

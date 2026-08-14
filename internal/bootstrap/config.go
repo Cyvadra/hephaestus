@@ -13,11 +13,11 @@ import (
 )
 
 // Config holds environment-derived settings needed to start the process.
-// Static domain configuration (identity, concierge, etc.) lives under
+// Static domain configuration (identity, concierge, constants, etc.) lives under
 // ConfigDir and is loaded separately by internal/registry.
 type Config struct {
 	// ConfigDir holds the flat directory of identity/impression/toolgroup/
-	// concierge/workflow/job static config files.
+	// concierge/workflow/job/constant static config files.
 	ConfigDir string
 	// PostgresDSN connects to the single Postgres database used for
 	// runtime data (session, chat history, compression).
