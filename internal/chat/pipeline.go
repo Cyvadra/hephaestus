@@ -35,17 +35,26 @@ const (
 
 // Pipeline runs turns for sessions.
 type Pipeline struct {
-	db           *gorm.DB
-	registries   *registry.Store
-	toolReg      *toolkit.Registry
-	plugins      *plugin.Registry
-	llm          *llm.Client
-	agent        *agent.Runner
-	sessions     *session.Service
-	notify       *notify.Notifier
-	projects     *project.Service
-	interactions *interaction.Manager
+	db            *gorm.DB
+	registries    *registry.Store
+	toolReg       *toolkit.Registry
+	plugins       *plugin.Registry
+	llm           *llm.Client
+	agent         *agent.Runner
+	sessions      *session.Service
+	notify        *notify.Notifier
+	projects      *project.Service
+	interactions  *interaction.Manager
+	notifications NotificationSource
 }
+
+type NotificationSource interface {
+	ClaimNotifications(uint) ([]agent.Notification, error)
+	AcknowledgeNotifications([]uint) error
+	ReleaseNotifications([]uint) error
+}
+
+func (p *Pipeline) SetNotificationSource(source NotificationSource) { p.notifications = source }
 
 // NewPipeline wires together every dependency a turn needs.
 func NewPipeline(
@@ -315,6 +324,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
+	turn.History = append(append([]store.ChatMessage(nil), prep.activePath...), pendingUser)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
 
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, turn)
@@ -481,6 +491,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	}
 
 	turn := newTurnContext(sessionID, llmContext, userIdx == 0, userMsg.Content)
+	turn.History = append([]store.ChatMessage(nil), pathUpToUser...)
 	// Compression on the regenerate path covers history up to (but not
 	// including) the user message being regenerated from: that message must
 	// stay in context, and it is what the regenerated reply re-answers.
@@ -505,7 +516,13 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 // parented directly onto an already-persisted user message (Regenerate's
 // case) and no new user message is created.
 func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
-	toPersist, deliveries, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
+	toPersist, deliveries, notificationIDs, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
+	acknowledged := false
+	defer func() {
+		if !acknowledged && p.notifications != nil {
+			_ = p.notifications.ReleaseNotifications(notificationIDs)
+		}
+	}()
 	if converseErr != nil {
 		toPersist = incompleteMessages(toPersist, converseErr)
 	}
@@ -527,6 +544,10 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 		if detachErr != nil {
 			return nil, detachErr
 		}
+		if err := p.acknowledgeNotifications(notificationIDs); err != nil {
+			return nil, err
+		}
+		acknowledged = true
 		final := detached[len(detached)-1]
 		turn.Messages[len(turn.Messages)-1] = final
 		if turn.Metadata == nil {
@@ -539,6 +560,10 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 	if err != nil {
 		return nil, err
 	}
+	if err := p.acknowledgeNotifications(notificationIDs); err != nil {
+		return nil, err
+	}
+	acknowledged = true
 	final := saved[len(saved)-1]
 	if converseErr != nil {
 		turn.Messages[len(turn.Messages)-1] = final
@@ -751,24 +776,24 @@ func estimateMessageLength(m store.ChatMessage) int {
 // tool-call messages, tool results, final assistant message) in
 // persistence order, plus the turn context as left by the last plugin that
 // ran (carrying any Metadata plugins attached, and any content mutation the
-// completion hook made to the final assistant message).
-// converse runs the first LLM call and, while the model requests tool
-// calls, the tool-execution loop, wrapping each stage in the corresponding
-// Plugin hooks. It returns every message generated along the way (assistant
-// tool-call messages, tool results, final assistant message) in
-// persistence order, plus the turn context as left by the last plugin that
-// ran (carrying any Metadata plugins attached, and any content mutation the
 // completion hook made to the final assistant message). The reusable loop
 // lives in internal/agent; this wrapper adapts the session's turn state.
-func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, []toolkit.FileDelivery, plugin.TurnContext, error) {
+func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, []toolkit.FileDelivery, []uint, plugin.TurnContext, error) {
+	var claimNotifications func() ([]agent.Notification, error)
+	if p.notifications != nil {
+		claimNotifications = func() ([]agent.Notification, error) {
+			return p.notifications.ClaimNotifications(turn.SessionID)
+		}
+	}
 	result, err := p.agent.Run(ctx, agent.Request{
-		Identity: identity,
-		Toolset:  toolset,
-		Plugins:  settings.Plugins,
-		Turn:     turn,
-		Scope:    toolkit.ScopeSession,
-		Audit:    agent.AuditOwner{SessionID: &turn.SessionID},
-		OwnerID:  turn.SessionID,
+		Identity:           identity,
+		Toolset:            toolset,
+		Plugins:            settings.Plugins,
+		Turn:               turn,
+		Scope:              toolkit.ScopeSession,
+		Audit:              agent.AuditOwner{SessionID: &turn.SessionID},
+		OwnerID:            turn.SessionID,
+		ClaimNotifications: claimNotifications,
 		OnDelta: func(event StreamEvent) {
 			if onDelta != nil {
 				onDelta(event)
@@ -781,9 +806,16 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		},
 	})
 	if err != nil {
-		return result.Messages, result.Deliveries, result.Turn, err
+		return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, err
 	}
-	return result.Messages, result.Deliveries, result.Turn, nil
+	return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, nil
+}
+
+func (p *Pipeline) acknowledgeNotifications(ids []uint) error {
+	if p.notifications == nil {
+		return nil
+	}
+	return p.notifications.AcknowledgeNotifications(ids)
 }
 
 // lastUserMessage returns the trailing message of messages, which must be

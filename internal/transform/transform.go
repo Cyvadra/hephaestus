@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Cyvadra/hephaestus/internal/llm"
 )
@@ -22,6 +23,60 @@ import (
 // TODO: revisit once a real tokenizer (or provider-reported usage) is wired
 // in; this is a deliberately rough estimate.
 const EstimateDivisor = 2.0
+
+// MaxToolExchangeBytes is the exclusive byte ceiling for one tool call's
+// serialized arguments plus any result exposed or persisted by the runtime.
+const MaxToolExchangeBytes = 256 * 1024
+
+// LimitToolExchangeContent bounds content so arguments plus the returned text
+// remain strictly below MaxToolExchangeBytes.
+func LimitToolExchangeContent(arguments, content string) string {
+	remaining := MaxToolExchangeBytes - 1 - len(arguments)
+	if remaining <= 0 {
+		return ""
+	}
+	return LimitTextBytes(content, remaining)
+}
+
+// LimitTextBytes preserves the beginning and end of UTF-8 text within a byte
+// budget. The returned string is always valid UTF-8 and never exceeds limit.
+func LimitTextBytes(content string, limit int) string {
+	if limit <= 0 || len(content) <= limit {
+		return content
+	}
+	marker := "\n[... middle omitted ...]\n"
+	if len(marker) >= limit {
+		return trimUTF8Prefix(content, limit)
+	}
+	retained := limit - len(marker)
+	headLimit := retained / 2
+	tailLimit := retained - headLimit
+	head := trimUTF8Prefix(content, headLimit)
+	tail := trimUTF8Suffix(content, tailLimit)
+	return head + marker + tail
+}
+
+func trimUTF8Prefix(content string, limit int) string {
+	if len(content) <= limit {
+		return content
+	}
+	end := limit
+	for end > 0 && !utf8.RuneStart(content[end]) {
+		end--
+	}
+	return content[:end]
+}
+
+func trimUTF8Suffix(content string, limit int) string {
+	if len(content) <= limit {
+		return content
+	}
+	start := len(content) - limit
+	for start < len(content) && !utf8.RuneStart(content[start]) {
+		start++
+	}
+	return content[start:]
+}
 
 // EstimateLength returns an approximate context-length unit for text, using
 // rune count divided by EstimateDivisor rather than a real tokenizer.

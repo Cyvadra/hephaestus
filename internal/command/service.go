@@ -244,6 +244,7 @@ type kindDescriptor struct {
 type listItem struct {
 	name  string
 	label string
+	group string
 }
 
 func namedItems(names []string) []listItem {
@@ -304,7 +305,7 @@ var kindDescriptors = map[Kind]kindDescriptor{
 	KindSession: {
 		names: func(s *Service) ([]listItem, error) {
 			var sessions []store.Session
-			if err := s.db.Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
+			if err := s.db.Preload("Project").Where("parent_subagent_run_id IS NULL").Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
 				return nil, err
 			}
 			return sessionListItems(sessions, 0), nil
@@ -422,25 +423,63 @@ func (s *Service) list(sessionID uint, args []string) (string, error) {
 	s.lastList[sessionID][kind] = names
 	s.mu.Unlock()
 
+	return formatList(kind, items), nil
+}
+
+func formatList(kind Kind, items []listItem) string {
 	var b strings.Builder
 	for i, item := range items {
+		if kind == KindSession && (i == 0 || item.group != items[i-1].group) {
+			fmt.Fprintf(&b, "%s:\n", item.group)
+		}
 		fmt.Fprintf(&b, "%d. %s\n", i+1, item.label)
 	}
 	if b.Len() == 0 {
-		return fmt.Sprintf("No %s configured.", kind), nil
+		return fmt.Sprintf("No %s configured.", kind)
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 func (s *Service) listItems(sessionID uint, kind Kind, desc kindDescriptor) ([]listItem, error) {
-	if kind != KindSession {
-		return desc.names(s)
+	if kind == KindSession {
+		var sessions []store.Session
+		if err := s.db.Preload("Project").Where("parent_subagent_run_id IS NULL").Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
+			return nil, err
+		}
+		return sessionListItems(sessions, sessionID), nil
 	}
-	var sessions []store.Session
-	if err := s.db.Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
+	items, err := desc.names(s)
+	if err != nil {
 		return nil, err
 	}
-	return sessionListItems(sessions, sessionID), nil
+	if kind != KindIdentity && kind != KindConcierge && kind != KindProject && kind != KindImpression && kind != KindToolGroup && kind != KindPlugin {
+		return items, nil
+	}
+	sess, err := s.loadSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	settings := sess.Settings.Data()
+	var active []string
+	switch kind {
+	case KindIdentity:
+		active = []string{settings.Identity}
+	case KindConcierge:
+		active = []string{sess.SourceConcierge}
+	case KindProject:
+		boundProject, err := s.projects.Get(sess.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		active = []string{boundProject.Name}
+	case KindImpression:
+		active = settings.Impressions
+	case KindToolGroup:
+		active = settings.ToolGroups
+	case KindPlugin:
+		active = settings.Plugins
+	}
+	return markActiveItems(items, active), nil
 }
 
 func (s *Service) detail(sessionID uint, args []string) (string, error) {
@@ -761,16 +800,39 @@ func keysOf[T any](m map[string]T) []string {
 
 func sessionListItems(sessions []store.Session, currentSessionID uint) []listItem {
 	items := make([]listItem, 0, len(sessions))
+	grouped := make(map[uint][]store.Session)
+	projectOrder := make([]uint, 0)
 	for _, sess := range sessions {
-		name := strconv.Itoa(int(sess.ID))
-		label := fmt.Sprintf("Session #%s", name)
-		if title := strings.TrimSpace(sess.Title); title != "" {
-			label = fmt.Sprintf("%s (#%s)", title, name)
+		if _, ok := grouped[sess.ProjectID]; !ok {
+			projectOrder = append(projectOrder, sess.ProjectID)
 		}
-		if sess.ID == currentSessionID {
-			label = "* " + label
+		grouped[sess.ProjectID] = append(grouped[sess.ProjectID], sess)
+	}
+	for _, projectID := range projectOrder {
+		for _, sess := range grouped[projectID] {
+			name := strconv.Itoa(int(sess.ID))
+			label := fmt.Sprintf("Session #%s", name)
+			if title := strings.TrimSpace(sess.Title); title != "" {
+				label = fmt.Sprintf("%s (#%s)", title, name)
+			}
+			if sess.ID == currentSessionID {
+				label = "* " + label
+			}
+			items = append(items, listItem{name: name, label: label, group: sess.Project.Name})
 		}
-		items = append(items, listItem{name: name, label: label})
+	}
+	return items
+}
+
+func markActiveItems(items []listItem, active []string) []listItem {
+	activeSet := make(map[string]struct{}, len(active))
+	for _, name := range active {
+		activeSet[name] = struct{}{}
+	}
+	for i := range items {
+		if _, ok := activeSet[items[i].name]; ok {
+			items[i].label = "* " + items[i].label
+		}
 	}
 	return items
 }

@@ -118,6 +118,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		"create_project":      true, "list_projects": true,
 		"web_fetch": true, "web_search": true, "shell": true, "send_file": true,
 		"send_notification": true,
+		"spawn":             true, "fork": true, "await": true,
 	}
 	if err := reg.Validate(knownTools, map[string]bool{}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)

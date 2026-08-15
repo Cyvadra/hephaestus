@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 )
 
 // fakeLLM is a scriptable LLM stub satisfying the Runner's LLM interface.
@@ -268,9 +271,104 @@ func TestExecuteTool_RejectsToolOutsideExpandedSet(t *testing.T) {
 	runner := testRunner(&fakeLLM{}, nil)
 	result := runner.executeTool(context.Background(), Request{}, map[string]toolkit.Tool{}, ds4.ToolCall{
 		Function: ds4.FunctionCall{Name: "shell"},
-	}, nil)
+	}, nil, nil)
 	if !result.IsError {
 		t.Fatal("expected disabled tool to be rejected")
+	}
+}
+
+func TestLimitToolExchangePreservesHeadAndTail(t *testing.T) {
+	content := "0123456789abcdefghijklmnopqrstuvwxyz"
+	got := transform.LimitToolExchangeContent(strings.Repeat("a", transform.MaxToolExchangeBytes-31), content)
+	if len(got) != 30 {
+		t.Fatalf("length = %d, want 30: %q", len(got), got)
+	}
+	if got[0] != content[0] || got[len(got)-1] != content[len(content)-1] {
+		t.Fatalf("result does not preserve head and tail: %q", got)
+	}
+	if got == content[:30] {
+		t.Fatalf("result omitted the tail: %q", got)
+	}
+}
+
+func TestLimitToolExchangeLeavesSmallContentUnchanged(t *testing.T) {
+	const content = "small result"
+	if got := transform.LimitToolExchangeContent("{}", content); got != content {
+		t.Fatalf("result = %q, want %q", got, content)
+	}
+}
+
+func TestLimitToolExchangeOmitsOutputWhenArgumentsConsumeLimit(t *testing.T) {
+	if got := transform.LimitToolExchangeContent(strings.Repeat("a", transform.MaxToolExchangeBytes-1), "result"); got != "" {
+		t.Fatalf("result = %q, want empty", got)
+	}
+}
+
+func TestStoreMessageFromDS4RejectsOversizedToolArguments(t *testing.T) {
+	_, err := StoreMessageFromDS4(ds4.Message{ToolCalls: []ds4.ToolCall{toolCall("call-1", "echo", strings.Repeat("a", transform.MaxToolExchangeBytes))}})
+	if !errors.Is(err, ErrToolArgumentsTooLarge) {
+		t.Fatalf("StoreMessageFromDS4 error = %v, want ErrToolArgumentsTooLarge", err)
+	}
+}
+
+func TestRunInjectsInitialNotification(t *testing.T) {
+	llm := &fakeLLM{responses: []*ds4.ChatResponse{respWith(nil, "done")}}
+	runner := testRunner(llm, nil)
+	claims := 0
+	result, err := runner.Run(context.Background(), Request{
+		Identity: registry.Identity{}, Turn: plugin.TurnContext{}, Scope: toolkit.ScopeSession,
+		ClaimNotifications: func() ([]Notification, error) {
+			claims++
+			return []Notification{{ID: 7, Text: "Subagent completion: result"}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(llm.calls) != 1 {
+		t.Fatalf("calls = %d", len(llm.calls))
+	}
+	messages := llm.calls[0].messages
+	if len(messages) != 1 || messages[0].Role != ds4.RoleSystem || messages[0].Content != "Subagent completion: result" {
+		t.Fatalf("messages = %+v", messages)
+	}
+	if claims != 1 {
+		t.Fatalf("claims = %d, want 1", claims)
+	}
+	if len(result.Messages) != 1 || result.Messages[0].Content != "done" {
+		t.Fatalf("persisted messages = %+v", result.Messages)
+	}
+}
+
+func TestRunClaimsNotificationsForEachModelBoundary(t *testing.T) {
+	fake := &fakeLLM{responses: []*ds4.ChatResponse{
+		respWith([]ds4.ToolCall{toolCall("call-1", "echo", "{}")}, ""),
+		respWith(nil, "done"),
+	}}
+	runner := testRunner(fake, nil)
+	claimCount := 0
+	request := sessionRequest(fake, []toolkit.Tool{echoTool{name: "echo"}}, plugin.TurnContext{SessionID: 7, Messages: []store.ChatMessage{{Role: ds4.RoleUser, Content: "go"}}})
+	request.ClaimNotifications = func() ([]Notification, error) {
+		claimCount++
+		if claimCount == 1 {
+			return []Notification{{ID: 11, Text: "first completion"}}, nil
+		}
+		return nil, nil
+	}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimCount != 2 {
+		t.Fatalf("claims = %d, want 2", claimCount)
+	}
+	if len(fake.calls[0].messages) < 2 || fake.calls[0].messages[len(fake.calls[0].messages)-1].Content != "first completion" {
+		t.Fatalf("first model context = %+v", fake.calls[0].messages)
+	}
+	for _, message := range result.Messages {
+		if message.Content == "first completion" {
+			t.Fatalf("notification leaked into persisted messages: %+v", result.Messages)
+		}
 	}
 }
 

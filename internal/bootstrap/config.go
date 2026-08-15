@@ -79,6 +79,8 @@ type Config struct {
 	// FixedPlugins run for every session and cannot be disabled through
 	// mutable session settings.
 	FixedPlugins []string
+	// SubagentMaxDepth bounds recursive spawn/fork delegation.
+	SubagentMaxDepth int
 }
 
 // Load reads configuration from environment variables, applying defaults
@@ -130,6 +132,7 @@ func Load() (*Config, error) {
 		EnvironmentTimezone:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_TIMEZONE")),
 		WeatherProviders:         splitCommaSeparated(getenvDefault("HEPHAESTUS_WEATHER_PROVIDERS", "open_meteo,wttr,met_no")),
 		FixedPlugins:             splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "environment_context,session_summary")),
+		SubagentMaxDepth:         env.int("HEPHAESTUS_SUBAGENT_MAX_DEPTH", 2),
 	}
 	var errLatitude, errLongitude error
 	cfg.EnvironmentLatitude, errLatitude = requiredFloat("HEPHAESTUS_ENV_LATITUDE")
@@ -137,6 +140,9 @@ func Load() (*Config, error) {
 
 	if len(env.problems) > 0 {
 		return nil, errors.Join(env.problems...)
+	}
+	if cfg.SubagentMaxDepth < 1 {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SUBAGENT_MAX_DEPTH must be positive")
 	}
 	if cfg.PostgresDSN == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_POSTGRES_DSN is required")

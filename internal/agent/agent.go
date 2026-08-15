@@ -20,12 +20,15 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
 // maxConsecutiveToolCalls bounds repeated calls to one tool without an
 // intervening call to another tool.
-const maxConsecutiveToolCalls = 12
+const (
+	maxConsecutiveToolCalls = 12
+)
 
 // LLM is the provider-facing interface the runner needs. *llm.Client
 // satisfies it; tests may substitute a deterministic fake.
@@ -65,6 +68,14 @@ type Request struct {
 	// OnInteraction forwards ask_permission requests to a visible client;
 	// nil disables interactive approval (headless workflow runs).
 	OnInteraction func(*interaction.Request)
+	// ClaimNotifications atomically claims durable completion notifications
+	// before an outbound model request. Claimed notifications are at-most-once.
+	ClaimNotifications func() ([]Notification, error)
+}
+
+type Notification struct {
+	ID   uint
+	Text string
 }
 
 // Result is the outcome of an agent turn before any persistence.
@@ -80,6 +91,9 @@ type Result struct {
 	// Turn is the final plugin.TurnContext carrying metadata and any
 	// completion-hook content mutation.
 	Turn plugin.TurnContext
+	// NotificationIDs are completion events included in this turn. The caller
+	// acknowledges them only after the generated transcript is durable.
+	NotificationIDs []uint
 }
 
 // Runner executes one agent turn: the first LLM call and, while the model
@@ -108,6 +122,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	messages := append([]store.ChatMessage(nil), turn.Messages...)
 	var toPersist []store.ChatMessage
 	var deliveries []toolkit.FileDelivery
+	var notificationIDs []uint
 	toolset := toolkit.FilterScope(req.Toolset, req.Scope)
 	allowedTools := make(map[string]toolkit.Tool, len(toolset))
 	for _, tool := range toolset {
@@ -117,6 +132,18 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	callIndex := -1
 	callLLM := func() (*ds4.ChatResponse, error) {
 		callIndex++
+		if req.ClaimNotifications != nil {
+			pending, err := req.ClaimNotifications()
+			if err != nil {
+				return nil, err
+			}
+			for _, notification := range pending {
+				notificationIDs = append(notificationIDs, notification.ID)
+				notificationMessage := store.ChatMessage{Role: ds4.RoleSystem, Content: notification.Text, Timestamp: time.Now()}
+				messages = append(messages, notificationMessage)
+				turn.Messages = messages
+			}
+		}
 		if req.OnDelta == nil {
 			return r.llm.Call(ctx, req.Identity, messages, toolset)
 		}
@@ -144,7 +171,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	messages = turn.Messages
 	resp, err := callLLM()
 	if err != nil {
-		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
+		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
 	}
 	turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantFirstCallLLM, plugin.PhaseAfter, turn)
 	messages = turn.Messages
@@ -154,7 +181,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	for resp.FinishReason() == ds4.FinishReasonToolCalls {
 		assistantMsg, err := StoreMessageFromDS4(*resp.FirstMessage())
 		if err != nil {
-			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
 		}
 		messages = append(messages, assistantMsg)
 		toPersist = append(toPersist, assistantMsg)
@@ -163,7 +190,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		toolCalls := resp.ToolCalls()
 		for _, tc := range toolCalls {
 			if err := r.trackConsecutiveToolCall(ctx, req, &lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
-				return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
+				return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
 			}
 			turn.ToolCall = &tc
 			turn.ToolResult = nil
@@ -179,7 +206,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		messages = turn.Messages
 		resp, err = callLLM()
 		if err != nil {
-			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
 		}
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseAfter, turn)
 		messages = turn.Messages
@@ -187,7 +214,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 
 	final, err := StoreMessageFromDS4(*resp.FirstMessage())
 	if err != nil {
-		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, err
+		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
 	}
 	toPersist = append(toPersist, final)
 
@@ -201,7 +228,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		toPersist[len(toPersist)-1].Content = turn.Messages[n-1].Content
 	}
 
-	return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn}, nil
+	return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, nil
 }
 
 // runToolCalls executes a single model response's independent tool calls
@@ -215,8 +242,16 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 		wg.Add(1)
 		go func(idx int, tc ds4.ToolCall) {
 			defer wg.Done()
-			results[idx] = r.executeTool(ctx, req, allowedTools, tc, func(chunk string) {
+			streamedBytes := 0
+			results[idx] = r.executeTool(ctx, req, allowedTools, tc, turn.History, func(chunk string) {
 				if req.OnDelta != nil {
+					chunk = transform.LimitToolExchangeContent(tc.Function.Arguments, chunk)
+					remaining := transform.MaxToolExchangeBytes - 1 - len(tc.Function.Arguments) - streamedBytes
+					chunk = transform.LimitTextBytes(chunk, remaining)
+					streamedBytes += len(chunk)
+					if chunk == "" {
+						return
+					}
 					req.OnDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
 						CallIndex: callIndex,
 						Index:     idx,
@@ -243,7 +278,7 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 		turn.ToolCall = nil
 		turn.ToolResult = nil
 
-		content := result.ContentForLLM()
+		content := transform.LimitToolExchangeContent(tc.Function.Arguments, result.ContentForLLM())
 		if req.OnDelta != nil {
 			status := "complete"
 			if result.IsError {
@@ -282,7 +317,7 @@ func appendUniqueDeliveries(existing, additions []toolkit.FileDelivery) []toolki
 	return existing
 }
 
-func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall, reportOutput func(string)) *toolkit.ToolResult {
+func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[string]toolkit.Tool, tc ds4.ToolCall, turnMessages []store.ChatMessage, reportOutput func(string)) *toolkit.ToolResult {
 	t, ok := allowedTools[tc.Function.Name]
 	if !ok {
 		return toolkit.ErrorResult(fmt.Sprintf("agent: tool %q is not enabled for this run", tc.Function.Name))
@@ -297,6 +332,8 @@ func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[
 
 	auditID := r.beginToolAudit(req.Audit, t, tc, args)
 	toolCtx := toolkit.WithSessionID(ctx, req.OwnerID)
+	toolCtx = toolkit.WithTurnMessages(toolCtx, turnMessages)
+	toolCtx = toolkit.WithToolCall(toolCtx, tc)
 	if reportOutput != nil {
 		toolCtx = toolkit.WithOutputReporter(toolCtx, reportOutput)
 	}
@@ -308,7 +345,7 @@ func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[
 		})
 	}
 	result := toolkit.RunTool(toolCtx, t, args)
-	r.finishToolAudit(auditID, result)
+	r.finishToolAudit(auditID, tc.Function.Arguments, result)
 	return result
 }
 
@@ -337,12 +374,12 @@ func (r *Runner) beginToolAudit(audit AuditOwner, tool toolkit.Tool, tc ds4.Tool
 	return row.ID
 }
 
-func (r *Runner) finishToolAudit(auditID uint, result *toolkit.ToolResult) {
+func (r *Runner) finishToolAudit(auditID uint, arguments string, result *toolkit.ToolResult) {
 	if auditID == 0 {
 		return
 	}
 	if err := r.db.Model(&store.ToolAudit{}).Where("id = ?", auditID).Updates(map[string]any{
-		"result":   result.ContentForLLM(),
+		"result":   transform.LimitToolExchangeContent(arguments, result.ContentForLLM()),
 		"is_error": result.IsError,
 	}).Error; err != nil {
 		r.notify.Warn("agent: persist audit result %d: %v", auditID, err)

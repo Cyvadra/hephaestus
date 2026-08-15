@@ -64,7 +64,7 @@ func (s *Service) Get(sessionID uint) (*store.Session, error) {
 // ListByProject returns sessions in one Project ordered for chat lists.
 func (s *Service) ListByProject(projectID uint) ([]store.Session, error) {
 	var sessions []store.Session
-	if err := s.db.Where("project_id = ?", projectID).Order("last_message_time desc, id desc").Find(&sessions).Error; err != nil {
+	if err := s.db.Where("project_id = ? AND parent_subagent_run_id IS NULL", projectID).Order("last_message_time desc, id desc").Find(&sessions).Error; err != nil {
 		return nil, err
 	}
 	return sessions, nil

@@ -35,6 +35,8 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/server"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/subagent"
+	"github.com/Cyvadra/hephaestus/internal/subagentexec"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/Cyvadra/hephaestus/internal/upload"
@@ -83,10 +85,14 @@ func main() {
 	}
 	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey)
 	sessions := session.New(db)
+	subagentSvc := subagent.New(db, cfg.SubagentMaxDepth)
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewChatHistoryReadTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
 	toolReg.Register(tools.NewListProjectsTool(projects))
+	toolReg.Register(tools.NewSpawnTool(db, subagentSvc))
+	toolReg.Register(tools.NewForkTool(db, subagentSvc))
+	toolReg.Register(tools.NewSubagentAwaitTool(subagentSvc))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
 	interactions := interaction.NewManager()
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
@@ -164,6 +170,11 @@ func main() {
 	}
 
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
+	subagentSvc.SetExecutor(subagentexec.NewPipelineExecutor(db, sessions, pipeline))
+	pipeline.SetNotificationSource(subagentSvc)
+	if err := subagentSvc.Reconcile(); err != nil {
+		log.Fatalf("subagents: reconcile stale runs: %v", err)
+	}
 	chatRunSvc := chatrun.New(db)
 	if err := chatRunSvc.Reconcile(); err != nil {
 		log.Fatalf("chat runs: reconcile stale runs: %v", err)
@@ -198,7 +209,7 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc, chatRunSvc)
+	srv := server.New(registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc, chatRunSvc, subagentSvc)
 	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
 	var schedulerWG sync.WaitGroup
 	schedulerWG.Add(1)
@@ -214,6 +225,7 @@ func main() {
 	// any active runs, and wait for workers to finalize their statuses.
 	workflowSvc.Shutdown()
 	chatRunSvc.Shutdown()
+	subagentSvc.Shutdown()
 	jobSvc.Shutdown()
 	stop()
 	if err := channelService.Stop(context.Background()); err != nil {

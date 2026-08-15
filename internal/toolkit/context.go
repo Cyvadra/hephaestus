@@ -1,6 +1,11 @@
 package toolkit
 
-import "context"
+import (
+	"context"
+
+	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/store"
+)
 
 type outputReporterContextKey struct{}
 
@@ -50,4 +55,47 @@ func WorkspaceFromContext(ctx context.Context) (string, bool) {
 		return "", false
 	}
 	return v, true
+}
+
+type subagentContextKey struct{}
+
+// SubagentContext identifies the delegated run currently executing. RunID is
+// zero for a root chat turn; Depth is zero at the root.
+type SubagentContext struct {
+	RunID           uint
+	ParentSessionID uint
+	Depth           int
+}
+
+func WithSubagentContext(ctx context.Context, value SubagentContext) context.Context {
+	return context.WithValue(ctx, subagentContextKey{}, value)
+}
+
+func SubagentContextFromContext(ctx context.Context) SubagentContext {
+	value, _ := ctx.Value(subagentContextKey{}).(SubagentContext)
+	return value
+}
+
+type turnMessagesContextKey struct{}
+
+// WithTurnMessages attaches a defensive snapshot of the messages visible at
+// the current tool-call boundary.
+func WithTurnMessages(ctx context.Context, messages []store.ChatMessage) context.Context {
+	return context.WithValue(ctx, turnMessagesContextKey{}, append([]store.ChatMessage(nil), messages...))
+}
+
+func TurnMessagesFromContext(ctx context.Context) ([]store.ChatMessage, bool) {
+	messages, ok := ctx.Value(turnMessagesContextKey{}).([]store.ChatMessage)
+	return append([]store.ChatMessage(nil), messages...), ok
+}
+
+type toolCallContextKey struct{}
+
+func WithToolCall(ctx context.Context, call ds4.ToolCall) context.Context {
+	return context.WithValue(ctx, toolCallContextKey{}, call)
+}
+
+func ToolCallFromContext(ctx context.Context) (ds4.ToolCall, bool) {
+	call, ok := ctx.Value(toolCallContextKey{}).(ds4.ToolCall)
+	return call, ok
 }

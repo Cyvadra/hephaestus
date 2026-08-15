@@ -24,7 +24,7 @@ func Open(dsn string) (*gorm.DB, error) {
 	}
 
 	if err := db.AutoMigrate(
-		&Project{}, &ChatMessage{}, &MessageAttachment{}, &Compression{}, &PluginState{}, &ChannelBinding{}, &ToolAudit{}, &ChatRun{}, &ChatRunEvent{},
+		&Project{}, &ChatMessage{}, &MessageAttachment{}, &Compression{}, &PluginState{}, &ChannelBinding{}, &ToolAudit{}, &ChatRun{}, &ChatRunEvent{}, &SubagentRun{}, &SubagentEvent{},
 		&WorkflowRun{}, &WorkflowStepRun{}, &JobRun{}, &JobState{},
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},

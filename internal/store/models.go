@@ -88,6 +88,76 @@ type ChatRun struct {
 // Terminal implements runctrl.TerminalRow.
 func (r ChatRun) Terminal() bool { return r.Status.IsTerminal() }
 
+// SubagentMode selects how a child agent's initial conversation is built.
+type SubagentMode string
+
+const (
+	SubagentModeSpawn SubagentMode = "spawn"
+	SubagentModeFork  SubagentMode = "fork"
+)
+
+// SubagentSchedule selects whether the caller waits for the child result.
+type SubagentSchedule string
+
+const (
+	SubagentScheduleBackground SubagentSchedule = "background"
+	SubagentScheduleForeground SubagentSchedule = "foreground"
+)
+
+// SubagentRunStatus is the durable lifecycle state of a delegated agent run.
+type SubagentRunStatus string
+
+const (
+	SubagentRunPending     SubagentRunStatus = "pending"
+	SubagentRunRunning     SubagentRunStatus = "running"
+	SubagentRunSucceeded   SubagentRunStatus = "succeeded"
+	SubagentRunFailed      SubagentRunStatus = "failed"
+	SubagentRunCancelled   SubagentRunStatus = "cancelled"
+	SubagentRunInterrupted SubagentRunStatus = "interrupted"
+)
+
+func (s SubagentRunStatus) IsTerminal() bool {
+	return s == SubagentRunSucceeded || s == SubagentRunFailed || s == SubagentRunCancelled || s == SubagentRunInterrupted
+}
+
+// SubagentRun represents one child-agent execution. Multiple background runs
+// may be active for the same parent session.
+type SubagentRun struct {
+	ID              uint              `gorm:"primaryKey;autoIncrement"`
+	ParentSessionID uint              `gorm:"not null;index:idx_subagent_parent_status,priority:1;index"`
+	ParentRunID     *uint             `gorm:"index"`
+	ChildSessionID  *uint             `gorm:"index"`
+	ProjectID       uint              `gorm:"not null;index"`
+	Mode            SubagentMode      `gorm:"size:16;not null"`
+	Schedule        SubagentSchedule  `gorm:"size:16;not null"`
+	Status          SubagentRunStatus `gorm:"size:32;not null;index:idx_subagent_parent_status,priority:2;index"`
+	Depth           int               `gorm:"not null"`
+	Label           string            `gorm:"size:255;not null"`
+	Prompt          string            `gorm:"type:text;not null"`
+	Seed            datatypes.JSON    `gorm:"type:jsonb"`
+	Result          string            `gorm:"type:text"`
+	Error           string            `gorm:"type:text"`
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// Terminal implements runctrl.TerminalRow.
+func (r SubagentRun) Terminal() bool { return r.Status.IsTerminal() }
+
+// SubagentEvent is a durable parent-facing completion notification. Delivery
+// is acknowledged only after steer, await, or next-turn context consumes it.
+type SubagentEvent struct {
+	ID              uint           `gorm:"primaryKey;autoIncrement"`
+	RunID           uint           `gorm:"not null;uniqueIndex"`
+	ParentSessionID uint           `gorm:"not null;index:idx_subagent_events_pending,priority:1"`
+	Payload         datatypes.JSON `gorm:"type:jsonb;not null"`
+	ClaimedAt       *time.Time     `gorm:"index"`
+	ConsumedAt      *time.Time     `gorm:"index:idx_subagent_events_pending,priority:2"`
+	CreatedAt       time.Time
+}
+
 // SessionSettings is the mutable, per-session snapshot of which identity,
 // impressions, tool groups and plugins are active. It starts as a copy of
 // the source Concierge and may diverge from it over the session's lifetime.
@@ -103,9 +173,10 @@ type SessionSettings struct {
 
 // Session is a real, addressable conversation.
 type Session struct {
-	ID        uint    `gorm:"primaryKey;autoIncrement"`
-	ProjectID uint    `gorm:"not null;index"`
-	Project   Project `gorm:"foreignKey:ProjectID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
+	ID                  uint    `gorm:"primaryKey;autoIncrement"`
+	ProjectID           uint    `gorm:"not null;index"`
+	Project             Project `gorm:"foreignKey:ProjectID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
+	ParentSubagentRunID *uint   `gorm:"index"`
 
 	// SourceConcierge is the Concierge name used at creation time, kept
 	// for reference only; it has no further business influence.

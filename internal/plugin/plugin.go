@@ -46,6 +46,7 @@ type TurnContext struct {
 	SessionID        uint
 	Scope            toolkit.Scope
 	Messages         []store.ChatMessage
+	History          []store.ChatMessage
 	IsFirstTurn      bool
 	FirstUserMessage string
 	// ToolCall is the in-flight tool invocation on the ToolCall hook's
@@ -67,6 +68,7 @@ type TurnContext struct {
 // and maps are reference types.
 func (t TurnContext) clone() TurnContext {
 	messages := append([]store.ChatMessage(nil), t.Messages...)
+	history := append([]store.ChatMessage(nil), t.History...)
 	metadata := make(map[string]any, len(t.Metadata))
 	for k, v := range t.Metadata {
 		metadata[k] = v
@@ -75,6 +77,7 @@ func (t TurnContext) clone() TurnContext {
 		SessionID:        t.SessionID,
 		Scope:            t.Scope,
 		Messages:         messages,
+		History:          history,
 		IsFirstTurn:      t.IsFirstTurn,
 		FirstUserMessage: t.FirstUserMessage,
 		ToolCall:         t.ToolCall,

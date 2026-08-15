@@ -207,7 +207,7 @@ func (t ChatHistorySearchTool) targetSessions(ctx context.Context, includeArchiv
 	if err := t.db.First(&caller, sessionID).Error; err != nil {
 		return nil, fmt.Errorf("load session %d: %w", sessionID, err)
 	}
-	query := t.db.Where("project_id = ?", caller.ProjectID)
+	query := t.db.Where("project_id = ? AND parent_subagent_run_id IS NULL", caller.ProjectID)
 	if len(sessionIDs) > 0 {
 		query = query.Where("id IN ?", sessionIDs)
 	}

@@ -101,7 +101,7 @@ func (t ChatHistoryReadTool) Execute(ctx context.Context, rawArgs map[string]any
 		return toolkit.ErrorResult(fmt.Sprintf("chat_history_read: load message %d: %s", args.MessageID, err))
 	}
 	var targetSession store.Session
-	if err := t.db.Where("id = ? AND project_id = ?", target.SessionID, caller.ProjectID).First(&targetSession).Error; err != nil {
+	if err := t.db.Where("id = ? AND project_id = ? AND parent_subagent_run_id IS NULL", target.SessionID, caller.ProjectID).First(&targetSession).Error; err != nil {
 		return toolkit.ErrorResult(fmt.Sprintf("chat_history_read: message %d is not in the current project", args.MessageID))
 	}
 	path, err := t.sessions.ActivePath(targetSession)

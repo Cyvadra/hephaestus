@@ -89,14 +89,44 @@ func TestResolveSessionIDDistinguishesOrdinalsFromStableIDs(t *testing.T) {
 
 func TestSessionListItemsUseTitleLabelAndStableID(t *testing.T) {
 	items := sessionListItems([]store.Session{
-		{ID: 42, Title: "Release checklist"},
-		{ID: 43},
+		{ID: 42, ProjectID: 1, Project: store.Project{Name: "alpha"}, Title: "Release checklist"},
+		{ID: 43, ProjectID: 2, Project: store.Project{Name: "beta"}},
 	}, 42)
-	if got := items[0]; got.name != "42" || got.label != "* Release checklist (#42)" {
+	if got := items[0]; got.name != "42" || got.label != "* Release checklist (#42)" || got.group != "alpha" {
 		t.Fatalf("unexpected titled session item: %#v", got)
 	}
-	if got := items[1]; got.name != "43" || got.label != "Session #43" {
+	if got := items[1]; got.name != "43" || got.label != "Session #43" || got.group != "beta" {
 		t.Fatalf("unexpected untitled session item: %#v", got)
+	}
+}
+
+func TestSessionListItemsGroupsProjectsByLatestSession(t *testing.T) {
+	items := sessionListItems([]store.Session{
+		{ID: 30, ProjectID: 2, Project: store.Project{Name: "beta"}},
+		{ID: 20, ProjectID: 1, Project: store.Project{Name: "alpha"}},
+		{ID: 10, ProjectID: 2, Project: store.Project{Name: "beta"}},
+	}, 0)
+
+	got := []string{items[0].name, items[1].name, items[2].name}
+	want := []string{"30", "10", "20"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("grouped session order = %v, want %v", got, want)
+	}
+
+	wantOutput := "beta:\n1. Session #30\n2. Session #10\nalpha:\n3. Session #20\n"
+	if gotOutput := formatList(KindSession, items); gotOutput != wantOutput {
+		t.Fatalf("formatted session list = %q, want %q", gotOutput, wantOutput)
+	}
+}
+
+func TestMarkActiveItemsMarksAllEnabledNamesWithoutChangingOrdinals(t *testing.T) {
+	items := markActiveItems(namedItems([]string{"first", "second", "third"}), []string{"first", "third"})
+
+	if got := formatList(KindPlugin, items); got != "1. * first\n2. second\n3. * third\n" {
+		t.Fatalf("formatted active list = %q", got)
+	}
+	if items[0].name != "first" || items[2].name != "third" {
+		t.Fatalf("active markers changed list names: %#v", items)
 	}
 }
 

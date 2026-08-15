@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Cyvadra/hephaestus/internal/llm"
 )
@@ -40,6 +42,37 @@ func TestEstimateLength(t *testing.T) {
 		if got := EstimateLength(c.text); got != c.want {
 			t.Errorf("EstimateLength(%q) = %d, want %d", c.text, got, c.want)
 		}
+	}
+}
+
+func TestLimitTextBytesPreservesValidUTF8HeadAndTail(t *testing.T) {
+	content := "alpha-你好-world-再见-omega"
+	got := LimitTextBytes(content, 28)
+	if !utf8.ValidString(got) {
+		t.Fatalf("LimitTextBytes returned invalid UTF-8: %q", got)
+	}
+	if len(got) > 28 {
+		t.Fatalf("length = %d, limit = 28: %q", len(got), got)
+	}
+	if got == content || got[0] != content[0] || got[len(got)-1] != content[len(content)-1] {
+		t.Fatalf("did not preserve head and tail: %q", got)
+	}
+}
+
+func TestLimitToolExchangeContentUsesStrictCombinedLimit(t *testing.T) {
+	arguments := strings.Repeat("a", MaxToolExchangeBytes-10)
+	got := LimitToolExchangeContent(arguments, "0123456789abcdef")
+	if len(arguments)+len(got) >= MaxToolExchangeBytes {
+		t.Fatalf("combined exchange size = %d, must be below %d", len(arguments)+len(got), MaxToolExchangeBytes)
+	}
+	if len(got) != 9 {
+		t.Fatalf("limited content length = %d, want 9", len(got))
+	}
+}
+
+func TestLimitToolExchangeContentOmitsResultWhenArgumentsFillBudget(t *testing.T) {
+	if got := LimitToolExchangeContent(strings.Repeat("a", MaxToolExchangeBytes-1), "result"); got != "" {
+		t.Fatalf("result = %q, want empty", got)
 	}
 }
 

@@ -38,6 +38,12 @@ type jobRunner interface {
 	Cancel(runID uint) error
 }
 
+type subagentRunner interface {
+	Get(uint) (*store.SubagentRun, error)
+	ListByParentSession(uint) ([]store.SubagentRun, error)
+	Cancel(uint) error
+}
+
 // startWorkflowRun godoc
 //
 //	@Summary		Start a workflow run

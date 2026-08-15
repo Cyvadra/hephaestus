@@ -15,6 +15,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
+	"github.com/Cyvadra/hephaestus/internal/subagent"
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -34,6 +35,7 @@ type Server struct {
 	workflows  workflowRunner
 	jobs       jobRunner
 	chatRuns   *chatrun.Service
+	subagents  subagentRunner
 	// streamDoneGrace keeps a workflow-run SSE connection open after the
 	// done event so the client can close its EventSource instead of the
 	// browser auto-reconnecting. Zero disables the grace (tests).
@@ -41,7 +43,7 @@ type Server struct {
 }
 
 // New builds the Gin engine and registers every route.
-func New(registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner, chatRuns *chatrun.Service) *Server {
+func New(registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner, chatRuns *chatrun.Service, subagents subagentRunner) *Server {
 	s := &Server{
 		engine:          gin.Default(),
 		registries:      registries,
@@ -54,6 +56,7 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 		workflows:       workflows,
 		jobs:            jobs,
 		chatRuns:        chatRuns,
+		subagents:       subagents,
 		streamDoneGrace: 3 * time.Second,
 	}
 
@@ -74,6 +77,9 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 	api.GET("/chat-runs/:id", s.getChatRun)
 	api.GET("/chat-runs/:id/stream", s.streamChatRun)
 	api.POST("/chat-runs/:id/cancel", s.cancelChatRun)
+	api.GET("/sessions/:id/subagent-runs", s.listSubagentRuns)
+	api.GET("/subagent-runs/:id", s.getSubagentRun)
+	api.POST("/subagent-runs/:id/cancel", s.cancelSubagentRun)
 	api.GET("/concierges", s.listConcierges)
 	api.GET("/projects", s.listProjects)
 	api.POST("/projects", s.createProject)
@@ -97,6 +103,8 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 
 	return s
 }
+
+var _ subagentRunner = (*subagent.Service)(nil)
 
 // Run serves until ctx is canceled, then drains in-flight requests.
 func (s *Server) Run(ctx context.Context, addr string) error {
