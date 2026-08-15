@@ -252,7 +252,7 @@ func TestLoadRejectsPartialQQNotificationConfig(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidEnvironmentContext(t *testing.T) {
+func TestLoadRejectsInvalidMetaphysics(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
 	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")

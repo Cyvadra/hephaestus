@@ -128,7 +128,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("weather: %v", err)
 	}
-	pluginReg.Register(builtin.NewEnvironmentContextPlugin(builtin.EnvironmentContextConfig{
+	pluginReg.Register(builtin.NewMetaphysicsPlugin(builtin.MetaphysicsConfig{
 		Location:    cfg.EnvironmentLocation,
 		Coordinates: weather.Location{Latitude: cfg.EnvironmentLatitude, Longitude: cfg.EnvironmentLongitude},
 		Timezone:    cfg.EnvironmentTimezone,

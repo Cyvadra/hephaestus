@@ -159,7 +159,7 @@ web-fetch provider.
 | `HEPHAESTUS_ENV_LONGITUDE` | required | Longitude of the configured environment location, from `-180` to `180`. |
 | `HEPHAESTUS_ENV_TIMEZONE` | required | IANA timezone used for time, lunar date, and four-pillar calculation. |
 | `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | Ordered public weather providers used as fallback for first-turn context. |
-| `HEPHAESTUS_FIXED_PLUGINS` | `environment_context,session_summary` | Comma-separated plugins that run for every session and cannot be disabled. |
+| `HEPHAESTUS_FIXED_PLUGINS` | `metaphysics,session_summary` | Comma-separated plugins that run for every session and cannot be disabled. |
 | `HEPHAESTUS_SUBAGENT_MAX_DEPTH` | `2` | Maximum recursive spawn/fork delegation depth. |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | none | WeCom webhook that receives warning and error notifications. |
 | `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | Primary page-fetch provider: `firecrawl` or `local`. |

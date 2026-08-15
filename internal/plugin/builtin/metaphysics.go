@@ -19,8 +19,8 @@ type WeatherClient interface {
 	Current(context.Context, weather.Location) (weather.Observation, error)
 }
 
-// EnvironmentContextConfig configures first-turn environment context.
-type EnvironmentContextConfig struct {
+// MetaphysicsConfig configures first-turn environment context.
+type MetaphysicsConfig struct {
 	Location    string
 	Coordinates weather.Location
 	Timezone    string
@@ -28,37 +28,37 @@ type EnvironmentContextConfig struct {
 	Now         func() time.Time
 }
 
-// EnvironmentContextPlugin persists time, lunar calendar, and weather before
+// MetaphysicsPlugin persists time, lunar calendar, and weather before
 // the first user message of each session.
-type EnvironmentContextPlugin struct {
-	config EnvironmentContextConfig
+type MetaphysicsPlugin struct {
+	config MetaphysicsConfig
 }
 
-func NewEnvironmentContextPlugin(config EnvironmentContextConfig) *EnvironmentContextPlugin {
+func NewMetaphysicsPlugin(config MetaphysicsConfig) *MetaphysicsPlugin {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	return &EnvironmentContextPlugin{config: config}
+	return &MetaphysicsPlugin{config: config}
 }
 
-func (p *EnvironmentContextPlugin) Name() string { return "environment_context" }
+func (p *MetaphysicsPlugin) Name() string { return "metaphysics" }
 
-func (p *EnvironmentContextPlugin) Description() string {
+func (p *MetaphysicsPlugin) Description() string {
 	return "在首条消息中注入时间、地点、天气和农历环境信息。"
 }
 
-func (p *EnvironmentContextPlugin) Timeout() time.Duration { return 10 * time.Second }
+func (p *MetaphysicsPlugin) Timeout() time.Duration { return 10 * time.Second }
 
-func (p *EnvironmentContextPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plugin.Phase, turn plugin.TurnContext) (plugin.TurnContext, error) {
+func (p *MetaphysicsPlugin) Handle(ctx context.Context, hook plugin.Hook, phase plugin.Phase, turn plugin.TurnContext) (plugin.TurnContext, error) {
 	if hook != plugin.HookUserMessageIncoming || phase != plugin.PhaseAfter || !turn.IsFirstTurn || len(turn.Messages) == 0 {
 		return turn, nil
 	}
 	location, err := time.LoadLocation(p.config.Timezone)
 	if err != nil {
-		return turn, fmt.Errorf("environment_context: load timezone: %w", err)
+		return turn, fmt.Errorf("metaphysics: load timezone: %w", err)
 	}
 	now := p.config.Now().In(location)
-	content := renderEnvironmentContext(ctx, p.config, now)
+	content := renderMetaphysics(ctx, p.config, now)
 	last := len(turn.Messages) - 1
 	environmentMessage := store.ChatMessage{Role: ds4.RoleSystem, Content: content, Timestamp: now}
 	turn.Messages = append(turn.Messages, store.ChatMessage{})
@@ -67,7 +67,7 @@ func (p *EnvironmentContextPlugin) Handle(ctx context.Context, hook plugin.Hook,
 	return turn, nil
 }
 
-func renderEnvironmentContext(ctx context.Context, config EnvironmentContextConfig, now time.Time) string {
+func renderMetaphysics(ctx context.Context, config MetaphysicsConfig, now time.Time) string {
 	lunarDate := lunar.FromTime(now)
 	lines := []string{
 		"[meta info begin]",

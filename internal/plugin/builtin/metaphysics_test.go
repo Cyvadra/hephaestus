@@ -22,8 +22,8 @@ func (s environmentWeatherStub) Current(context.Context, weather.Location) (weat
 	return s.observation, s.err
 }
 
-func TestEnvironmentContextPluginInsertsSystemMessageBeforeUserMessage(t *testing.T) {
-	environmentPlugin := NewEnvironmentContextPlugin(EnvironmentContextConfig{
+func TestMetaphysicsPluginInsertsSystemMessageBeforeUserMessage(t *testing.T) {
+	environmentPlugin := NewMetaphysicsPlugin(MetaphysicsConfig{
 		Location: "深圳", Timezone: "Asia/Shanghai",
 		Weather: environmentWeatherStub{observation: weather.Observation{Condition: "晴", TemperatureC: 30, Humidity: 80, WindKPH: 10}},
 		Now:     func() time.Time { return time.Date(2024, time.February, 10, 12, 0, 0, 0, time.UTC) },
@@ -49,8 +49,8 @@ func TestEnvironmentContextPluginInsertsSystemMessageBeforeUserMessage(t *testin
 	}
 }
 
-func TestEnvironmentContextPluginWeatherFailureDoesNotBlockInsertion(t *testing.T) {
-	environmentPlugin := NewEnvironmentContextPlugin(EnvironmentContextConfig{Location: "深圳", Timezone: "Asia/Shanghai", Weather: environmentWeatherStub{err: errors.New("down")}})
+func TestMetaphysicsPluginWeatherFailureDoesNotBlockInsertion(t *testing.T) {
+	environmentPlugin := NewMetaphysicsPlugin(MetaphysicsConfig{Location: "深圳", Timezone: "Asia/Shanghai", Weather: environmentWeatherStub{err: errors.New("down")}})
 	turn := plugin.TurnContext{IsFirstTurn: true, Messages: []store.ChatMessage{{Role: "user", Content: "你好"}}}
 	got, err := environmentPlugin.Handle(context.Background(), plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
 	if err != nil || len(got.Messages) != 2 || !strings.Contains(got.Messages[0].Content, "[meta info begin]") || strings.Contains(got.Messages[0].Content, "Weather:") || got.Messages[1].Content != "你好" {
