@@ -114,19 +114,20 @@ func TestChartPatternsQinHostedToKun(t *testing.T) {
 	}
 }
 
-func TestPalaceMarkersIncludeFuyinFanyin(t *testing.T) {
+func TestPalaceMarkersExcludeChartLevelFuyinFanyin(t *testing.T) {
+	// 伏吟/反吟 是盘面级格局，由 chartPatterns 负责；逐宫 <标记> 不应重复输出。
 	pan := &xuan.QMPan{}
-	pan.Gongs[1] = xuan.QMPalace{Idx: 1, GuestGan: "戊", HostGan: "戊"}
-	if markers := strings.Join(palaceMarkers(pan, &pan.Gongs[1]), "；"); !strings.Contains(markers, "天盘伏吟") {
-		t.Fatalf("markers %q do not contain 天盘伏吟", markers)
+	pan.Gongs[1] = xuan.QMPalace{Idx: 1, GuestGan: "戊", HostGan: "戊", Door: "休"}
+	if markers := strings.Join(palaceMarkers(pan, &pan.Gongs[1]), "；"); strings.Contains(markers, "天盘伏吟") || strings.Contains(markers, "门伏吟") {
+		t.Fatalf("markers %q must not contain chart-level 伏吟 markers", markers)
 	}
 	pan.Gongs[1] = xuan.QMPalace{Idx: 1, GuestGan: "甲", HostGan: "庚"}
-	if markers := strings.Join(palaceMarkers(pan, &pan.Gongs[1]), "；"); !strings.Contains(markers, "天盘反吟") {
-		t.Fatalf("markers %q do not contain 天盘反吟", markers)
+	if markers := strings.Join(palaceMarkers(pan, &pan.Gongs[1]), "；"); strings.Contains(markers, "天盘反吟") {
+		t.Fatalf("markers %q must not contain chart-level 天盘反吟", markers)
 	}
 	// 休门本宫在坎一(1)，落离九(9) 为门反吟
 	pan.Gongs[9] = xuan.QMPalace{Idx: 9, Door: "休"}
-	if markers := strings.Join(palaceMarkers(pan, &pan.Gongs[9]), "；"); !strings.Contains(markers, "门反吟") {
-		t.Fatalf("markers %q do not contain 门反吟", markers)
+	if markers := strings.Join(palaceMarkers(pan, &pan.Gongs[9]), "；"); strings.Contains(markers, "门反吟") {
+		t.Fatalf("markers %q must not contain chart-level 门反吟", markers)
 	}
 }

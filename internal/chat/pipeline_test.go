@@ -47,6 +47,36 @@ func TestLastUserMessage_RejectsEmpty(t *testing.T) {
 	}
 }
 
+func TestIncomingMessagesToPersistReturnsMessagesInsertedBeforePendingUser(t *testing.T) {
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleSystem, Content: "identity"},
+		{Role: ds4.RoleSystem, Content: "environment"},
+		{Role: ds4.RoleUser, Content: "pending"},
+	}
+
+	got, err := incomingMessagesToPersist(messages, 1)
+	if err != nil {
+		t.Fatalf("incomingMessagesToPersist: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "environment" {
+		t.Fatalf("expected inserted environment message, got %+v", got)
+	}
+	got[0].Content = "mutated"
+	if messages[1].Content != "environment" {
+		t.Fatal("expected returned messages to be copied")
+	}
+}
+
+func TestIncomingMessagesToPersistRejectsMissingTrailingUser(t *testing.T) {
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleUser, Content: "pending"},
+		{Role: ds4.RoleSystem, Content: "appended after user"},
+	}
+	if _, err := incomingMessagesToPersist(messages, 0); err == nil {
+		t.Fatal("expected error when pending user is not trailing")
+	}
+}
+
 func TestApplyTurnOptionsOverridesReasoningAndFiltersOnlyDisabledTools(t *testing.T) {
 	identity := registry.Identity{ReasoningEffort: registry.ReasoningLow}
 	webSearch := namedTool{name: "web_search"}

@@ -16,14 +16,6 @@ var oppositePalace = map[int]int{
 	1: 9, 2: 8, 3: 7, 4: 6, 6: 4, 7: 3, 8: 2, 9: 1,
 }
 
-// ganClash maps 天干六冲: 甲庚、乙辛、丙壬、丁癸 (戊己居中无冲).
-var ganClash = map[string]string{
-	"甲": "庚", "庚": "甲",
-	"乙": "辛", "辛": "乙",
-	"丙": "壬", "壬": "丙",
-	"丁": "癸", "癸": "丁",
-}
-
 // Render returns a formatted time-based rotating Qimen Dunjia chart for t.
 func Render(t time.Time) string {
 	solar := calendar.NewSolar(t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second())
@@ -61,12 +53,10 @@ type palaceXML struct {
 	HostGan   string `xml:"地盘"`
 	GuestGan  string `xml:"天盘"`
 	Star      string `xml:"九星"`
-	Door      string `xml:"八门"`
-	Markers   string `xml:"标记"`
-	God       string `xml:"八神"`
+	Door      string `xml:"八门,omitempty"`
+	Markers   string `xml:"标记,omitempty"`
+	God       string `xml:"八神,omitempty"`
 	HiddenGan string `xml:"暗干"`
-	PathGan   string `xml:"流转天干"`
-	PathZhi   string `xml:"流转地支"`
 }
 
 func renderNinePalacesXML(pan *xuan.QMPan) string {
@@ -82,8 +72,6 @@ func renderNinePalacesXML(pan *xuan.QMPan) string {
 			Door:      palace.Door,
 			God:       palace.God,
 			HiddenGan: palace.HideGan,
-			PathGan:   palace.PathGan,
-			PathZhi:   palace.PathZhi,
 			Markers:   strings.Join(palaceMarkers(pan, &palace), "；"),
 		})
 	}
@@ -114,18 +102,8 @@ func palaceMarkers(pan *xuan.QMPan, palace *xuan.QMPalace) []string {
 	if pan.RollHosting > 0 && palace.Idx == pan.RollHosting {
 		markers = append(markers, "禽")
 	}
-	if palace.GuestGan != "" && palace.GuestGan == palace.HostGan {
-		markers = append(markers, "天盘伏吟")
-	}
-	if palace.GuestGan != "" && ganClash[palace.GuestGan] == palace.HostGan {
-		markers = append(markers, "天盘反吟")
-	}
-	if palace.Door != "" && xuan.DoorHome[palace.Door] == palace.Idx {
-		markers = append(markers, "门伏吟")
-	}
-	if palace.Door != "" && xuan.DoorHome[palace.Door] == oppositePalace[palace.Idx] {
-		markers = append(markers, "门反吟")
-	}
+	// 伏吟/反吟（天盘伏吟/天盘反吟/门伏吟/门反吟）是盘面级格局，
+	// 由 chartPatterns 在 "格局:" 行统一输出，逐宫不重复标记。
 
 	guestTomb := palace.GuestGan != "" && palace.Idx == xuan.ZhiGong9[xuan.QMTomb[palace.GuestGan]]
 	hostTomb := palace.HostGan != "" && palace.Idx == xuan.ZhiGong9[xuan.QMTomb[palace.HostGan]]

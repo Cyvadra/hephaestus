@@ -326,6 +326,10 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
 	turn.History = append(append([]store.ChatMessage(nil), prep.activePath...), pendingUser)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
+	incomingPersistMessages, err := incomingMessagesToPersist(turn.Messages, len(llmContext))
+	if err != nil {
+		return nil, err
+	}
 
 	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, turn)
 	if err != nil {
@@ -342,7 +346,8 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	if err != nil {
 		return nil, err
 	}
-	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, &editedUser, opts.OnDelta)
+	incomingPersistMessages = append(incomingPersistMessages, editedUser)
+	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, incomingPersistMessages, opts.OnDelta)
 	if result != nil && err == nil {
 		summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
 		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
@@ -511,11 +516,11 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 }
 
 // runFrom runs converse and persists its output as a single chain parented
-// at parentID. newUserMessage, when non-nil, is prepended to that chain and
-// persisted as a new user message (Run's case); when nil, the chain is
-// parented directly onto an already-persisted user message (Regenerate's
-// case) and no new user message is created.
-func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newUserMessage *store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
+// at parentID. newInputMessages, when non-empty, are prepended to that chain
+// and persisted as the incoming turn's injected messages plus pending user
+// message (Run's case); when empty, the chain is parented directly onto an
+// already-persisted user message (Regenerate's case).
+func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newInputMessages []store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
 	toPersist, deliveries, notificationIDs, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
 	acknowledged := false
 	defer func() {
@@ -528,8 +533,8 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 	}
 
 	persistMessages := toPersist
-	if newUserMessage != nil {
-		persistMessages = append([]store.ChatMessage{*newUserMessage}, toPersist...)
+	if len(newInputMessages) > 0 {
+		persistMessages = append(append([]store.ChatMessage(nil), newInputMessages...), toPersist...)
 	}
 	if len(persistMessages) == 0 {
 		return nil, converseErr
@@ -830,6 +835,20 @@ func lastUserMessage(messages []store.ChatMessage) (store.ChatMessage, error) {
 		return store.ChatMessage{}, fmt.Errorf("chat: expected trailing message to be role %q, got %q (a plugin likely reordered or appended after the pending user message)", ds4.RoleUser, last.Role)
 	}
 	return last, nil
+}
+
+func incomingMessagesToPersist(messages []store.ChatMessage, originalContextLen int) ([]store.ChatMessage, error) {
+	if originalContextLen < 0 || originalContextLen > len(messages) {
+		return nil, fmt.Errorf("chat: invalid original context length %d for %d messages", originalContextLen, len(messages))
+	}
+	if _, err := lastUserMessage(messages); err != nil {
+		return nil, err
+	}
+	injectedEnd := len(messages) - 1
+	if originalContextLen >= injectedEnd {
+		return nil, nil
+	}
+	return append([]store.ChatMessage(nil), messages[originalContextLen:injectedEnd]...), nil
 }
 
 func sameMessageID(left, right *uint) bool {

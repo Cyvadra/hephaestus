@@ -32,6 +32,8 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const [copied, setCopied] = useState(false)
   const [reasoningPinned, setReasoningPinned] = useState(false)
   const [reasoningHovered, setReasoningHovered] = useState(false)
+  const [systemPinned, setSystemPinned] = useState(false)
+  const [systemHovered, setSystemHovered] = useState(false)
   const isUser = msg.Role === 'user'
   const isAssistant = msg.Role === 'assistant'
 	const attachments = msg.Attachments ?? []
@@ -196,34 +198,15 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
           ) : (
             <>
               {hasThinkingProcess && (
-                <div className="reasoning-panel">
-                  <details className="reasoning-details" open={reasoningPinned}>
-                    <summary
-                      className="reasoning-summary"
-                      onMouseEnter={() => setReasoningHovered(true)}
-                      onMouseLeave={event => {
-                        const related = event.relatedTarget
-                        if (related instanceof Element && related.closest('.reasoning-preview')) return
-                        setReasoningHovered(false)
-                      }}
-                      onClick={event => {
-                        event.preventDefault()
-                        setReasoningPinned(pinned => !pinned)
-                      }}
-                    >
-                      {t('chat.reasoning.process')}
-                    </summary>
-                    {reasoningPinned && <StoredThinkingProcess messages={thinkingMessages} />}
-                  </details>
-                  {!reasoningPinned && reasoningHovered && (
-                    <ReasoningPreview
-                      messages={thinkingMessages}
-                      onClick={() => setReasoningPinned(true)}
-                      onMouseEnter={() => setReasoningHovered(true)}
-                      onMouseLeave={() => setReasoningHovered(false)}
-                    />
-                  )}
-                </div>
+                <CollapsibleContextPanel
+                  title={t('chat.reasoning.process')}
+                  pinned={reasoningPinned}
+                  hovered={reasoningHovered}
+                  onPinnedChange={setReasoningPinned}
+                  onHoveredChange={setReasoningHovered}
+                >
+                  <StoredThinkingProcess messages={thinkingMessages} />
+                </CollapsibleContextPanel>
               )}
               {(msg.Content || attachments.length > 0) && (
                 <div className="message-card assistant">
@@ -308,9 +291,29 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
     )
   }
 
+  if (msg.Role === 'system') {
+    return (
+      <div className="message-row assistant">
+        <div className="message-stack">
+          <CollapsibleContextPanel
+            title={t('chat.message.systemMessage')}
+            pinned={systemPinned}
+            hovered={systemHovered}
+            onPinnedChange={setSystemPinned}
+            onHoveredChange={setSystemHovered}
+          >
+            <div className="reasoning-content system-message-content">
+              <div className="reasoning-text">{msg.Content}</div>
+            </div>
+          </CollapsibleContextPanel>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="message-row assistant">
-      <div className="message-card system">[{msg.Role}] {msg.Content.slice(0, 200)}</div>
+      <div className="message-card system">[{msg.Role}] {msg.Content}</div>
     </div>
   )
 }
@@ -371,8 +374,49 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   )
 }
 
-function ReasoningPreview({ messages, onClick, onMouseEnter, onMouseLeave }: {
-  messages: ChatMessage[]
+function CollapsibleContextPanel({ title, pinned, hovered, onPinnedChange, onHoveredChange, children }: {
+  title: string
+  pinned: boolean
+  hovered: boolean
+  onPinnedChange: React.Dispatch<React.SetStateAction<boolean>>
+  onHoveredChange: React.Dispatch<React.SetStateAction<boolean>>
+  children: React.ReactNode
+}) {
+  return (
+    <div className="reasoning-panel">
+      <details className="reasoning-details" open={pinned}>
+        <summary
+          className="reasoning-summary"
+          onMouseEnter={() => onHoveredChange(true)}
+          onMouseLeave={event => {
+            const related = event.relatedTarget
+            if (related instanceof Element && related.closest('.reasoning-preview')) return
+            onHoveredChange(false)
+          }}
+          onClick={event => {
+            event.preventDefault()
+            onPinnedChange(current => !current)
+          }}
+        >
+          {title}
+        </summary>
+        {pinned && children}
+      </details>
+      {!pinned && hovered && (
+        <ContextPreview
+          onClick={() => onPinnedChange(true)}
+          onMouseEnter={() => onHoveredChange(true)}
+          onMouseLeave={() => onHoveredChange(false)}
+        >
+          {children}
+        </ContextPreview>
+      )}
+    </div>
+  )
+}
+
+function ContextPreview({ children, onClick, onMouseEnter, onMouseLeave }: {
+  children: React.ReactNode
   onClick: () => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -399,7 +443,7 @@ function ReasoningPreview({ messages, onClick, onMouseEnter, onMouseLeave }: {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <StoredThinkingProcess messages={messages} />
+      {children}
     </div>
   )
 }

@@ -81,6 +81,7 @@ export const resources = {
           toolResult: '工具执行结果',
           toolCall: '工具调用',
           called: '已调用',
+          systemMessage: '系统消息',
           viewResult: '查看执行结果',
           truncatedResult: '[结果过长，已截断]',
         },
