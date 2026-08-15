@@ -24,8 +24,8 @@ export const resources = {
       },
       chat: {
         reasoning: {
-          max: '深度',
-          high: '快速',
+          max: '极度',
+          high: '深度',
           none: '即答',
           unavailable: '无',
           select: '选择思考强度',

@@ -160,6 +160,7 @@ web-fetch provider.
 | `HEPHAESTUS_ENV_TIMEZONE` | required | IANA timezone used for time, lunar date, and four-pillar calculation. |
 | `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | Ordered public weather providers used as fallback for first-turn context. |
 | `HEPHAESTUS_FIXED_PLUGINS` | `environment_context,session_summary` | Comma-separated plugins that run for every session and cannot be disabled. |
+| `HEPHAESTUS_SUBAGENT_MAX_DEPTH` | `2` | Maximum recursive spawn/fork delegation depth. |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | none | WeCom webhook that receives warning and error notifications. |
 | `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | Primary page-fetch provider: `firecrawl` or `local`. |
 | `HEPHAESTUS_FIRECRAWL_API_KEY` | required for `firecrawl` | Firecrawl API key. |
@@ -187,6 +188,10 @@ web-fetch provider.
 
 The OCR image limit cannot exceed the per-file limit, and the per-file limit
 cannot exceed the total message limit.
+
+### Subagents
+
+Enable the `subagent` tool group on a Concierge to expose three delegated-agent tools. `spawn` starts an independent child Session in the background and returns a run ID immediately. `fork` seeds an independent child Session from the current conversation and waits for its result. `await` waits for the directly spawned background tasks that were active when it was called. Completed background runs steer an active parent turn when possible and otherwise enter the next parent turn as durable context.
 
 ### QQ Channel
 

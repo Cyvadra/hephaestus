@@ -947,6 +947,120 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/{id}/subagent-runs": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subagents"
+                ],
+                "summary": "List session subagent runs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Parent session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_server.subagentRunResponse"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/subagent-runs/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subagents"
+                ],
+                "summary": "Get a subagent run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Subagent run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.subagentRunResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/subagent-runs/{id}/cancel": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subagents"
+                ],
+                "summary": "Cancel a subagent run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Subagent run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/workflow-runs": {
             "get": {
                 "description": "Lists workflow runs, newest first, with optional workflow-name filter and bounded pagination.",
@@ -1492,6 +1606,47 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_hephaestus_internal_store.SubagentMode": {
+            "type": "string",
+            "enum": [
+                "spawn",
+                "fork"
+            ],
+            "x-enum-varnames": [
+                "SubagentModeSpawn",
+                "SubagentModeFork"
+            ]
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.SubagentRunStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "running",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "interrupted"
+            ],
+            "x-enum-varnames": [
+                "SubagentRunPending",
+                "SubagentRunRunning",
+                "SubagentRunSucceeded",
+                "SubagentRunFailed",
+                "SubagentRunCancelled",
+                "SubagentRunInterrupted"
+            ]
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.SubagentSchedule": {
+            "type": "string",
+            "enum": [
+                "background",
+                "foreground"
+            ],
+            "x-enum-varnames": [
+                "SubagentScheduleBackground",
+                "SubagentScheduleForeground"
+            ]
+        },
         "github_com_Cyvadra_hephaestus_internal_store.WorkflowRun": {
             "type": "object",
             "properties": {
@@ -1832,6 +1987,44 @@ const docTemplate = `{
                 },
                 "project": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_server.subagentRunResponse": {
+            "type": "object",
+            "properties": {
+                "child_session_id": {
+                    "type": "integer"
+                },
+                "depth": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "mode": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.SubagentMode"
+                },
+                "parent_run_id": {
+                    "type": "integer"
+                },
+                "parent_session_id": {
+                    "type": "integer"
+                },
+                "result": {
+                    "type": "string"
+                },
+                "schedule": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.SubagentSchedule"
+                },
+                "status": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.SubagentRunStatus"
                 }
             }
         },
