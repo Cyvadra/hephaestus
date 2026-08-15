@@ -21,6 +21,7 @@ func TestRenderIncludesFormattedTimeChart(t *testing.T) {
 		"公历: 2024年2月10日 12:0",
 		"局:",
 		"值符:",
+		"四柱落宫(用神·天盘):",
 		"<九宫>",
 		"<宫 洛书数=\"1\">",
 		"<标记>",
@@ -98,6 +99,53 @@ func TestChartPatternsMixedStarFanDoorFu(t *testing.T) {
 		if !strings.Contains(patterns, expected) {
 			t.Fatalf("patterns %q do not contain %q", patterns, expected)
 		}
+	}
+}
+
+func TestGanPalaceSearchesHeavenPlate(t *testing.T) {
+	pan := &xuan.QMPan{}
+	for i := 1; i <= 9; i++ {
+		pan.Gongs[i] = xuan.QMPalace{Idx: i}
+	}
+	pan.Gongs[4].GuestGan = "丁"
+	pan.Gongs[6].GuestGan = "己"
+	if got := ganPalace(pan, "丁"); got != 4 {
+		t.Fatalf("ganPalace(丁) = %d, want 4", got)
+	}
+	if got := ganPalace(pan, "己"); got != 6 {
+		t.Fatalf("ganPalace(己) = %d, want 6", got)
+	}
+	if got := ganPalace(pan, "庚"); got != 0 {
+		t.Fatalf("ganPalace(庚) = %d, want 0 (not in heaven plate)", got)
+	}
+}
+
+func TestGanPalaceHostsMiddleToKun(t *testing.T) {
+	pan := &xuan.QMPan{}
+	pan.Gongs[5] = xuan.QMPalace{Idx: 5, GuestGan: "癸"}
+	if got := ganPalace(pan, "癸"); got != 2 {
+		t.Fatalf("ganPalace(中宫) = %d, want 2 (寄坤二)", got)
+	}
+}
+
+func TestPillarPalacesHeavenPlateLocations(t *testing.T) {
+	// 2024-02-10 12:00 四柱 = 甲辰年 丙寅月 甲辰日 庚午时。
+	solar := calendar.NewSolar(2024, 2, 10, 12, 0, 0)
+	game := xuan.NewQMGame(solar, xuan.QMParams{Type: xuan.QMTypeRotating, HostingType: xuan.QMHostingType2, FlyType: xuan.QMFlyTypeAllOrder, JuType: xuan.QMJuTypeSplit, HideGanType: xuan.QMHideGanDutyDoorHour, YMDH: xuan.QMGameHour})
+	game.ShowTimeGame()
+	// 覆盖天盘布局以确定落宫：壬→坤2, 丙→震3, 庚→艮8。
+	pan := game.ShowPan
+	for i := 1; i <= 9; i++ {
+		pan.Gongs[i].GuestGan = ""
+	}
+	pan.Gongs[2].GuestGan = "壬"
+	pan.Gongs[3].GuestGan = "丙"
+	pan.Gongs[8].GuestGan = "庚"
+
+	got := pillarPalaces(pan, game)
+	want := "四柱落宫(用神·天盘): 年干甲遁壬→坤2宫  月干丙→震3宫  日干甲遁壬→坤2宫  时干庚→艮8宫\n"
+	if got != want {
+		t.Fatalf("pillarPalaces = %q, want %q", got, want)
 	}
 }
 

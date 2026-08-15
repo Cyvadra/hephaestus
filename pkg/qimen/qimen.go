@@ -36,6 +36,7 @@ func Render(t time.Time) string {
 	if patterns := chartPatterns(pan); len(patterns) > 0 {
 		output.WriteString(fmt.Sprintf("格局: %s\n", strings.Join(patterns, "、")))
 	}
+	output.WriteString(pillarPalaces(pan, game))
 	output.WriteString("\n")
 	output.WriteString(renderNinePalacesXML(pan))
 	output.WriteString("[奇门遁甲 snapshot end]")
@@ -174,4 +175,53 @@ func chartPatterns(pan *xuan.QMPan) []string {
 		patterns = append(patterns, "八门反吟")
 	}
 	return patterns
+}
+
+// pillarPalaces returns the 年月日时 four pillars' 用神落宫, each found in the
+// heaven plate (天盘奇仪). A 甲 stem is resolved to the 六仪 it 遁于 via
+// xuan.HideJia (甲子戊、甲戌己、甲申庚、甲午辛、甲辰壬、甲寅癸) before searching;
+// the 中宫 (5) is hosted to 坤二 (2) per QMHostingType2, matching the duty-star
+// hosting used elsewhere in this package.
+func pillarPalaces(pan *xuan.QMPan, game *xuan.QMGame) string {
+	c8 := game.Lunar.GetEightChar()
+	pillars := []struct {
+		name string
+		gan  string
+		zhi  string
+	}{
+		{"年", c8.GetYearGan(), c8.GetYearZhi()},
+		{"月", c8.GetMonthGan(), c8.GetMonthZhi()},
+		{"日", c8.GetDayGan(), c8.GetDayZhi()},
+		{"时", c8.GetTimeGan(), c8.GetTimeZhi()},
+	}
+	var parts []string
+	for _, p := range pillars {
+		gan := p.gan
+		note := ""
+		if gan == "甲" {
+			gan = xuan.HideJia[p.gan+p.zhi]
+			note = "遁" + gan
+		}
+		palace := ganPalace(pan, gan)
+		if palace == 0 {
+			parts = append(parts, fmt.Sprintf("%s干%s%s(未现天盘)", p.name, p.gan, note))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s干%s%s→%s%d宫", p.name, p.gan, note, xuan.Diagrams9(palace), palace))
+	}
+	return fmt.Sprintf("四柱落宫(用神·天盘): %s\n", strings.Join(parts, "  "))
+}
+
+// ganPalace returns the palace whose heaven plate (天盘奇仪) holds gan. A
+// result in the middle palace is hosted to 坤二 (2), per QMHostingType2.
+func ganPalace(pan *xuan.QMPan, gan string) int {
+	for idx := 1; idx <= 9; idx++ {
+		if pan.Gongs[idx].GuestGan == gan {
+			if idx == 5 {
+				return 2
+			}
+			return idx
+		}
+	}
+	return 0
 }
