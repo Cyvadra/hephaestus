@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/pkg/weather"
@@ -21,7 +22,7 @@ func (s environmentWeatherStub) Current(context.Context, weather.Location) (weat
 	return s.observation, s.err
 }
 
-func TestEnvironmentContextPluginInsertsAfterAttachmentPrefix(t *testing.T) {
+func TestEnvironmentContextPluginInsertsSystemMessageBeforeUserMessage(t *testing.T) {
 	environmentPlugin := NewEnvironmentContextPlugin(EnvironmentContextConfig{
 		Location: "深圳", Timezone: "Asia/Shanghai",
 		Weather: environmentWeatherStub{observation: weather.Observation{Condition: "晴", TemperatureC: 30, Humidity: 80, WindKPH: 10}},
@@ -34,9 +35,17 @@ func TestEnvironmentContextPluginInsertsAfterAttachmentPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := got.Messages[0].Content
-	if !strings.HasPrefix(content, attachment) || !strings.Contains(content, attachment+"[meta info begin]") || !strings.HasSuffix(content, "\n\n请总结") {
-		t.Fatalf("unexpected message content: %q", content)
+	if len(got.Messages) != 2 {
+		t.Fatalf("message count = %d, want 2", len(got.Messages))
+	}
+	if got.Messages[0].Role != ds4.RoleSystem || !strings.Contains(got.Messages[0].Content, "[meta info begin]") {
+		t.Fatalf("unexpected environment message: %#v", got.Messages[0])
+	}
+	if !strings.Contains(got.Messages[0].Content, "[奇门遁甲 snapshot begin]") {
+		t.Fatalf("environment message does not include Qimen chart: %q", got.Messages[0].Content)
+	}
+	if got.Messages[1].Role != "user" || got.Messages[1].Content != attachment+"请总结" {
+		t.Fatalf("unexpected user message: %#v", got.Messages[1])
 	}
 }
 
@@ -44,7 +53,7 @@ func TestEnvironmentContextPluginWeatherFailureDoesNotBlockInsertion(t *testing.
 	environmentPlugin := NewEnvironmentContextPlugin(EnvironmentContextConfig{Location: "深圳", Timezone: "Asia/Shanghai", Weather: environmentWeatherStub{err: errors.New("down")}})
 	turn := plugin.TurnContext{IsFirstTurn: true, Messages: []store.ChatMessage{{Role: "user", Content: "你好"}}}
 	got, err := environmentPlugin.Handle(context.Background(), plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
-	if err != nil || !strings.Contains(got.Messages[0].Content, "[meta info begin]") || strings.Contains(got.Messages[0].Content, "Weather:") {
-		t.Fatalf("unexpected degraded result: %q, %v", got.Messages[0].Content, err)
+	if err != nil || len(got.Messages) != 2 || !strings.Contains(got.Messages[0].Content, "[meta info begin]") || strings.Contains(got.Messages[0].Content, "Weather:") || got.Messages[1].Content != "你好" {
+		t.Fatalf("unexpected degraded result: %#v, %v", got.Messages, err)
 	}
 }

@@ -8,6 +8,7 @@ require (
 	github.com/Cyvadra/ds4 v0.1.1-0.20260812185826-cc18b1e153ee
 	github.com/ProgramCX/GoQQBot v0.0.0
 	github.com/chromedp/chromedp v0.16.0
+	github.com/deminzhang/qimen-go v0.0.10-0.20260611034756-4d3f58fa0f40
 	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.10.0
@@ -79,6 +80,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/exp v0.0.0-20250911091902-df9299821621 // indirect
 	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

@@ -6,8 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
+	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/pkg/lunar"
+	"github.com/Cyvadra/hephaestus/pkg/qimen"
 	"github.com/Cyvadra/hephaestus/pkg/weather"
 )
 
@@ -57,8 +60,10 @@ func (p *EnvironmentContextPlugin) Handle(ctx context.Context, hook plugin.Hook,
 	now := p.config.Now().In(location)
 	content := renderEnvironmentContext(ctx, p.config, now)
 	last := len(turn.Messages) - 1
-	prefix, body := splitAttachmentPrefix(turn.Messages[last].Content)
-	turn.Messages[last].Content = prefix + content + "\n\n" + body
+	environmentMessage := store.ChatMessage{Role: ds4.RoleSystem, Content: content, Timestamp: now}
+	turn.Messages = append(turn.Messages, store.ChatMessage{})
+	copy(turn.Messages[last+1:], turn.Messages[last:])
+	turn.Messages[last] = environmentMessage
 	return turn, nil
 }
 
@@ -77,29 +82,8 @@ func renderEnvironmentContext(ctx context.Context, config EnvironmentContextConf
 	lines = append(lines,
 		fmt.Sprintf("农历: %s", lunarDate.Date),
 		fmt.Sprintf("四柱: %s %s %s %s", lunarDate.Year, lunarDate.Month, lunarDate.Day, lunarDate.Hour),
+		qimen.Render(now),
 		"[meta info end]",
 	)
 	return strings.Join(lines, "\n")
-}
-
-func splitAttachmentPrefix(content string) (string, string) {
-	rest := content
-	var prefix strings.Builder
-	for strings.HasPrefix(rest, "[file name]: ") {
-		end := strings.Index(rest, "\n\n")
-		if end < 0 {
-			break
-		}
-		block := rest[:end+2]
-		if strings.Contains(block, "[file content begin]\n") && !strings.Contains(block, "\n[file content end]\n") {
-			contentEnd := strings.Index(rest, "\n[file content end]\n\n")
-			if contentEnd < 0 {
-				break
-			}
-			block = rest[:contentEnd+len("\n[file content end]\n\n")]
-		}
-		prefix.WriteString(block)
-		rest = rest[len(block):]
-	}
-	return prefix.String(), rest
 }
