@@ -50,10 +50,16 @@ func (r *Registry) Validate(knownTools, knownPlugins map[string]bool) error {
 				return fmt.Errorf("registry: concierge %q references unknown tool group %q", name, tg)
 			}
 		}
+		if invalid := firstNotContained(c.DefaultToolGroups, c.ToolGroups); invalid != "" {
+			return fmt.Errorf("registry: concierge %q default tool group %q is not available", name, invalid)
+		}
 		for _, p := range c.Plugins {
 			if !knownPlugins[p] {
 				return fmt.Errorf("registry: concierge %q references unknown plugin %q", name, p)
 			}
+		}
+		if invalid := firstNotContained(c.DefaultPlugins, c.Plugins); invalid != "" {
+			return fmt.Errorf("registry: concierge %q default plugin %q is not available", name, invalid)
 		}
 	}
 
@@ -76,6 +82,19 @@ func (r *Registry) Validate(knownTools, knownPlugins map[string]bool) error {
 	}
 
 	return nil
+}
+
+func firstNotContained(subset, available []string) string {
+	allowed := make(map[string]struct{}, len(available))
+	for _, name := range available {
+		allowed[name] = struct{}{}
+	}
+	for _, name := range subset {
+		if _, ok := allowed[name]; !ok {
+			return name
+		}
+	}
+	return ""
 }
 
 // validateBindingInput checks that a Job binding's input satisfies its

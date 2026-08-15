@@ -199,6 +199,10 @@ func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, 
 	settings.Impressions = keepRegistered(settings.Impressions, reg.Impressions, &dirty)
 	settings.ToolGroups = keepRegistered(settings.ToolGroups, reg.ToolGroups, &dirty)
 	settings.Plugins = keepKnownPlugins(settings.Plugins, p.plugins, &dirty)
+	if concierge, ok := reg.Concierges[sess.SourceConcierge]; ok {
+		settings.ToolGroups = keepAllowed(settings.ToolGroups, concierge.ToolGroups, &dirty)
+		settings.Plugins = keepAllowed(settings.Plugins, concierge.Plugins, &dirty)
+	}
 
 	if !dirty {
 		return settings, nil
@@ -210,6 +214,22 @@ func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, 
 		sess.ID, settings.Identity, settings.Impressions, settings.ToolGroups, settings.Plugins)
 	sess.Settings = datatypes.NewJSONType(settings)
 	return settings, nil
+}
+
+func keepAllowed(names, available []string, dirty *bool) []string {
+	allowed := make(map[string]struct{}, len(available))
+	for _, name := range available {
+		allowed[name] = struct{}{}
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := allowed[name]; ok {
+			out = append(out, name)
+		} else {
+			*dirty = true
+		}
+	}
+	return out
 }
 
 func keepRegistered[T any](names []string, known map[string]T, dirty *bool) []string {

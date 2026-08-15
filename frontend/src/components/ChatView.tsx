@@ -131,7 +131,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [dragDepth, setDragDepth] = useState(0)
   const [concierges, setConcierges] = useState<ConciergeItem[]>([])
-  const [availablePlugins, setAvailablePlugins] = useState<string[]>([])
   const [pluginDescriptions, setPluginDescriptions] = useState<Record<string, string>>({})
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const [activeSession, setActiveSession] = useState<Session | null>(null)
@@ -258,7 +257,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   useEffect(() => {
     void getConfigurationCatalog().then(catalog => {
-      setAvailablePlugins(catalog.plugins)
       setPluginDescriptions(catalog.plugin_descriptions ?? {})
     }).catch(() => undefined)
   }, [configurationRefreshKey])
@@ -670,7 +668,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     ...(sessionConcierge?.tool_groups ?? []),
   ])].filter(toolGroup => toolGroup !== 'web').sort((left, right) => left.localeCompare(right))
   const activeToolGroups = (activeSession?.Settings.tool_groups ?? []).filter(toolGroup => toolGroup !== 'web')
-  const plugins = [...new Set([...availablePlugins, ...(activeSession?.Settings.plugins ?? [])])]
+  const plugins = [...new Set([...(sessionConcierge?.plugins ?? []), ...(activeSession?.Settings.plugins ?? [])])]
     .sort((left, right) => left.localeCompare(right))
   const activePlugins = activeSession?.Settings.plugins ?? []
 

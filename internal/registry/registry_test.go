@@ -48,7 +48,10 @@ impressions:
   - work
 tool_groups:
   - basic
+default_tool_groups:
+  - basic
 plugins: []
+default_plugins: []
 `)
 	writeFile(t, dir, "workflow-daily-summary.yaml", `
 name: daily-summary
@@ -139,6 +142,24 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 	job := reg.Jobs["example-job"]
 	if len(job.Workflows) != 1 || job.Workflows[0].MaxAttempts != 3 || job.Workflows[0].RetryDelaySeconds != 60 {
 		t.Fatalf("expected field-complete example job, got %+v", job)
+	}
+}
+
+func TestValidateConciergeDefaultsMustBeAvailable(t *testing.T) {
+	reg := &Registry{
+		Identities: map[string]Identity{"default": {Name: "default"}},
+		ToolGroups: map[string]ToolGroup{"basic": {Name: "basic"}, "optional": {Name: "optional"}},
+		Concierges: map[string]Concierge{
+			"coding": {
+				Name:              "coding",
+				Identity:          "default",
+				ToolGroups:        []string{"basic"},
+				DefaultToolGroups: []string{"optional"},
+			},
+		},
+	}
+	if err := reg.Validate(map[string]bool{}, map[string]bool{}); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("Validate() error = %v, want unavailable default tool group", err)
 	}
 }
 

@@ -39,7 +39,7 @@ func ResolveConcierge(reg *registry.Registry, name string, toolReg *toolkit.Regi
 	for groupName, group := range reg.ToolGroups {
 		toolGroups[groupName] = toolkit.ToolGroupTools{Tools: group.Tools}
 	}
-	toolset, err := toolReg.Expand(concierge.ToolGroups, toolGroups)
+	toolset, err := toolReg.Expand(concierge.DefaultToolGroups, toolGroups)
 	if err != nil {
 		return ConciergeConfig{}, err
 	}
@@ -62,7 +62,7 @@ func ResolveConcierge(reg *registry.Registry, name string, toolReg *toolkit.Regi
 	return ConciergeConfig{
 		Identity: identity,
 		Toolset:  toolset,
-		Plugins:  append([]string(nil), concierge.Plugins...),
+		Plugins:  append([]string(nil), concierge.DefaultPlugins...),
 		Static:   static,
 	}, nil
 }

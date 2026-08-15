@@ -8,4 +8,10 @@ tool_groups:
   - project
   - web
   - shell
+default_tool_groups:
+  - basic
+  - project
+  - web
+  - shell
 plugins: []
+default_plugins: []

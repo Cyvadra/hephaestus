@@ -91,12 +91,37 @@ func TestNormalizeImpression_InitializesMessages(t *testing.T) {
 }
 
 func TestNormalizeConcierge_DefaultsNicknameToName(t *testing.T) {
-	concierge := Concierge{Name: "default"}
+	concierge := Concierge{Name: "default", ToolGroups: []string{"basic"}, Plugins: []string{"audit"}}
 	if err := normalizeConcierge(&concierge); err != nil {
 		t.Fatalf("normalizeConcierge: %v", err)
 	}
 	if concierge.Nickname != concierge.Name {
 		t.Fatalf("expected nickname %q, got %q", concierge.Name, concierge.Nickname)
+	}
+	if len(concierge.DefaultToolGroups) != 1 || concierge.DefaultToolGroups[0] != "basic" {
+		t.Fatalf("expected omitted defaults to inherit tool groups, got %v", concierge.DefaultToolGroups)
+	}
+	if len(concierge.DefaultPlugins) != 1 || concierge.DefaultPlugins[0] != "audit" {
+		t.Fatalf("expected omitted defaults to inherit plugins, got %v", concierge.DefaultPlugins)
+	}
+}
+
+func TestNormalizeConcierge_PreservesExplicitEmptyDefaults(t *testing.T) {
+	concierge := Concierge{
+		Name:              "default",
+		ToolGroups:        []string{"basic"},
+		DefaultToolGroups: []string{},
+		Plugins:           []string{"audit"},
+		DefaultPlugins:    []string{},
+	}
+	if err := normalizeConcierge(&concierge); err != nil {
+		t.Fatalf("normalizeConcierge: %v", err)
+	}
+	if concierge.DefaultToolGroups == nil || len(concierge.DefaultToolGroups) != 0 {
+		t.Fatalf("expected explicit empty default tool groups, got %v", concierge.DefaultToolGroups)
+	}
+	if concierge.DefaultPlugins == nil || len(concierge.DefaultPlugins) != 0 {
+		t.Fatalf("expected explicit empty default plugins, got %v", concierge.DefaultPlugins)
 	}
 }
 

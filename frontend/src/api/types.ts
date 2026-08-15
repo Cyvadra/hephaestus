@@ -5,7 +5,9 @@ export interface SessionSettings {
   identity: string
   impressions: string[]
   tool_groups: string[]
+  default_tool_groups: string[]
   plugins: string[]
+  default_plugins: string[]
 }
 
 export interface Session {
@@ -219,7 +221,9 @@ export interface ConciergeConfiguration {
   identity: string
   impressions: string[]
   tool_groups: string[]
+  default_tool_groups: string[]
   plugins: string[]
+  default_plugins: string[]
   available_projects: string[]
 }
 

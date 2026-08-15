@@ -52,6 +52,16 @@ func Open(dsn string) (*gorm.DB, error) {
 		Update("nickname", gorm.Expr("name")).Error; err != nil {
 		return nil, fmt.Errorf("store: backfill concierge nicknames: %w", err)
 	}
+	if err := db.Model(&registry.Concierge{}).
+		Where("default_tool_groups IS NULL").
+		Update("default_tool_groups", gorm.Expr("tool_groups")).Error; err != nil {
+		return nil, fmt.Errorf("store: backfill concierge default tool groups: %w", err)
+	}
+	if err := db.Model(&registry.Concierge{}).
+		Where("default_plugins IS NULL").
+		Update("default_plugins", gorm.Expr("plugins")).Error; err != nil {
+		return nil, fmt.Errorf("store: backfill concierge default plugins: %w", err)
+	}
 	defaultProject, err := ensureDefaultProject(db)
 	if err != nil {
 		return nil, err

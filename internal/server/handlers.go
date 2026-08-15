@@ -846,14 +846,16 @@ func (s *Server) deleteSession(c *gin.Context) {
 
 // conciergeItem is the JSON shape returned by listConcierges.
 type conciergeItem struct {
-	Name            string   `json:"name"`
-	Nickname        string   `json:"nickname"`
-	Description     string   `json:"description"`
-	Identity        string   `json:"identity"`
-	ReasoningEffort string   `json:"reasoning_effort"`
-	Impressions     []string `json:"impressions"`
-	ToolGroups      []string `json:"tool_groups"`
-	Plugins         []string `json:"plugins"`
+	Name              string   `json:"name"`
+	Nickname          string   `json:"nickname"`
+	Description       string   `json:"description"`
+	Identity          string   `json:"identity"`
+	ReasoningEffort   string   `json:"reasoning_effort"`
+	Impressions       []string `json:"impressions"`
+	ToolGroups        []string `json:"tool_groups"`
+	DefaultToolGroups []string `json:"default_tool_groups"`
+	Plugins           []string `json:"plugins"`
+	DefaultPlugins    []string `json:"default_plugins"`
 }
 
 // listConcierges godoc
@@ -887,14 +889,16 @@ func (s *Server) listConcierges(c *gin.Context) {
 		}
 		identity := reg.Identities[cg.Identity]
 		items = append(items, conciergeItem{
-			Name:            cg.Name,
-			Nickname:        cg.Nickname,
-			Description:     cg.Description,
-			Identity:        cg.Identity,
-			ReasoningEffort: identity.ReasoningEffort,
-			Impressions:     nullSafe(cg.Impressions),
-			ToolGroups:      nullSafe(cg.ToolGroups),
-			Plugins:         nullSafe(cg.Plugins),
+			Name:              cg.Name,
+			Nickname:          cg.Nickname,
+			Description:       cg.Description,
+			Identity:          cg.Identity,
+			ReasoningEffort:   identity.ReasoningEffort,
+			Impressions:       nullSafe(cg.Impressions),
+			ToolGroups:        nullSafe(cg.ToolGroups),
+			DefaultToolGroups: nullSafe(cg.DefaultToolGroups),
+			Plugins:           nullSafe(cg.Plugins),
+			DefaultPlugins:    nullSafe(cg.DefaultPlugins),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })

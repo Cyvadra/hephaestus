@@ -618,14 +618,28 @@ func (s *Service) setActive(sessionID uint, args []string, active bool) (string,
 		return "", err
 	}
 	settings := sess.Settings.Data()
+	concierge, ok := s.currentRegistry().Concierges[sess.SourceConcierge]
+	if !ok {
+		return "", fmt.Errorf("command: source concierge %q no longer exists", sess.SourceConcierge)
+	}
 
 	var target *[]string
 	switch kind {
 	case KindImpression:
 		target = &settings.Impressions
 	case KindToolGroup:
+		if active {
+			if unavailable := firstUnavailable(names, concierge.ToolGroups); unavailable != "" {
+				return "", fmt.Errorf("command: tool group %q is not available for concierge %q", unavailable, concierge.Name)
+			}
+		}
 		target = &settings.ToolGroups
 	case KindPlugin:
+		if active {
+			if unavailable := firstUnavailable(names, concierge.Plugins); unavailable != "" {
+				return "", fmt.Errorf("command: plugin %q is not available for concierge %q", unavailable, concierge.Name)
+			}
+		}
 		if !active {
 			for _, name := range names {
 				if s.pluginReg.IsFixed(name) {
@@ -652,6 +666,19 @@ func (s *Service) setActive(sessionID uint, args []string, active bool) (string,
 		verb = "Deactivated"
 	}
 	return fmt.Sprintf("%s %s: %s.", verb, kind, strings.Join(names, ", ")), nil
+}
+
+func firstUnavailable(names, available []string) string {
+	allowed := make(map[string]struct{}, len(available))
+	for _, name := range available {
+		allowed[name] = struct{}{}
+	}
+	for _, name := range names {
+		if _, ok := allowed[name]; !ok {
+			return name
+		}
+	}
+	return ""
 }
 
 func (s *Service) clear(sessionID uint) (string, *SessionTarget, error) {

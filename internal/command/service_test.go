@@ -45,6 +45,15 @@ func TestValidateKindNameUsesPublishedRegistry(t *testing.T) {
 	}
 }
 
+func TestFirstUnavailableRequiresConciergeCapability(t *testing.T) {
+	if got := firstUnavailable([]string{"basic", "optional"}, []string{"basic"}); got != "optional" {
+		t.Fatalf("firstUnavailable() = %q, want optional", got)
+	}
+	if got := firstUnavailable([]string{"basic"}, []string{"basic", "optional"}); got != "" {
+		t.Fatalf("firstUnavailable() rejected available capability %q", got)
+	}
+}
+
 func TestResolveNameUsesExplicitListReference(t *testing.T) {
 	service := testService()
 	service.lastList[7] = map[Kind][]string{KindProject: {"first", "second"}, KindConcierge: {"default"}}

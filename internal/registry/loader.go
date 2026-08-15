@@ -293,6 +293,12 @@ func normalizeConcierge(v *Concierge) error {
 	if len([]rune(v.Nickname)) > 20 {
 		return fmt.Errorf("registry: concierge %q: nickname must not exceed 20 characters", v.Name)
 	}
+	if v.DefaultToolGroups == nil {
+		v.DefaultToolGroups = append([]string(nil), v.ToolGroups...)
+	}
+	if v.DefaultPlugins == nil {
+		v.DefaultPlugins = append([]string(nil), v.Plugins...)
+	}
 	return nil
 }
 

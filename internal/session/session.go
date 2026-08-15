@@ -189,13 +189,13 @@ func (s *Service) Delete(sessionID uint) error {
 	})
 }
 
-// SettingsFromConcierge copies a concierge's mutable session settings.
+// SettingsFromConcierge copies a concierge's default-enabled session settings.
 func SettingsFromConcierge(concierge registry.Concierge) store.SessionSettings {
 	return store.SessionSettings{
 		Identity:    concierge.Identity,
 		Impressions: append([]string(nil), concierge.Impressions...),
-		ToolGroups:  append([]string(nil), concierge.ToolGroups...),
-		Plugins:     append([]string(nil), concierge.Plugins...),
+		ToolGroups:  append([]string(nil), concierge.DefaultToolGroups...),
+		Plugins:     append([]string(nil), concierge.DefaultPlugins...),
 	}
 }
 

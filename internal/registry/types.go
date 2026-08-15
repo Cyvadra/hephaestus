@@ -75,18 +75,20 @@ type ToolGroup struct {
 	Tools []string `yaml:"tools" json:"tools" gorm:"serializer:json;type:jsonb"`
 }
 
-// Concierge bundles an Identity with ordered lists of Impressions,
-// ToolGroups and Plugins. It is a static definition with no runtime context.
+// Concierge bundles an Identity with ordered lists of Impressions and
+// available/default-enabled ToolGroups and Plugins.
 type Concierge struct {
 	RecordTimestamps
 
-	Name        string   `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
-	Nickname    string   `yaml:"nickname" json:"nickname" gorm:"size:20"`
-	Description string   `yaml:"description" json:"description" gorm:"type:text"`
-	Identity    string   `yaml:"identity" json:"identity" gorm:"size:255"`
-	Impressions []string `yaml:"impressions" json:"impressions" gorm:"serializer:json;type:jsonb"`
-	ToolGroups  []string `yaml:"tool_groups" json:"tool_groups" gorm:"serializer:json;type:jsonb"`
-	Plugins     []string `yaml:"plugins" json:"plugins" gorm:"serializer:json;type:jsonb"`
+	Name              string   `yaml:"name" json:"name" gorm:"primaryKey;size:255"`
+	Nickname          string   `yaml:"nickname" json:"nickname" gorm:"size:20"`
+	Description       string   `yaml:"description" json:"description" gorm:"type:text"`
+	Identity          string   `yaml:"identity" json:"identity" gorm:"size:255"`
+	Impressions       []string `yaml:"impressions" json:"impressions" gorm:"serializer:json;type:jsonb"`
+	ToolGroups        []string `yaml:"tool_groups" json:"tool_groups" gorm:"serializer:json;type:jsonb"`
+	DefaultToolGroups []string `yaml:"default_tool_groups" json:"default_tool_groups" gorm:"serializer:json;type:jsonb"`
+	Plugins           []string `yaml:"plugins" json:"plugins" gorm:"serializer:json;type:jsonb"`
+	DefaultPlugins    []string `yaml:"default_plugins" json:"default_plugins" gorm:"serializer:json;type:jsonb"`
 }
 
 // Workflow is a named sequence of natural-language steps executed by the LLM
