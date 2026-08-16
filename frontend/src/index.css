@@ -5077,7 +5077,7 @@ body {
     box-shadow: 0 12px 28px rgba(0,0,0,.12)
 }
 
-.project-switcher-list { max-height: 184px; overflow-y: auto }
+.project-switcher-list { max-height: 230px; overflow-y: auto }
 
 .project-switcher-option,.project-switcher-create {
     display: flex;
@@ -5111,7 +5111,7 @@ body {
 .project-switcher-select strong,.project-switcher-select small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .project-switcher-select strong { font-weight: 500 }
 .project-switcher-select small { color: var(--dsw-alias-label-tertiary); font-size: 11px }
-.project-switcher-create { justify-content: flex-start; border-top: 1px solid var(--dsw-alias-border-l1) }
+.project-switcher-create { justify-content: flex-start; border-bottom: 1px solid var(--dsw-alias-border-l1) }
 
 .project-create-form {
     display: grid;

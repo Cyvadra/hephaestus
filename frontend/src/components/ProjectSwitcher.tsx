@@ -72,6 +72,10 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
       </button>
       {menu.open && (
         <div className="project-switcher-menu" role="menu">
+          <button className="project-switcher-create" type="button" onClick={() => setCreating(current => !current)}>
+            <FolderPlus aria-hidden="true" size={15} />
+            <span>{t('project.new')}</span>
+          </button>
           <div className="project-switcher-list">
             {projects.map(project => (
               <div className="project-switcher-option" key={project.ID} role="menuitem">
@@ -86,10 +90,6 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
               </div>
             ))}
           </div>
-          <button className="project-switcher-create" type="button" onClick={() => setCreating(current => !current)}>
-            <FolderPlus aria-hidden="true" size={15} />
-            <span>{t('project.new')}</span>
-          </button>
           {creating && (
             <form className="project-create-form" onSubmit={submit}>
               <input value={name} onChange={event => setName(event.target.value)} placeholder="project-name" maxLength={63} aria-label={t('project.name')} autoFocus />
