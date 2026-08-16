@@ -44,6 +44,9 @@ func TestMetaphysicsPluginInsertsSystemMessageBeforeUserMessage(t *testing.T) {
 	if !strings.Contains(got.Messages[0].Content, "[奇门遁甲 snapshot begin]") {
 		t.Fatalf("environment message does not include Qimen chart: %q", got.Messages[0].Content)
 	}
+	if !strings.Contains(got.Messages[0].Content, "[奇门遁甲 snapshot end]\n<notice>奇门遁甲排盘已完整提供。后续仅可依据以上盘面象数进行解读；不得重新计算历法、推演排盘，或以任何方式补充、改写盘面数据。</notice>\n[meta info end]") {
+		t.Fatalf("environment message does not include Qimen interpretation notice: %q", got.Messages[0].Content)
+	}
 	if got.Messages[1].Role != "user" || got.Messages[1].Content != attachment+"请总结" {
 		t.Fatalf("unexpected user message: %#v", got.Messages[1])
 	}

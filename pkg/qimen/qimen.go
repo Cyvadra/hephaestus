@@ -177,8 +177,8 @@ func chartPatterns(pan *xuan.QMPan) []string {
 	return patterns
 }
 
-// pillarPalaces returns the 年月日时 four pillars' 用神落宫, each found in the
-// heaven plate (天盘奇仪). A 甲 stem is resolved to the 六仪 it 遁于 via
+// pillarPalaces returns the 年月日时 four pillars' 用神落宫 for the heaven,
+// earth, and hidden stems. A 甲 stem is resolved to the 六仪 it 遁于 via
 // xuan.HideJia (甲子戊、甲戌己、甲申庚、甲午辛、甲辰壬、甲寅癸) before searching;
 // the 中宫 (5) is hosted to 坤二 (2) per QMHostingType2, matching the duty-star
 // hosting used elsewhere in this package.
@@ -194,29 +194,59 @@ func pillarPalaces(pan *xuan.QMPan, game *xuan.QMGame) string {
 		{"日", c8.GetDayGan(), c8.GetDayZhi()},
 		{"时", c8.GetTimeGan(), c8.GetTimeZhi()},
 	}
-	var parts []string
-	for _, p := range pillars {
-		gan := p.gan
-		note := ""
-		if gan == "甲" {
-			gan = xuan.HideJia[p.gan+p.zhi]
-			note = "遁" + gan
-		}
-		palace := ganPalace(pan, gan)
-		if palace == 0 {
-			parts = append(parts, fmt.Sprintf("%s干%s%s(未现天盘)", p.name, p.gan, note))
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("%s干%s%s→%s%d宫", p.name, p.gan, note, xuan.Diagrams9(palace), palace))
+	planes := []struct {
+		name  string
+		field string
+	}{
+		{"天盘", "天盘"},
+		{"地盘", "地盘"},
+		{"暗干", "暗干"},
 	}
-	return fmt.Sprintf("四柱落宫(用神·天盘): %s\n", strings.Join(parts, "  "))
+	var output strings.Builder
+	for _, plane := range planes {
+		var parts []string
+		for _, p := range pillars {
+			gan := p.gan
+			note := ""
+			if gan == "甲" {
+				gan = xuan.HideJia[p.gan+p.zhi]
+				note = "遁" + gan
+			}
+			palace := ganPalaceInPlane(pan, gan, plane.field)
+			if palace == 0 {
+				parts = append(parts, fmt.Sprintf("%s干%s%s(未现%s)", p.name, p.gan, note, plane.name))
+				continue
+			}
+			part := fmt.Sprintf("%s干%s%s→%s%d宫", p.name, p.gan, note, xuan.Diagrams9(palace), palace)
+			if markers := useGodMarkers(pan, palace, plane.field); len(markers) > 0 {
+				part += fmt.Sprintf("（%s）", strings.Join(markers, "；"))
+			}
+			parts = append(parts, part)
+		}
+		fmt.Fprintf(&output, "取用神·%s: %s\n", plane.name, strings.Join(parts, "  "))
+	}
+	return output.String()
 }
 
 // ganPalace returns the palace whose heaven plate (天盘奇仪) holds gan. A
 // result in the middle palace is hosted to 坤二 (2), per QMHostingType2.
 func ganPalace(pan *xuan.QMPan, gan string) int {
+	return ganPalaceInPlane(pan, gan, "天盘")
+}
+
+func ganPalaceInPlane(pan *xuan.QMPan, gan, plane string) int {
 	for idx := 1; idx <= 9; idx++ {
-		if pan.Gongs[idx].GuestGan == gan {
+		palace := pan.Gongs[idx]
+		var palaceGan string
+		switch plane {
+		case "天盘":
+			palaceGan = palace.GuestGan
+		case "地盘":
+			palaceGan = palace.HostGan
+		case "暗干":
+			palaceGan = palace.HideGan
+		}
+		if palaceGan == gan {
 			if idx == 5 {
 				return 2
 			}
@@ -224,4 +254,22 @@ func ganPalace(pan *xuan.QMPan, gan string) int {
 		}
 	}
 	return 0
+}
+
+func useGodMarkers(pan *xuan.QMPan, palace int, plane string) []string {
+	markers := palaceMarkers(pan, &pan.Gongs[palace])
+	otherPlane := ""
+	switch plane {
+	case "天盘":
+		otherPlane = "地盘"
+	case "地盘":
+		otherPlane = "天盘"
+	}
+	filtered := markers[:0]
+	for _, marker := range markers {
+		if !strings.HasPrefix(marker, otherPlane) {
+			filtered = append(filtered, marker)
+		}
+	}
+	return filtered
 }

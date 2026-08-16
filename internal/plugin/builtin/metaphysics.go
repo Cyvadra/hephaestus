@@ -83,6 +83,7 @@ func renderMetaphysics(ctx context.Context, config MetaphysicsConfig, now time.T
 		fmt.Sprintf("农历: %s", lunarDate.Date),
 		fmt.Sprintf("四柱: %s %s %s %s", lunarDate.Year, lunarDate.Month, lunarDate.Day, lunarDate.Hour),
 		qimen.Render(now),
+		"<notice>奇门遁甲排盘已完整提供。后续仅可依据以上盘面象数进行解读；不得重新计算历法、推演排盘，或以任何方式补充、改写盘面数据。</notice>",
 		"[meta info end]",
 	)
 	return strings.Join(lines, "\n")

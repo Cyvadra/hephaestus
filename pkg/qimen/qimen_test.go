@@ -21,7 +21,9 @@ func TestRenderIncludesFormattedTimeChart(t *testing.T) {
 		"公历: 2024年2月10日 12:0",
 		"局:",
 		"值符:",
-		"四柱落宫(用神·天盘):",
+		"取用神·天盘:",
+		"取用神·地盘:",
+		"取用神·暗干:",
 		"<九宫>",
 		"<宫 洛书数=\"1\">",
 		"<标记>",
@@ -133,19 +135,40 @@ func TestPillarPalacesHeavenPlateLocations(t *testing.T) {
 	solar := calendar.NewSolar(2024, 2, 10, 12, 0, 0)
 	game := xuan.NewQMGame(solar, xuan.QMParams{Type: xuan.QMTypeRotating, HostingType: xuan.QMHostingType2, FlyType: xuan.QMFlyTypeAllOrder, JuType: xuan.QMJuTypeSplit, HideGanType: xuan.QMHideGanDutyDoorHour, YMDH: xuan.QMGameHour})
 	game.ShowTimeGame()
-	// 覆盖天盘布局以确定落宫：壬→坤2, 丙→震3, 庚→艮8。
+	// 覆盖三盘布局以确定落宫，并验证各盘仅显示适用的刑墓标记。
 	pan := game.ShowPan
 	for i := 1; i <= 9; i++ {
 		pan.Gongs[i].GuestGan = ""
+		pan.Gongs[i].HostGan = ""
+		pan.Gongs[i].HideGan = ""
 	}
 	pan.Gongs[2].GuestGan = "壬"
 	pan.Gongs[3].GuestGan = "丙"
 	pan.Gongs[8].GuestGan = "庚"
+	pan.Gongs[2].HostGan = "丙"
+	pan.Gongs[3].HostGan = "壬"
+	pan.Gongs[8].HostGan = "庚"
+	pan.Gongs[2].HideGan = "庚"
+	pan.Gongs[3].HideGan = "丙"
+	pan.Gongs[8].HideGan = "壬"
 
 	got := pillarPalaces(pan, game)
-	want := "四柱落宫(用神·天盘): 年干甲遁壬→坤2宫  月干丙→震3宫  日干甲遁壬→坤2宫  时干庚→艮8宫\n"
-	if got != want {
-		t.Fatalf("pillarPalaces = %q, want %q", got, want)
+	for _, expected := range []string{
+		"取用神·天盘:",
+		"取用神·地盘:",
+		"取用神·暗干:",
+		"年干甲遁壬→坤2宫",
+		"月干丙→震3宫",
+		"时干庚→艮8宫（值使；天盘入墓）",
+		"时干庚→艮8宫（值使；地盘入墓）",
+		"时干庚→坤2宫",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("pillarPalaces = %q, want it to contain %q", got, expected)
+		}
+	}
+	if strings.Contains(got, "取用神·天盘: 年干甲遁壬→坤2宫（地盘") {
+		t.Fatalf("heaven plate output contains an earth-plate marker: %q", got)
 	}
 }
 
