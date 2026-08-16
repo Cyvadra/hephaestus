@@ -112,6 +112,66 @@ func TestCallRoutesLocalModelAlias(t *testing.T) {
 	}
 }
 
+func TestCallWithoutThinkingReusesIdentityAndFullContext(t *testing.T) {
+	var request ds4.ChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"custom-model"}]}`))
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	temperature := 0.3
+	topP := 0.8
+	identity := registry.Identity{
+		PreferredModel:  "custom-model",
+		ReasoningEffort: registry.ReasoningHigh,
+		MaxTokens:       321,
+		Temperature:     &temperature,
+		TopP:            &topP,
+		SystemPrompt:    "system prompt",
+		InjectedMessages: []registry.Message{
+			{Role: ds4.RoleSystem, Content: "injected"},
+		},
+	}
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleUser, Content: "first"},
+		{Role: ds4.RoleAssistant, Content: "answer"},
+		{Role: ds4.RoleUser, Content: "summary instruction"},
+	}
+
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+	if _, err := client.CallWithoutThinking(context.Background(), identity, messages); err != nil {
+		t.Fatalf("CallWithoutThinking() error = %v", err)
+	}
+
+	if request.Model != identity.PreferredModel || request.MaxTokens != identity.MaxTokens {
+		t.Fatalf("model/max tokens = %q/%d, want %q/%d", request.Model, request.MaxTokens, identity.PreferredModel, identity.MaxTokens)
+	}
+	if request.Temperature == nil || *request.Temperature != temperature || request.TopP == nil || *request.TopP != topP {
+		t.Fatalf("temperature/top_p = %v/%v, want %v/%v", request.Temperature, request.TopP, temperature, topP)
+	}
+	if request.Thinking == nil || request.Thinking.Type != "disabled" || request.ReasoningEffort != "" {
+		t.Fatalf("thinking = %+v, reasoning_effort = %q", request.Thinking, request.ReasoningEffort)
+	}
+	wantContents := []string{"system prompt", "injected", "first", "answer", "summary instruction"}
+	if len(request.Messages) != len(wantContents) {
+		t.Fatalf("message count = %d, want %d: %+v", len(request.Messages), len(wantContents), request.Messages)
+	}
+	for index, want := range wantContents {
+		if request.Messages[index].Content != want {
+			t.Fatalf("message %d content = %q, want %q", index, request.Messages[index].Content, want)
+		}
+	}
+}
+
 func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
 	var request ds4.ChatRequest
 	var requestPath string

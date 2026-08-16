@@ -65,6 +65,17 @@ func (c *Client) Call(ctx context.Context, identity registry.Identity, messages 
 	return resp, nil
 }
 
+// CallWithoutThinking sends the same identity configuration and message
+// context as Call, but disables thinking and tools for a structured side call.
+func (c *Client) CallWithoutThinking(ctx context.Context, identity registry.Identity, messages []store.ChatMessage) (string, error) {
+	identity.ReasoningEffort = registry.ReasoningNone
+	resp, err := c.buildChat(identity, messages, nil).DoWithContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("llm: chat completion without thinking: %w", err)
+	}
+	return resp.Content(), nil
+}
+
 // StreamDelta is a normalized incremental update surfaced by CallStream.
 type StreamDelta struct {
 	Content          string

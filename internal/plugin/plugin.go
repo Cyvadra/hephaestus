@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
@@ -45,6 +46,7 @@ const (
 type TurnContext struct {
 	SessionID        uint
 	Scope            toolkit.Scope
+	Identity         registry.Identity
 	Messages         []store.ChatMessage
 	History          []store.ChatMessage
 	IsFirstTurn      bool
@@ -76,6 +78,7 @@ func (t TurnContext) clone() TurnContext {
 	return TurnContext{
 		SessionID:        t.SessionID,
 		Scope:            t.Scope,
+		Identity:         t.Identity,
 		Messages:         messages,
 		History:          history,
 		IsFirstTurn:      t.IsFirstTurn,

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Cyvadra/hephaestus/internal/plugin"
-	"github.com/Cyvadra/hephaestus/internal/store"
 )
 
 func TestSessionSummaryPlugin_IgnoresAssistantMessageHook(t *testing.T) {
@@ -22,30 +21,28 @@ func TestSessionSummaryPlugin_IgnoresAssistantMessageHook(t *testing.T) {
 	}
 }
 
-func TestSessionSummaryPrompt_FirstTurnUsesFirstUserMessageForTitle(t *testing.T) {
-	p := &SessionSummaryPlugin{maxInput: 4000}
-	turn := plugin.TurnContext{
-		IsFirstTurn:      true,
-		FirstUserMessage: "Help me design a backup plan",
-		Messages: []store.ChatMessage{
-			{Role: "user", Content: "Help me design a backup plan"},
-			{Role: "assistant", Content: "Let's start with recovery targets."},
-		},
+func TestParseSessionSummary_ExtractsWrappedJSON(t *testing.T) {
+	title, summary, err := parseSessionSummary("prefix\n{\"session\":{\"title\":\"备份方案\",\"summary\":\"讨论恢复目标。\"}}\nsuffix")
+	if err != nil {
+		t.Fatalf("parseSessionSummary: %v", err)
 	}
-
-	prompt := p.prompt(turn)
-	if !strings.Contains(prompt, "title based only on the first user message") {
-		t.Fatalf("expected first-turn title constraint, got %q", prompt)
-	}
-	if !strings.Contains(prompt, turn.FirstUserMessage) {
-		t.Fatalf("expected first user message in prompt, got %q", prompt)
+	if title != "备份方案" || summary != "讨论恢复目标。" {
+		t.Fatalf("parseSessionSummary = %q, %q", title, summary)
 	}
 }
 
-func TestSessionSummaryPrompt_LaterTurnUsesConversation(t *testing.T) {
-	p := &SessionSummaryPlugin{maxInput: 4000}
-	prompt := p.prompt(plugin.TurnContext{Messages: []store.ChatMessage{{Role: "user", Content: "latest topic"}}})
-	if strings.Contains(prompt, "title based only on the first user message") {
-		t.Fatalf("did not expect first-turn title constraint, got %q", prompt)
+func TestParseSessionSummary_ClampsFields(t *testing.T) {
+	title, summary, err := parseSessionSummary(`{"session":{"title":"12345678901234567890","summary":"` + strings.Repeat("a", 210) + `"}}`)
+	if err != nil {
+		t.Fatalf("parseSessionSummary: %v", err)
+	}
+	if len([]rune(title)) != 15 || len([]rune(summary)) != 200 {
+		t.Fatalf("clamped lengths = %d, %d", len([]rune(title)), len([]rune(summary)))
+	}
+}
+
+func TestParseSessionSummary_RejectsMissingJSON(t *testing.T) {
+	if _, _, err := parseSessionSummary("no json here"); err == nil {
+		t.Fatal("parseSessionSummary unexpectedly accepted response without JSON")
 	}
 }

@@ -6,14 +6,16 @@ package builtin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/llm"
 	"github.com/Cyvadra/hephaestus/internal/plugin"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
-	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
@@ -21,16 +23,15 @@ import (
 // user message, then periodically refreshes its Title (<=20 chars) and Summary
 // (<=300 chars) via a minor-model side call.
 type SessionSummaryPlugin struct {
-	db       *gorm.DB
-	llm      *llm.Client
-	minGap   time.Duration
-	maxInput int
+	db     *gorm.DB
+	llm    *llm.Client
+	minGap time.Duration
 }
 
 // NewSessionSummaryPlugin creates the plugin; it re-summarizes at most once
 // per minGap of session activity to avoid a side LLM call on every turn.
 func NewSessionSummaryPlugin(db *gorm.DB, llmClient *llm.Client, minGap time.Duration) *SessionSummaryPlugin {
-	return &SessionSummaryPlugin{db: db, llm: llmClient, minGap: minGap, maxInput: 4000}
+	return &SessionSummaryPlugin{db: db, llm: llmClient, minGap: minGap}
 }
 
 func (p *SessionSummaryPlugin) Name() string { return "session_summary" }
@@ -63,13 +64,17 @@ func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, pha
 		return turn, nil
 	}
 
-	prompt := p.prompt(turn)
-	result, err := transform.SessionTitleSummary(ctx, p.llm, prompt, 256)
+	messages := append([]store.ChatMessage(nil), turn.Messages...)
+	messages = append(messages, store.ChatMessage{Role: ds4.RoleUser, Content: sessionSummaryInstruction})
+	result, err := p.llm.CallWithoutThinking(ctx, turn.Identity, messages)
 	if err != nil {
 		return turn, fmt.Errorf("session_summary: %w", err)
 	}
 
-	title, summary := splitTitleSummary(result)
+	title, summary, err := parseSessionSummary(result)
+	if err != nil {
+		return turn, fmt.Errorf("session_summary: parse response: %w", err)
+	}
 	if err := p.db.Model(&store.Session{}).Where("id = ?", turn.SessionID).
 		Updates(map[string]any{"title": title, "summary": summary}).Error; err != nil {
 		return turn, fmt.Errorf("session_summary: save title/summary: %w", err)
@@ -83,20 +88,30 @@ func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, pha
 	return turn, nil
 }
 
-func (p *SessionSummaryPlugin) prompt(turn plugin.TurnContext) string {
-	transcript := renderTranscript(turn.Messages, p.maxInput)
-	if turn.IsFirstTurn {
-		return fmt.Sprintf(
-			"First user message:\n%s\n\nConversation so far:\n%s\n\nRespond with exactly two lines: "+
-				"a title based only on the first user message (max 20 characters), then a summary "+
-				"of the conversation (max 300 characters). No other text.",
-			turn.FirstUserMessage,
-			transcript,
-		)
+const sessionSummaryInstruction = `请为截止目前的会话生成标题和内容简述。标题不超过 15 个字，简述不超过 200 个字，简洁即可。只返回合法 JSON，不要返回 Markdown 或其他文字：{"session":{"title":"xxx","summary":"xxx"}}`
+
+type sessionSummaryResponse struct {
+	Session struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	} `json:"session"`
+}
+
+func parseSessionSummary(result string) (string, string, error) {
+	start := strings.Index(result, "{")
+	end := strings.LastIndex(result, "}")
+	if start < 0 || end < start {
+		return "", "", fmt.Errorf("JSON object not found")
 	}
-	return fmt.Sprintf(
-		"Conversation so far:\n%s\n\nRespond with exactly two lines: a title "+
-			"(max 20 characters) then a summary (max 300 characters). No other text.",
-		transcript,
-	)
+
+	var response sessionSummaryResponse
+	if err := json.Unmarshal([]byte(result[start:end+1]), &response); err != nil {
+		return "", "", err
+	}
+	title := clampRunes(strings.TrimSpace(response.Session.Title), 15)
+	summary := clampRunes(strings.TrimSpace(response.Session.Summary), 200)
+	if title == "" || summary == "" {
+		return "", "", fmt.Errorf("title or summary is empty")
+	}
+	return title, summary, nil
 }

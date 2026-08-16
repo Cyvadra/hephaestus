@@ -89,6 +89,7 @@ func NewPipeline(
 type TurnResult struct {
 	Message  *store.ChatMessage
 	Metadata map[string]any
+	turn     plugin.TurnContext
 }
 
 // StreamEvent is one user-visible progress update emitted during a turn. It
@@ -344,6 +345,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 
 	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
+	turn.Identity = prep.identity
 	turn.History = append(append([]store.ChatMessage(nil), prep.activePath...), pendingUser)
 	turn = p.plugins.Run(ctx, prep.settings.Plugins, plugin.HookUserMessageIncoming, plugin.PhaseAfter, turn)
 	incomingPersistMessages, err := incomingMessagesToPersist(turn.Messages, len(llmContext))
@@ -369,7 +371,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 	incomingPersistMessages = append(incomingPersistMessages, editedUser)
 	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, incomingPersistMessages, opts.OnDelta)
 	if result != nil && err == nil {
-		summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, turn, opts.OnDelta)
+		summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, result.turn, opts.OnDelta)
 		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
 	}
 	return result, err
@@ -541,6 +543,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 // message (Run's case); when empty, the chain is parented directly onto an
 // already-persisted user message (Regenerate's case).
 func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newInputMessages []store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
+	turn.Identity = identity
 	toPersist, deliveries, notificationIDs, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
 	acknowledged := false
 	defer func() {
@@ -580,7 +583,7 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 		}
 		turn.Metadata["stale_active_leaf"] = true
 		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
-		return &TurnResult{Message: &final, Metadata: turn.Metadata}, converseErr
+		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
 	}
 	if err != nil {
 		return nil, err
@@ -597,13 +600,13 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 		}
 		turn.Metadata["incomplete"] = true
 		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
-		return &TurnResult{Message: &final, Metadata: turn.Metadata}, converseErr
+		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
 	}
 
 	turn.Messages[len(turn.Messages)-1] = final
 	go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
 
-	return &TurnResult{Message: &final, Metadata: turn.Metadata}, nil
+	return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, nil
 }
 
 func incompleteMessages(messages []store.ChatMessage, cause error) []store.ChatMessage {
