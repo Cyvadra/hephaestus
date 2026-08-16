@@ -142,7 +142,7 @@ web-fetch provider.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `HEPHAESTUS_POSTGRES_DSN` | required | PostgreSQL connection string for sessions, chat history, registry overrides, and runtime data. |
+| `HEPHAESTUS_DATABASE_URL` | required | Database URL for sessions, chat history, registry overrides, and runtime data. Set `sqlite://./data/hephaestus.db` for local SQLite, or a PostgreSQL DSN/URL for PostgreSQL. |
 | `HEPHAESTUS_DEEPSEEK_API_KEY` | required unless local model URL is set | Enables DeepSeek models and LLM-based web-content condensation. |
 | `HEPHAESTUS_LOCAL_MODEL_URL` | none | Base URL of an OpenAI-compatible local model server; trailing `/` is removed. |
 | `HEPHAESTUS_LOCAL_MODEL_API_KEY` | none | Optional API key for the local model server. |

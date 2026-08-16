@@ -354,7 +354,11 @@ func (s *Service) ClaimNotifications(sessionID uint) ([]agent.Notification, erro
 	var events []store.SubagentEvent
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		expired := time.Now().Add(-notificationLease)
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("parent_session_id = ? AND consumed_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)", sessionID, expired).Order("id").Find(&events).Error; err != nil {
+		query := tx.Where("parent_session_id = ? AND consumed_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)", sessionID, expired).Order("id")
+		if tx.Dialector.Name() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
+		}
+		if err := query.Find(&events).Error; err != nil {
 			return err
 		}
 		if len(events) == 0 {

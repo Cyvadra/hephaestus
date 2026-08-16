@@ -19,9 +19,9 @@ type Config struct {
 	// ConfigDir holds the flat directory of identity/impression/toolgroup/
 	// concierge/workflow/job/constant static config files.
 	ConfigDir string
-	// PostgresDSN connects to the single Postgres database used for
-	// runtime data (session, chat history, compression).
-	PostgresDSN string
+	// DatabaseURL connects to the runtime database (session, chat history,
+	// compression). Use sqlite:// for SQLite or a PostgreSQL DSN/URL.
+	DatabaseURL string
 	// DeepSeekAPIKey authenticates outbound calls via github.com/Cyvadra/ds4.
 	DeepSeekAPIKey string
 	// LocalModelURL and LocalModelAPIKey configure an optional OpenAI-compatible
@@ -93,7 +93,7 @@ func Load() (*Config, error) {
 	env := &envValues{}
 	cfg := &Config{
 		ConfigDir:                getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
-		PostgresDSN:              os.Getenv("HEPHAESTUS_POSTGRES_DSN"),
+		DatabaseURL:              databaseURL(),
 		DeepSeekAPIKey:           os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
 		LocalModelURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_URL")), "/"),
 		LocalModelAPIKey:         strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_API_KEY")),
@@ -144,8 +144,8 @@ func Load() (*Config, error) {
 	if cfg.SubagentMaxDepth < 1 {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SUBAGENT_MAX_DEPTH must be positive")
 	}
-	if cfg.PostgresDSN == "" {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_POSTGRES_DSN is required")
+	if cfg.DatabaseURL == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DATABASE_URL is required")
 	}
 	if cfg.DeepSeekAPIKey == "" && cfg.LocalModelURL == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY or HEPHAESTUS_LOCAL_MODEL_URL is required")
@@ -214,6 +214,13 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func databaseURL() string {
+	if url := strings.TrimSpace(os.Getenv("HEPHAESTUS_DATABASE_URL")); url != "" {
+		return url
+	}
+	return strings.TrimSpace(os.Getenv("HEPHAESTUS_POSTGRES_DSN"))
 }
 
 // envValues parses numeric/boolean environment variables, recording a

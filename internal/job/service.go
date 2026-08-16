@@ -111,9 +111,11 @@ func (s *Service) claim(ctx context.Context, reg *registry.Registry, jobName str
 
 func (s *Service) lockState(tx *gorm.DB, jobName string) (*store.JobState, error) {
 	var state store.JobState
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("job_name = ?", jobName).
-		First(&state).Error
+	query := tx.Where("job_name = ?", jobName)
+	if tx.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err := query.First(&state).Error
 	if err == nil {
 		return &state, nil
 	}

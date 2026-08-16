@@ -72,7 +72,7 @@ func main() {
 
 	toolReg := toolkit.NewRegistry()
 
-	db, err := store.Open(cfg.PostgresDSN)
+	db, err := store.Open(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}

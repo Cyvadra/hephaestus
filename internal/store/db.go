@@ -3,8 +3,12 @@ package store
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -13,14 +17,18 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 )
 
-// Open connects to Postgres and migrates runtime and persisted configuration
-// models.
-func Open(dsn string) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+// Open connects to the configured PostgreSQL or SQLite database and migrates
+// runtime and persisted configuration models.
+func Open(databaseURL string) (*gorm.DB, error) {
+	dialector, err := openDialector(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("store: connect postgres: %w", err)
+		return nil, fmt.Errorf("store: connect database: %w", err)
 	}
 
 	if err := db.AutoMigrate(
@@ -71,6 +79,24 @@ func Open(dsn string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+func openDialector(databaseURL string) (gorm.Dialector, error) {
+	if sqlitePath, ok := strings.CutPrefix(databaseURL, "sqlite://"); ok {
+		if sqlitePath == "" {
+			return nil, fmt.Errorf("store: SQLite database path is required")
+		}
+		if sqlitePath != ":memory:" {
+			if err := os.MkdirAll(filepath.Dir(sqlitePath), 0o755); err != nil {
+				return nil, fmt.Errorf("store: create SQLite database directory: %w", err)
+			}
+		}
+		return sqlite.Open(sqlitePath), nil
+	}
+	if databaseURL == "" {
+		return nil, fmt.Errorf("store: database URL is required")
+	}
+	return postgres.Open(databaseURL), nil
 }
 
 func ensureDefaultProject(db *gorm.DB) (*Project, error) {

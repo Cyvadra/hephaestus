@@ -105,8 +105,10 @@ func SyncTemplates(db *gorm.DB, templates []Template, knownTools, knownPlugins m
 	var candidate *Registry
 	var result SyncResult
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "hephaestus:registry-template-sync").Error; err != nil {
-			return fmt.Errorf("registry: lock template synchronization: %w", err)
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "hephaestus:registry-template-sync").Error; err != nil {
+				return fmt.Errorf("registry: lock template synchronization: %w", err)
+			}
 		}
 		for _, template := range templates {
 			decision, err := syncTemplate(tx, template)

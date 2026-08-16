@@ -17,6 +17,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -388,7 +389,7 @@ func (s *Service) Get(runID uint) (*store.WorkflowRun, []store.WorkflowStepRun, 
 		return nil, nil, ErrRunNotFound
 	}
 	var steps []store.WorkflowStepRun
-	if err := s.db.Where("workflow_run_id = ?", runID).Order("index").Find(&steps).Error; err != nil {
+	if err := s.db.Where("workflow_run_id = ?", runID).Clauses(clause.OrderBy{Columns: []clause.OrderByColumn{{Column: clause.Column{Name: "index"}}}}).Find(&steps).Error; err != nil {
 		return nil, nil, err
 	}
 	return &run, steps, nil
