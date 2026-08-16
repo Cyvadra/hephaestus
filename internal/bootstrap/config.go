@@ -183,8 +183,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_BAIDU_OCR_API_KEY and HEPHAESTUS_BAIDU_OCR_SECRET_KEY must be set together")
 	}
 	qqConfigured := cfg.QQAppID != "" || cfg.QQAppSecret != "" || cfg.QQUserOpenID != ""
-	if qqConfigured && (cfg.QQAppID == "" || cfg.QQAppSecret == "" || cfg.QQUserOpenID == "") {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_QQ_APP_ID, HEPHAESTUS_QQ_APP_SECRET, and HEPHAESTUS_QQ_USER_OPENID must be set together")
+	if qqConfigured && (cfg.QQAppID == "" || cfg.QQAppSecret == "") {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_QQ_APP_ID and HEPHAESTUS_QQ_APP_SECRET must be set together")
 	}
 	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl or local")

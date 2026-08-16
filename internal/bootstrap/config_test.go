@@ -242,6 +242,23 @@ func TestLoadQQNotificationConfig(t *testing.T) {
 	}
 }
 
+func TestLoadQQDiscoveryConfigWithoutUserOpenID(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_QQ_APP_ID", "app")
+	t.Setenv("HEPHAESTUS_QQ_APP_SECRET", "secret")
+	t.Setenv("HEPHAESTUS_QQ_USER_OPENID", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QQUserOpenID != "" {
+		t.Fatalf("QQUserOpenID = %q, want empty discovery configuration", cfg.QQUserOpenID)
+	}
+}
+
 func TestLoadRejectsPartialQQNotificationConfig(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")

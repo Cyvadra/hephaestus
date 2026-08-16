@@ -81,8 +81,8 @@ func New(config Config) (*Channel, error) {
 	config.AppID = strings.TrimSpace(config.AppID)
 	config.AppSecret = strings.TrimSpace(config.AppSecret)
 	config.UserOpenID = strings.TrimSpace(config.UserOpenID)
-	if config.AppID == "" || config.AppSecret == "" || config.UserOpenID == "" {
-		return nil, errors.New("qq channel: app id, app secret and user openid are required")
+	if config.AppID == "" || config.AppSecret == "" {
+		return nil, errors.New("qq channel: app id and app secret are required")
 	}
 	channel := &Channel{
 		config: config, client: api.NewClient(config.AppID, config.AppSecret),
@@ -200,6 +200,9 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 	if err != nil {
 		return err
 	}
+	if c.config.UserOpenID == "" {
+		return c.sendOpenID(context.Background(), inbound.Author.UserOpenid)
+	}
 	if inbound.Author.UserOpenid != c.config.UserOpenID {
 		return nil
 	}
@@ -225,6 +228,16 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 		})
 	}
 	return nil
+}
+
+func (c *Channel) sendOpenID(ctx context.Context, userOpenID string) error {
+	content, err := json.Marshal(struct {
+		UserOpenID string `json:"user_openid"`
+	}{UserOpenID: userOpenID})
+	if err != nil {
+		return fmt.Errorf("qq channel: encode discovery response: %w", err)
+	}
+	return c.Send(ctx, channels.OutboundMessage{ChatID: userOpenID, Content: string(content)})
 }
 
 func (c *Channel) downloadAttachment(ctx context.Context, rawURL, name string) (string, error) {

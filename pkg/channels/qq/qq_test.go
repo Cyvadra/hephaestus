@@ -21,12 +21,16 @@ type retryAPIClient struct {
 	mu       sync.Mutex
 	attempts int
 	failures int
+	path     string
+	body     interface{}
 }
 
-func (c *retryAPIClient) Post(context.Context, string, interface{}) ([]byte, error) {
+func (c *retryAPIClient) Post(_ context.Context, path string, body interface{}) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.attempts++
+	c.path = path
+	c.body = body
 	if c.attempts <= c.failures {
 		return nil, errors.New("temporary failure")
 	}
@@ -108,6 +112,24 @@ func TestSendRetriesTemporaryFailure(t *testing.T) {
 	}
 	if client.attempts != 4 {
 		t.Fatalf("Post attempts = %d, want 4", client.attempts)
+	}
+}
+
+func TestSendOpenIDDiscoveryResponse(t *testing.T) {
+	client := &retryAPIClient{}
+	channel := &Channel{client: client, retries: 0}
+	if err := channel.sendOpenID(context.Background(), "user/openid"); err != nil {
+		t.Fatal(err)
+	}
+	if client.path != "/v2/users/user%2Fopenid/messages" {
+		t.Fatalf("Post path = %q, want escaped user message path", client.path)
+	}
+	body, ok := client.body.(*message.PrivateSendMessage)
+	if !ok {
+		t.Fatalf("Post body type = %T, want *message.PrivateSendMessage", client.body)
+	}
+	if body.Markdown == nil || body.Markdown.Content != `{"user_openid":"user/openid"}` {
+		t.Fatalf("discovery response = %+v", body.Markdown)
 	}
 }
 
