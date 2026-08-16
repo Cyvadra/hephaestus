@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/pkg/channels"
@@ -42,13 +44,25 @@ type apiClient interface {
 	Post(context.Context, string, interface{}) ([]byte, error)
 }
 
+type httpClient interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+const (
+	defaultRetryCount = 3
+	defaultRetryDelay = 5 * time.Second
+)
+
 // Channel is a QQ C2C channel.
 type Channel struct {
 	config  Config
 	client  apiClient
+	http    httpClient
 	bot     bot
 	handler channels.Handler
 	running atomic.Bool
+	retries int
+	delay   time.Duration
 	mu      sync.RWMutex
 }
 
@@ -70,7 +84,10 @@ func New(config Config) (*Channel, error) {
 	if config.AppID == "" || config.AppSecret == "" || config.UserOpenID == "" {
 		return nil, errors.New("qq channel: app id, app secret and user openid are required")
 	}
-	channel := &Channel{config: config, client: api.NewClient(config.AppID, config.AppSecret)}
+	channel := &Channel{
+		config: config, client: api.NewClient(config.AppID, config.AppSecret),
+		http: &http.Client{Timeout: 30 * time.Second}, retries: defaultRetryCount, delay: defaultRetryDelay,
+	}
 	created, err := goqqrobot.Init(config.AppID, config.AppSecret, channel.receive)
 	if err != nil {
 		return nil, fmt.Errorf("qq channel: initialize bot: %w", err)
@@ -94,11 +111,7 @@ func (c *Channel) Start(ctx context.Context) error {
 	if !c.running.CompareAndSwap(false, true) {
 		return nil
 	}
-	go func() {
-		if err := c.bot.Start(); err != nil {
-			c.running.Store(false)
-		}
-	}()
+	go c.run(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = c.Stop(context.Background())
@@ -113,13 +126,36 @@ func (c *Channel) Stop(context.Context) error {
 	return c.bot.Stop()
 }
 
+func (c *Channel) run(ctx context.Context) {
+	defer c.running.Store(false)
+	for attempt := 0; ; attempt++ {
+		if ctx.Err() != nil || !c.running.Load() {
+			return
+		}
+		err := c.bot.Start()
+		if err == nil || ctx.Err() != nil || !c.running.Load() {
+			return
+		}
+		if attempt >= c.retries {
+			log.Printf("qq channel: connection failed after %d retries: %v", c.retries, err)
+			return
+		}
+		log.Printf("qq channel: connection failed: %v; retrying in %s (%d/%d)", err, c.delay, attempt+1, c.retries)
+		if err := waitRetry(ctx, c.delay); err != nil {
+			return
+		}
+	}
+}
+
 func (c *Channel) Send(ctx context.Context, outbound channels.OutboundMessage) error {
 	body := &message.PrivateSendMessage{CommonSendMessage: message.CommonSendMessage{
 		MsgType:  message.MARKDOWN,
 		Markdown: &messagetypes.Markdown{Content: outbound.Content},
 	}}
 	path := fmt.Sprintf(api.C2C_SEND_MESSAGE, url.PathEscape(outbound.ChatID))
-	if _, err := c.client.Post(ctx, path, body); err != nil {
+	if _, err := retryValue(ctx, c.retries, c.delay, func() ([]byte, error) {
+		return c.client.Post(ctx, path, body)
+	}); err != nil {
 		return fmt.Errorf("qq channel: send message: %w", err)
 	}
 	return nil
@@ -136,7 +172,9 @@ func (c *Channel) SendFile(ctx context.Context, chatID string, attachment channe
 		FileName string `json:"file_name"`
 	}{FileType: qqFileType(attachment.MIME), FileData: base64.StdEncoding.EncodeToString(data), FileName: attachment.Name}
 	uploadPath := fmt.Sprintf(api.C2C_FILE_MESSAGE, url.PathEscape(chatID))
-	encoded, err := c.client.Post(ctx, uploadPath, &upload)
+	encoded, err := retryValue(ctx, c.retries, c.delay, func() ([]byte, error) {
+		return c.client.Post(ctx, uploadPath, &upload)
+	})
 	if err != nil {
 		return fmt.Errorf("qq channel: upload file: %w", err)
 	}
@@ -149,7 +187,9 @@ func (c *Channel) SendFile(ctx context.Context, chatID string, attachment channe
 		Media:   &message.MediaInfo{FileInfo: uploaded.FileInfo},
 	}}
 	messagePath := fmt.Sprintf(api.C2C_SEND_MESSAGE, url.PathEscape(chatID))
-	if _, err := c.client.Post(ctx, messagePath, body); err != nil {
+	if _, err := retryValue(ctx, c.retries, c.delay, func() ([]byte, error) {
+		return c.client.Post(ctx, messagePath, body)
+	}); err != nil {
 		return fmt.Errorf("qq channel: send file: %w", err)
 	}
 	return nil
@@ -165,8 +205,9 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 	}
 	attachments := make([]channels.Attachment, 0, len(inbound.Attachments))
 	for _, source := range inbound.Attachments {
-		path, err := downloadAttachment(source.Url, source.Filename)
+		path, err := c.downloadAttachment(context.Background(), source.Url, source.Filename)
 		if err != nil {
+			log.Printf("qq channel: download attachment %q: %v", source.Filename, err)
 			continue
 		}
 		attachments = append(attachments, channels.Attachment{
@@ -186,26 +227,61 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 	return nil
 }
 
-func downloadAttachment(rawURL, name string) (string, error) {
-	response, err := http.Get(rawURL)
-	if err != nil {
-		return "", err
+func (c *Channel) downloadAttachment(ctx context.Context, rawURL, name string) (string, error) {
+	return retryValue(ctx, c.retries, c.delay, func() (string, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return "", err
+		}
+		response, err := c.http.Do(request)
+		if err != nil {
+			return "", err
+		}
+		defer response.Body.Close()
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return "", fmt.Errorf("download returned %s", response.Status)
+		}
+		extension := filepath.Ext(filepath.Base(name))
+		file, err := os.CreateTemp("", "hephaestus-qq-*"+extension)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		if _, err := file.ReadFrom(response.Body); err != nil {
+			_ = os.Remove(file.Name())
+			return "", err
+		}
+		return file.Name(), nil
+	})
+}
+
+func retryValue[T any](ctx context.Context, retries int, delay time.Duration, operation func() (T, error)) (T, error) {
+	var zero T
+	var err error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if value, operationErr := operation(); operationErr == nil {
+			return value, nil
+		} else {
+			err = operationErr
+		}
+		if attempt < retries {
+			if waitErr := waitRetry(ctx, delay); waitErr != nil {
+				return zero, waitErr
+			}
+		}
 	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("download returned %s", response.Status)
+	return zero, err
+}
+
+func waitRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	extension := filepath.Ext(filepath.Base(name))
-	file, err := os.CreateTemp("", "hephaestus-qq-*"+extension)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	if _, err := file.ReadFrom(response.Body); err != nil {
-		_ = os.Remove(file.Name())
-		return "", err
-	}
-	return file.Name(), nil
 }
 
 func qqFileType(mime string) uint64 {
