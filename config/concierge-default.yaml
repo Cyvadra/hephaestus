@@ -13,5 +13,5 @@ default_tool_groups:
   - project
   - web
   - shell
-plugins: []
-default_plugins: []
+plugins: ['metaphysics']
+default_plugins: ['metaphysics']
