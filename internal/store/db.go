@@ -17,6 +17,8 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/registry"
 )
 
+const defaultConciergeName = "default"
+
 // Open connects to the configured PostgreSQL or SQLite database and migrates
 // runtime and persisted configuration models.
 func Open(databaseURL string) (*gorm.DB, error) {
@@ -109,8 +111,9 @@ func ensureDefaultProject(db *gorm.DB) (*Project, error) {
 		return nil, fmt.Errorf("store: load default project: %w", err)
 	}
 	project = Project{
-		Name:        DefaultProjectName,
-		Description: "System default workspace for agent file operations.",
+		Name:                   DefaultProjectName,
+		Description:            "System default workspace for agent file operations.",
+		AvailableConciergeList: []string{defaultConciergeName},
 	}
 	if err := db.Create(&project).Error; err != nil {
 		return nil, fmt.Errorf("store: create default project: %w", err)

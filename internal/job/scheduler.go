@@ -2,7 +2,6 @@ package job
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"time"
 
@@ -136,15 +135,15 @@ func (s *Scheduler) buildEnv(jobName string, job registry.Job, now time.Time) (r
 	if len(projectNames) > 0 {
 		query = query.Joins("JOIN projects ON projects.id = sessions.project_id").Where("projects.name IN ?", projectNames)
 	}
-	switch err := query.Order("chat_messages.timestamp DESC, chat_messages.id DESC").First(&last).Error; {
-	case err == nil:
+	res := query.Order("chat_messages.timestamp DESC, chat_messages.id DESC").Find(&last)
+	if res.Error != nil {
+		return env, res.Error
+	} else if res.RowsAffected > 0 {
 		env.HasMessages = true
 		env.LastMessageAt = last.Timestamp
 		env.IdleSeconds = now.Sub(last.Timestamp).Seconds()
-	case errors.Is(err, gorm.ErrRecordNotFound):
+	} else {
 		env.IdleSeconds = -1
-	default:
-		return env, err
 	}
 
 	var state store.JobState

@@ -123,7 +123,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		"send_notification": true,
 		"spawn":             true, "fork": true, "await": true,
 	}
-	if err := reg.Validate(knownTools, map[string]bool{}); err != nil {
+	if err := reg.Validate(knownTools, map[string]bool{"metaphysics": true}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)
 	}
 
