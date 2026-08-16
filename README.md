@@ -50,6 +50,33 @@ The development server proxies `/api` requests to the backend.
 
 Usually you can access site on `http://127.0.0.1:5173`.
 
+### Remote Linux Deployment
+
+The API and frontend bind to loopback only. After cloning the repository on a
+Linux server, install Go, Node.js, and PM2, then configure and start it from the
+repository root:
+
+```sh
+cp .env.example .env
+# Edit .env before continuing.
+make deploy-build
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+The PM2 applications are named `hephaestus-api` and `hephaestus-web`. Use
+`pm2 status`, `pm2 logs`, and `pm2 restart ecosystem.config.cjs` to manage
+them. After pulling an update, run `make deploy-build` and restart both apps.
+
+Access the remote frontend through an SSH tunnel from the user's computer:
+
+```sh
+ssh -N -L 5173:127.0.0.1:5173 user@server
+```
+
+Then open `http://127.0.0.1:5173`. The frontend proxies `/api` to the backend
+on the server, so port 9016 does not need a separate tunnel or firewall rule.
+
 The React frontend uses browser routes for projects, chats, and configuration
 pages. In production, configure the static host or reverse proxy to return the
 frontend `index.html` for unknown non-`/api` paths. Without this SPA fallback,

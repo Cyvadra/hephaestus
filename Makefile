@@ -1,7 +1,16 @@
-.PHONY: build run test test-integration vet swagger
+.PHONY: build build-server build-frontend deploy-build run test test-integration vet swagger
 
 build:
 	go build ./...
+
+build-server:
+	go build -o hephaestus ./cmd/hephaestus
+
+build-frontend:
+	npm --prefix frontend ci
+	npm --prefix frontend run build
+
+deploy-build: build-server build-frontend
 
 run:
 	go run ./cmd/hephaestus
