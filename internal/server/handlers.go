@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -26,8 +27,10 @@ import (
 )
 
 type createSessionRequest struct {
-	Concierge string `json:"concierge" binding:"required"`
-	Project   string `json:"project"`
+	Concierge  string   `json:"concierge" binding:"required"`
+	Project    string   `json:"project"`
+	ToolGroups []string `json:"tool_groups"`
+	Plugins    []string `json:"plugins"`
 }
 
 // createSession godoc
@@ -78,12 +81,49 @@ func (s *Server) createSession(c *gin.Context) {
 	if identity, ok := reg.Identities[concierge.Identity]; ok {
 		reasoningEffort = identity.ReasoningEffort
 	}
-	sess, err := s.sessions.CreateFromConcierge(concierge, boundProject.ID, reasoningEffort)
+	toolGroups, err := selectedConciergeCapabilities(req.ToolGroups, concierge.ToolGroups, "tool group")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	plugins, err := selectedConciergeCapabilities(req.Plugins, concierge.Plugins, "plugin")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	settings := session.SettingsFromConcierge(concierge)
+	settings.ToolGroups = toolGroups
+	settings.Plugins = plugins
+	sess, err := s.sessions.CreateFromConciergeWithSettings(concierge, boundProject.ID, reasoningEffort, settings)
 	if err != nil {
 		internalError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, sess)
+}
+
+func selectedConciergeCapabilities(selected, allowed []string, kind string) ([]string, error) {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, value := range allowed {
+		allowedSet[value] = struct{}{}
+	}
+	values := make([]string, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	for _, value := range selected {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := allowedSet[value]; !ok {
+			return nil, fmt.Errorf("%s is not available from the selected concierge: %s", kind, value)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values, nil
 }
 
 // forkSessionAtMessage godoc

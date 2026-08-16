@@ -101,12 +101,18 @@ func (s *Service) MessageAttachments(messageID uint) ([]store.MessageAttachment,
 // the initial runtime state (reasoning effort and web-search availability)
 // derived from the identity and persisted atomically with the session row.
 func (s *Service) CreateFromConcierge(concierge registry.Concierge, projectID uint, reasoningEffort string) (*store.Session, error) {
+	return s.CreateFromConciergeWithSettings(concierge, projectID, reasoningEffort, SettingsFromConcierge(concierge))
+}
+
+// CreateFromConciergeWithSettings creates a Session using validated settings
+// chosen from the Concierge's available capabilities.
+func (s *Service) CreateFromConciergeWithSettings(concierge registry.Concierge, projectID uint, reasoningEffort string, settings store.SessionSettings) (*store.Session, error) {
 	enableWebSearch := true
 	now := time.Now()
 	sess := &store.Session{
 		SourceConcierge: concierge.Name,
 		ProjectID:       projectID,
-		Settings:        datatypes.NewJSONType(SettingsFromConcierge(concierge)),
+		Settings:        datatypes.NewJSONType(settings),
 		ReasoningEffort: reasoningEffort,
 		EnableWebSearch: &enableWebSearch,
 		LastMessageTime: now,

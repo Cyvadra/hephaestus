@@ -169,7 +169,9 @@ export interface ConciergeItem {
   reasoning_effort: string
   impressions: string[]
   tool_groups: string[]
+  default_tool_groups: string[]
   plugins: string[]
+  default_plugins: string[]
 }
 
 export const CONFIGURATION_KINDS = [

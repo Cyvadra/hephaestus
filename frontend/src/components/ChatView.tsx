@@ -136,6 +136,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [activeSession, setActiveSession] = useState<Session | null>(null)
   const [headerTitleDraft, setHeaderTitleDraft] = useState('')
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'high', webSearch: false })
+  const [draftToolGroups, setDraftToolGroups] = useState<string[]>([])
+  const [draftPlugins, setDraftPlugins] = useState<string[]>([])
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
@@ -418,6 +420,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const displayMessages = groupToolChains(path)
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
 
+  useEffect(() => {
+    if (resolvedSessionId != null || draftConcierge == null) return
+    setDraftToolGroups(draftConcierge.default_tool_groups)
+    setDraftPlugins(draftConcierge.default_plugins)
+  }, [draftConcierge, resolvedSessionId])
+
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
       return
@@ -459,7 +467,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           throw new Error(t('chat.concierge.selectBeforeStarting'))
         }
         if (project == null) throw new Error('No project selected')
-        const created = await createSession(selectedConcierge.name, project)
+        const created = await createSession(selectedConcierge.name, project, draftToolGroups, draftPlugins)
         targetSessionId = created.ID
         setActiveSession(created)
         initializedOptionsSessionRef.current = created.ID
@@ -508,7 +516,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setOptimisticUserMessage(null)
       }
     }
-  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, t])
+  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, t])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -663,14 +671,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
   const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || t('chat.concierge.notSelected')
   const sessionConcierge = concierges.find(concierge => concierge.name === activeSession?.SourceConcierge)
-  const toolGroups = activeSession == null ? [] : [...new Set([
+  const toolGroups = activeSession == null ? (draftConcierge?.tool_groups ?? []) : [...new Set([
     ...(activeSession.Settings.tool_groups ?? []),
     ...(sessionConcierge?.tool_groups ?? []),
   ])].filter(toolGroup => toolGroup !== 'web').sort((left, right) => left.localeCompare(right))
-  const activeToolGroups = (activeSession?.Settings.tool_groups ?? []).filter(toolGroup => toolGroup !== 'web')
-  const plugins = [...new Set([...(sessionConcierge?.plugins ?? []), ...(activeSession?.Settings.plugins ?? [])])]
+  const activeToolGroups = (activeSession == null ? draftToolGroups : activeSession.Settings.tool_groups).filter(toolGroup => toolGroup !== 'web')
+  const plugins = activeSession == null ? (draftConcierge?.plugins ?? []) : [...new Set([...(sessionConcierge?.plugins ?? []), ...(activeSession.Settings.plugins ?? [])])]
     .sort((left, right) => left.localeCompare(right))
-  const activePlugins = activeSession?.Settings.plugins ?? []
+  const activePlugins = activeSession == null ? draftPlugins : activeSession.Settings.plugins
 
   useEffect(() => {
     setHeaderTitleDraft(headerTitle)
@@ -830,11 +838,23 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onGenerationOptionsChange={handleGenerationOptionsChange}
         toolGroups={toolGroups}
         activeToolGroups={activeToolGroups}
-        onToolGroupToggle={(toolGroup, active) => { void handleToolGroupToggle(toolGroup, active) }}
-        plugins={resolvedSessionId == null ? [] : plugins}
+        onToolGroupToggle={(toolGroup, active) => {
+          if (resolvedSessionId == null) {
+            setDraftToolGroups(current => active ? [...new Set([...current, toolGroup])] : current.filter(item => item !== toolGroup))
+            return
+          }
+          void handleToolGroupToggle(toolGroup, active)
+        }}
+        plugins={plugins}
         pluginDescriptions={pluginDescriptions}
         activePlugins={activePlugins}
-        onPluginToggle={(plugin, active) => { void handlePluginToggle(plugin, active) }}
+        onPluginToggle={(plugin, active) => {
+          if (resolvedSessionId == null) {
+            setDraftPlugins(current => active ? [...new Set([...current, plugin])] : current.filter(item => item !== plugin))
+            return
+          }
+          void handlePluginToggle(plugin, active)
+        }}
       />
     </div>
   )

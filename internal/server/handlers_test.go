@@ -33,6 +33,19 @@ func TestValidateGenerationOptions(t *testing.T) {
 	}
 }
 
+func TestSelectedConciergeCapabilities(t *testing.T) {
+	selected, err := selectedConciergeCapabilities([]string{"shell", " shell ", ""}, []string{"basic", "shell"}, "tool group")
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if len(selected) != 1 || selected[0] != "shell" {
+		t.Fatalf("expected normalized selection, got %#v", selected)
+	}
+	if _, err := selectedConciergeCapabilities([]string{"web"}, []string{"basic"}, "tool group"); err == nil {
+		t.Fatal("expected unavailable tool group to be rejected")
+	}
+}
+
 func TestValidateBranchSelectionRejectsAmbiguousAndZeroLeaf(t *testing.T) {
 	leaf := uint(42)
 	if err := validateBranchSelection(sendMessageRequest{SelectRoot: true, ActiveLeafMessageID: &leaf}); err == nil {
