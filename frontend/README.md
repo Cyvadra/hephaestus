@@ -22,6 +22,10 @@ Requests under `/api` are proxied to `http://localhost:9016`.
 
 ## Deployment
 
+`npm run preview` listens on `0.0.0.0:5173` and proxies `/api` to the
+loopback-only backend at `127.0.0.1:9016`. Terminate HTTPS in a reverse proxy
+before exposing the preview server to an untrusted network.
+
 The frontend uses browser URLs for projects, chats, and configuration pages.
 Configure the production static host or reverse proxy to serve `index.html` for
 unknown non-API paths, while continuing to forward `/api` to the backend. This

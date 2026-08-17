@@ -52,9 +52,10 @@ Usually you can access site on `http://127.0.0.1:5173`.
 
 ### Remote Linux Deployment
 
-The API and frontend bind to loopback only. After cloning the repository on a
-Linux server, install Go, Node.js, and PM2, then configure and start it from the
-repository root:
+The production frontend listens on all interfaces at port `5173`; the API stays
+bound to `127.0.0.1:9016` and is reached through Vite's same-host `/api` proxy.
+After cloning the repository on a Linux server, install Go, Node.js, and PM2,
+then configure and start it from the repository root:
 
 ```sh
 cp .env.example .env
@@ -68,7 +69,12 @@ The PM2 applications are named `hephaestus-api` and `hephaestus-web`. Use
 `pm2 status`, `pm2 logs`, and `pm2 restart ecosystem.config.cjs` to manage
 them. After pulling an update, run `make deploy-build` and restart both apps.
 
-Access the remote frontend through an SSH tunnel from the user's computer:
+Open `http://server-address:5173` from a permitted network. Do not expose this
+HTTP listener directly to the internet: terminate HTTPS in a reverse proxy and
+forward its `/api` requests to the frontend. The backend port `9016` should stay
+private; Vite forwards `/api` to it locally.
+
+For a private server, SSH forwarding remains an option:
 
 ```sh
 ssh -N -L 5173:127.0.0.1:5173 user@server
