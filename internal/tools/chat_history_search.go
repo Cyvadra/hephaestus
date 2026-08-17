@@ -235,7 +235,7 @@ func (t ChatHistorySearchTool) sessionsContainingKeywords(sessions []store.Sessi
 		if keyword == "" {
 			continue
 		}
-		predicates = append(predicates, "strpos(lower(content), lower(?)) > 0")
+		predicates = append(predicates, chatHistoryKeywordPredicate(t.db.Dialector.Name()))
 		predicateArgs = append(predicateArgs, keyword)
 	}
 	if len(predicates) == 0 {
@@ -259,6 +259,13 @@ func (t ChatHistorySearchTool) sessionsContainingKeywords(sessions []store.Sessi
 		}
 	}
 	return filtered, nil
+}
+
+func chatHistoryKeywordPredicate(dialect string) string {
+	if dialect == "sqlite" {
+		return "instr(lower(content), lower(?)) > 0"
+	}
+	return "strpos(lower(content), lower(?)) > 0"
 }
 
 // matchedIndices returns the indices of messages in path that match the

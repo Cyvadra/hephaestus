@@ -3,7 +3,49 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
+
+func TestChatHistoryKeywordPredicate(t *testing.T) {
+	tests := []struct {
+		dialect   string
+		predicate string
+	}{
+		{dialect: "sqlite", predicate: "instr(lower(content), lower(?)) > 0"},
+		{dialect: "postgres", predicate: "strpos(lower(content), lower(?)) > 0"},
+	}
+	for _, test := range tests {
+		if got := chatHistoryKeywordPredicate(test.dialect); got != test.predicate {
+			t.Errorf("chatHistoryKeywordPredicate(%q) = %q, want %q", test.dialect, got, test.predicate)
+		}
+	}
+}
+
+func TestSessionsContainingKeywordsWorksWithSQLite(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&store.ChatMessage{}); err != nil {
+		t.Fatal(err)
+	}
+	sessions := []store.Session{{ID: 1}, {ID: 2}}
+	if err := db.Create(&store.ChatMessage{SessionID: 1, Content: "股市行情"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tool := ChatHistorySearchTool{db: db}
+	got, err := tool.sessionsContainingKeywords(sessions, []string{"行情"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("sessionsContainingKeywords = %+v, want session 1 only", got)
+	}
+}
 
 func TestMatchedSnippetCentersLongMessageOnMatch(t *testing.T) {
 	content := strings.Repeat("before ", 200) + "NEEDLE" + strings.Repeat(" after", 200)
