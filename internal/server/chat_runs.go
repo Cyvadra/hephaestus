@@ -291,17 +291,10 @@ func (s *Server) streamChatRun(c *gin.Context) {
 				if getErr == nil {
 					emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, final)
 				}
-			} else {
-				sequence++
-				emit(sequence, event.Type, json.RawMessage(event.Payload))
-			}
-			if event.Type == "done" {
-				select {
-				case <-time.After(s.streamDoneGrace):
-				case <-c.Request.Context().Done():
-				}
 				return
 			}
+			sequence++
+			emit(sequence, event.Type, json.RawMessage(event.Payload))
 		}
 	}
 }

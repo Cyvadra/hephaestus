@@ -106,6 +106,7 @@ async function consumeStream(
     } else if (ev.type === 'done') {
       if (ev.data.status === 'succeeded') await handlers.onDone(ev.data.response)
       else if (!signal.aborted) handlers.onError(ev.data.error || 'chat generation failed')
+      return
     } else if (ev.type === 'error') {
       if (!signal.aborted) handlers.onError(ev.data)
     }
@@ -149,6 +150,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const initializedOptionsSessionRef = useRef<number | null>(null)
   const createdSessionRef = useRef<number | null>(null)
   const cancelledTitleEditRef = useRef(false)
+
+  const clearStreamingPresentation = useCallback(() => {
+    setStreaming(false)
+    setStreamingText('')
+    setStreamingActivities([])
+    setOptimisticUserMessage(null)
+  }, [])
 
   useLayoutEffect(() => {
     const isPromotingDraftSession = sessionId != null && streamSessionRef.current === sessionId
@@ -227,7 +235,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async () => {
-			if (isCurrent()) await loadHistory(resolvedSessionId, undefined, epoch)
+      if (!isCurrent()) return
+      clearStreamingPresentation()
+      await loadHistory(resolvedSessionId, undefined, epoch)
         },
         onError: setError,
 			isCurrent,
@@ -246,7 +256,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       controller.abort()
       if (streamAbortRef.current === controller) streamAbortRef.current = null
     }
-  }, [resolvedSessionId, loadHistory, onSessionUpdated])
+  }, [clearStreamingPresentation, resolvedSessionId, loadHistory, onSessionUpdated])
 
   useEffect(() => {
     void listConcierges(project ?? undefined).then(items => {
@@ -463,6 +473,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 		const epoch = viewEpochRef.current
 		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === targetSessionId
     let switchedSession = false
+		let completed = false
     try {
       if (targetSessionId == null) {
         if (!selectedConcierge) {
@@ -490,6 +501,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
+			completed = true
           if (data.command_response) setCommandResponse(data.command_response)
           if (data.session_target) {
 			switchedSession = true
@@ -499,6 +511,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           const uploads = data.metadata?.uploads as UploadResult | undefined
           setUploadWarnings(uploads?.warnings ?? [])
           if (!isCurrent()) return
+                       clearStreamingPresentation()
           await loadHistory(targetSessionId!, undefined, epoch)
           if (data.message) setLocalLeafId(data.message.ID)
         },
@@ -510,7 +523,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       if (!controller.signal.aborted) setError(String(cause))
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
-      if (!switchedSession && targetSessionId != null && currentSessionRef.current === targetSessionId) await loadHistory(targetSessionId)
+      if (!completed && !switchedSession && targetSessionId != null && currentSessionRef.current === targetSessionId) await loadHistory(targetSessionId)
       if (currentSessionRef.current === targetSessionId) {
         setStreaming(false)
         setStreamingText('')
@@ -518,7 +531,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setOptimisticUserMessage(null)
       }
     }
-  }, [resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, t])
+  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, t])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -534,6 +547,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     streamSessionRef.current = resolvedSessionId
 		const epoch = viewEpochRef.current
 		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
+    let completed = false
     try {
       const gen = streamRegenerate(resolvedSessionId, generationOptions, controller.signal)
       await consumeStream(gen, controller.signal, {
@@ -541,7 +555,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
+			completed = true
           if (!isCurrent()) return
+                       clearStreamingPresentation()
+			setRegeneratingMessageId(null)
           await loadHistory(resolvedSessionId, undefined, epoch)
           if (data.message) setLocalLeafId(data.message.ID)
         },
@@ -553,14 +570,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
       if (currentSessionRef.current === resolvedSessionId) {
-        await loadHistory(resolvedSessionId)
+        if (!completed) await loadHistory(resolvedSessionId)
         setStreaming(false)
         setStreamingText('')
         setStreamingActivities([])
         setRegeneratingMessageId(null)
       }
     }
-  }, [resolvedSessionId, loadHistory, onSessionUpdated, generationOptions])
+  }, [clearStreamingPresentation, resolvedSessionId, loadHistory, onSessionUpdated, generationOptions])
 
   const handleContinue = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -576,6 +593,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     streamSessionRef.current = resolvedSessionId
 		const epoch = viewEpochRef.current
 		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
+    let completed = false
     try {
       const gen = streamContinue(resolvedSessionId, messageId, controller.signal)
       await consumeStream(gen, controller.signal, {
@@ -583,7 +601,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
+			completed = true
           if (!isCurrent()) return
+                       clearStreamingPresentation()
+			setContinuingMessageId(null)
           await loadHistory(resolvedSessionId, undefined, epoch)
           if (data.message) setLocalLeafId(data.message.ID)
         },
@@ -595,14 +616,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     } finally {
       if (streamAbortRef.current === controller) streamAbortRef.current = null
       if (currentSessionRef.current === resolvedSessionId) {
-        await loadHistory(resolvedSessionId)
+        if (!completed) await loadHistory(resolvedSessionId)
         setStreaming(false)
         setStreamingText('')
         setStreamingActivities([])
         setContinuingMessageId(null)
       }
     }
-  }, [resolvedSessionId, loadHistory, onSessionUpdated])
+  }, [clearStreamingPresentation, resolvedSessionId, loadHistory, onSessionUpdated])
 
   const handleBranchSwitch = useCallback((newLeafId: number) => {
     setLocalLeafId(newLeafId)
