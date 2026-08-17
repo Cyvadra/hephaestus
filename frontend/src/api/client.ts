@@ -1,4 +1,5 @@
 import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, WorkflowRun, WorkflowRunDetail } from './types'
+import { authFetch } from './auth'
 
 const BASE = '/api/v1'
 
@@ -6,7 +7,7 @@ export const attachmentDownloadURL = (sessionId: number, attachmentId: number) =
   `${BASE}/sessions/${sessionId}/attachments/${attachmentId}/download`
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const res = await authFetch(url, init)
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error ?? res.statusText)
@@ -30,7 +31,7 @@ export const createProject = (name: string, description: string) =>
   })
 
 export const deleteProject = async (name: string, deleteDirectory = false) => {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
+  const res = await authFetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete_directory: deleteDirectory }),
@@ -70,7 +71,7 @@ export const updateSession = (sessionId: number, changes: { title?: string; arch
   })
 
 export const deleteSession = async (sessionId: number) => {
-  const res = await fetch(`${BASE}/sessions/${sessionId}`, { method: 'DELETE' })
+  const res = await authFetch(`${BASE}/sessions/${sessionId}`, { method: 'DELETE' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error ?? res.statusText)
@@ -172,7 +173,7 @@ export const replaceConfiguration = <K extends ConfigurationKind>(kind: K, name:
   })
 
 export const deleteConfiguration = async (kind: ConfigurationKind, name: string) => {
-  const res = await fetch(configurationURL(kind, name), { method: 'DELETE' })
+  const res = await authFetch(configurationURL(kind, name), { method: 'DELETE' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error ?? res.statusText)

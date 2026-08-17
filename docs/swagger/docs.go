@@ -15,6 +15,115 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/auth/login": {
+            "post": {
+                "description": "Exchanges SHA-256(password + timestamp + salt) for a JWT session. This endpoint is public.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Login",
+                "parameters": [
+                    {
+                        "description": "Login proof",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.loginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/session": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Current session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/concierges": {
             "get": {
                 "description": "Returns the names and static settings of every loaded Concierge, sorted alphabetically.",
@@ -1572,6 +1681,9 @@ const docTemplate = `{
                     "description": "LastMessageTime is the activity time of the current active message\nbranch. It is independent from UpdatedAt so metadata writes do not\naffect conversation ordering.",
                     "type": "string"
                 },
+                "parentSubagentRunID": {
+                    "type": "integer"
+                },
                 "project": {
                     "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Project"
                 },
@@ -1806,6 +1918,18 @@ const docTemplate = `{
         "internal_server.conciergeItem": {
             "type": "object",
             "properties": {
+                "default_plugins": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default_tool_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "description": {
                     "type": "string"
                 },
@@ -1850,8 +1974,20 @@ const docTemplate = `{
                 "concierge": {
                     "type": "string"
                 },
+                "plugins": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "project": {
                     "type": "string"
+                },
+                "tool_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -1917,6 +2053,29 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRun"
                     }
+                }
+            }
+        },
+        "internal_server.loginRequest": {
+            "type": "object",
+            "required": [
+                "digest",
+                "salt",
+                "timestamp",
+                "username"
+            ],
+            "properties": {
+                "digest": {
+                    "type": "string"
+                },
+                "salt": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },
@@ -2061,6 +2220,14 @@ const docTemplate = `{
                     }
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "JWT bearer token. Browser clients may also authenticate with the HttpOnly session cookie.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }`

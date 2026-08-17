@@ -1,4 +1,5 @@
 import { startChatRun, startChatRunWithFiles } from './client'
+import { authFetch } from './auth'
 import type { ChatRun, ChatRunDone, GenerationOptions, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
 
 export type StreamEvent =
@@ -78,7 +79,7 @@ export async function* streamRun(runId: number, signal?: AbortSignal): AsyncGene
 }
 
 async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {
-  const res = await fetch(url, init)
+  const res = await authFetch(url, init)
 
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => ({ error: res.statusText }))

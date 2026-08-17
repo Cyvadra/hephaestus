@@ -1,8 +1,9 @@
-import { Check, Globe2, Moon, Settings } from 'lucide-react'
+import { Check, Globe2, LogOut, Moon, Settings } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supportedLanguages } from '../i18n'
 import { useHoverMenu } from '../lib/useHoverMenu'
+import { logout } from '../api/auth'
 
 const NIGHT_MODE_STORAGE_KEY = 'hephaestus.nightMode'
 
@@ -71,6 +72,11 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
         <button className="sidebar-settings-option" type="button" role="menuitem" onClick={openConfiguration}>
           <Settings aria-hidden="true" size={15} />
           <span>{configurationLabel}</span>
+        </button>
+        <div className="sidebar-settings-divider" />
+        <button className="sidebar-settings-option" type="button" role="menuitem" onClick={() => { void logout(); menu.close() }}>
+          <LogOut aria-hidden="true" size={15} />
+          <span>{t('auth.logout')}</span>
         </button>
       </div>}
     </div>

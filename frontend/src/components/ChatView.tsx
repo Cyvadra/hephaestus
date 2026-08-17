@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEve
 import { UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
+import { authFetch } from '../api/auth'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -320,7 +321,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (commandHelp || commandHelpLoading || resolvedSessionId == null || streaming) return
     setCommandHelpLoading(true)
     try {
-      const response = await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
+      const response = await authFetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: '/help' }),
@@ -344,7 +345,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const handleToolGroupToggle = useCallback(async (toolGroup: string, active: boolean) => {
     if (resolvedSessionId == null || streaming) return
     try {
-      const response = await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
+      const response = await authFetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: `/${active ? 'activate' : 'deactivate'} toolgroup ${toolGroup}` }),
@@ -368,7 +369,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const handlePluginToggle = useCallback(async (plugin: string, active: boolean) => {
     if (resolvedSessionId == null || streaming) return
     try {
-      const response = await fetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
+      const response = await authFetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: `/${active ? 'activate' : 'deactivate'} plugin ${plugin}` }),

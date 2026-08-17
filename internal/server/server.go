@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/auth"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
@@ -25,6 +26,7 @@ import (
 // Server exposes Hephaestus sessions, chat turns, and workflow/job runs over HTTP.
 type Server struct {
 	engine     *gin.Engine
+	auth       *auth.Service
 	registries *registry.Store
 	sessions   *session.Service
 	pipeline   *chat.Pipeline
@@ -43,9 +45,10 @@ type Server struct {
 }
 
 // New builds the Gin engine and registers every route.
-func New(registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner, chatRuns *chatrun.Service, subagents subagentRunner) *Server {
+func New(authService *auth.Service, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, uploads *upload.Processor, configs *registry.Service, workflows workflowRunner, jobs jobRunner, chatRuns *chatrun.Service, subagents subagentRunner) *Server {
 	s := &Server{
 		engine:          gin.Default(),
+		auth:            authService,
 		registries:      registries,
 		sessions:        sessions,
 		pipeline:        pipeline,
@@ -60,7 +63,13 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 		streamDoneGrace: 3 * time.Second,
 	}
 
+	public := s.engine.Group("/api/v1")
+	public.POST("/auth/login", s.login)
+
 	api := s.engine.Group("/api/v1")
+	api.Use(s.requireAuthentication)
+	api.GET("/auth/session", s.authSession)
+	api.POST("/auth/logout", s.logout)
 	api.GET("/sessions", s.listSessions)
 	api.POST("/sessions", s.createSession)
 	api.PATCH("/sessions/:id", s.updateSession)
@@ -99,7 +108,7 @@ func New(registries *registry.Store, sessions *session.Service, pipeline *chat.P
 	api.GET("/job-runs/:id", s.getJobRun)
 	api.POST("/job-runs/:id/cancel", s.cancelJobRun)
 
-	s.engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	s.engine.GET("/swagger/*any", s.requireAuthentication, ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	return s
 }

@@ -4,6 +4,10 @@
 //	@version		0.1
 //	@description	Single-user AI agent framework: sessions, chat turns, slash commands.
 //	@BasePath		/api/v1
+//	@securityDefinitions.apikey	BearerAuth
+//	@in			header
+//	@name			Authorization
+//	@description	JWT bearer token. Browser clients may also authenticate with the HttpOnly session cookie.
 package main
 
 import (
@@ -19,6 +23,7 @@ import (
 
 	_ "github.com/Cyvadra/hephaestus/docs/swagger"
 	"github.com/Cyvadra/hephaestus/internal/agent"
+	"github.com/Cyvadra/hephaestus/internal/auth"
 	"github.com/Cyvadra/hephaestus/internal/bootstrap"
 	channelruntime "github.com/Cyvadra/hephaestus/internal/channel"
 	"github.com/Cyvadra/hephaestus/internal/chat"
@@ -209,7 +214,11 @@ func main() {
 		log.Fatalf("upload: %v", err)
 	}
 
-	srv := server.New(registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc, chatRunSvc, subagentSvc)
+	authService, err := auth.New(auth.Config{Username: cfg.AuthUsername, Password: cfg.AuthPassword, Secret: cfg.JWTSecret})
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
+	srv := server.New(authService, registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc, chatRunSvc, subagentSvc)
 	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
 	var schedulerWG sync.WaitGroup
 	schedulerWG.Add(1)
@@ -237,8 +246,8 @@ func main() {
 type ocrRecognizer struct{}
 
 // warnIfExposed logs a warning when the API binds to a non-loopback
-// address, since the server has no authentication and the shell tool runs
-// with full user privileges.
+// address, because exposing a process that can execute local shell commands
+// requires TLS and trusted network boundaries even when login is enabled.
 func warnIfExposed(addr string) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -248,7 +257,7 @@ func warnIfExposed(addr string) {
 	case "", "127.0.0.1", "::1", "localhost":
 		return
 	}
-	log.Printf("warning: HEPHAESTUS_LISTEN_ADDR %q is not loopback; the API has no authentication", addr)
+	log.Printf("warning: HEPHAESTUS_LISTEN_ADDR %q is not loopback; serve the authenticated API through TLS", addr)
 }
 
 func newOCRRecognizer(apiKey, secretKey string) upload.Recognizer {

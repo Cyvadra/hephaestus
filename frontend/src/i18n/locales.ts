@@ -14,6 +14,15 @@ export const resources = {
         },
         returnToChat: '返回聊天',
       },
+      auth: {
+        signIn: '登录以继续使用工作区',
+        username: '用户名',
+        password: '密码',
+        login: '登录',
+        signingIn: '正在登录...',
+        logout: '退出登录',
+        invalidCredentials: '用户名或密码错误',
+      },
       common: {
         cancel: '取消',
         create: '创建配置',
@@ -247,6 +256,15 @@ export const resources = {
           'en-US': 'English',
         },
         returnToChat: 'Return to chat',
+      },
+      auth: {
+        signIn: 'Sign in to continue to your workspace',
+        username: 'Username',
+        password: 'Password',
+        login: 'Sign in',
+        signingIn: 'Signing in...',
+        logout: 'Sign out',
+        invalidCredentials: 'Invalid username or password',
       },
       common: {
         cancel: 'Cancel',

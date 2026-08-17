@@ -7,11 +7,47 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Setenv("HEPHAESTUS_AUTH_USERNAME", "test-user")
+	os.Setenv("HEPHAESTUS_AUTH_PASSWORD", "test-password")
+	os.Setenv("HEPHAESTUS_JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	os.Setenv("HEPHAESTUS_ENV_LOCATION", "深圳")
 	os.Setenv("HEPHAESTUS_ENV_LATITUDE", "22.5431")
 	os.Setenv("HEPHAESTUS_ENV_LONGITUDE", "114.0579")
 	os.Setenv("HEPHAESTUS_ENV_TIMEZONE", "Asia/Shanghai")
 	os.Exit(m.Run())
+}
+
+func TestLoadAuthConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_AUTH_USERNAME", " user ")
+	t.Setenv("HEPHAESTUS_AUTH_PASSWORD", " password ")
+	t.Setenv("HEPHAESTUS_JWT_SECRET", "12345678901234567890123456789012")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AuthUsername != "user" || cfg.AuthPassword != " password " || cfg.JWTSecret != "12345678901234567890123456789012" {
+		t.Fatalf("unexpected auth config: %+v", cfg)
+	}
+}
+
+func TestLoadRejectsMissingOrShortAuthConfig(t *testing.T) {
+	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
+	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
+	t.Setenv("HEPHAESTUS_AUTH_USERNAME", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing auth username to fail")
+	}
+
+	t.Setenv("HEPHAESTUS_AUTH_USERNAME", "user")
+	t.Setenv("HEPHAESTUS_JWT_SECRET", "too-short")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected short JWT secret to fail")
+	}
 }
 
 func TestSplitCommaSeparated(t *testing.T) {

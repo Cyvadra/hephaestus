@@ -16,6 +16,11 @@ import (
 // Static domain configuration (identity, concierge, constants, etc.) lives under
 // ConfigDir and is loaded separately by internal/registry.
 type Config struct {
+	// AuthUsername and AuthPassword are the single-user login credentials.
+	AuthUsername string
+	AuthPassword string
+	// JWTSecret signs browser session tokens.
+	JWTSecret string
 	// ConfigDir holds the flat directory of identity/impression/toolgroup/
 	// concierge/workflow/job/constant static config files.
 	ConfigDir string
@@ -92,6 +97,9 @@ func Load() (*Config, error) {
 	}
 	env := &envValues{}
 	cfg := &Config{
+		AuthUsername:             strings.TrimSpace(os.Getenv("HEPHAESTUS_AUTH_USERNAME")),
+		AuthPassword:             os.Getenv("HEPHAESTUS_AUTH_PASSWORD"),
+		JWTSecret:                strings.TrimSpace(os.Getenv("HEPHAESTUS_JWT_SECRET")),
 		ConfigDir:                getenvDefault("HEPHAESTUS_CONFIG_DIR", "./config"),
 		DatabaseURL:              databaseURL(),
 		DeepSeekAPIKey:           os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
@@ -140,6 +148,12 @@ func Load() (*Config, error) {
 
 	if len(env.problems) > 0 {
 		return nil, errors.Join(env.problems...)
+	}
+	if cfg.AuthUsername == "" || cfg.AuthPassword == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_AUTH_USERNAME and HEPHAESTUS_AUTH_PASSWORD are required")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_JWT_SECRET must be at least 32 bytes")
 	}
 	if cfg.SubagentMaxDepth < 1 {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SUBAGENT_MAX_DEPTH must be positive")

@@ -167,8 +167,17 @@ the working directory. Required values are marked below; use either a DeepSeek
 key or a local model URL. Firecrawl is required only when it is the selected
 web-fetch provider.
 
+The browser sends a short-lived SHA-256 login proof instead of the plaintext
+password. This does not replace HTTPS: expose a non-loopback installation only
+behind a TLS-terminating reverse proxy. Sessions use 14-day JWTs and refresh
+automatically when seven or fewer days remain. The JWT is also stored in an
+`HttpOnly`, `SameSite=Strict` cookie for downloads and browser-native SSE.
+
 | Variable | Default | Effect |
 | --- | --- | --- |
+| `HEPHAESTUS_AUTH_USERNAME` | required | Single-user login username. |
+| `HEPHAESTUS_AUTH_PASSWORD` | required | Single-user login password, stored as plaintext in `.env` by design. Restrict the file's permissions. |
+| `HEPHAESTUS_JWT_SECRET` | required | At least 32-byte secret used to sign JWT sessions. Generate a unique random value and do not reuse the login password. |
 | `HEPHAESTUS_DATABASE_URL` | required | Database URL for sessions, chat history, registry overrides, and runtime data. Set `sqlite://./data/hephaestus.db` for local SQLite, or a PostgreSQL DSN/URL for PostgreSQL. |
 | `HEPHAESTUS_DEEPSEEK_API_KEY` | required unless local model URL is set | Enables DeepSeek models and LLM-based web-content condensation. |
 | `HEPHAESTUS_LOCAL_MODEL_URL` | none | Base URL of an OpenAI-compatible local model server; trailing `/` is removed. |
