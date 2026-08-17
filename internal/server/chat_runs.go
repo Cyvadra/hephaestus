@@ -261,8 +261,13 @@ func (s *Server) streamChatRun(c *gin.Context) {
 	}
 	sequence := uint64(0)
 	emit(sequence, "snapshot", newChatRunResponse(run))
-	for _, event := range events {
-		sequence = event.Sequence
+	for index, event := range events {
+		// Permission requests block generation. If replay contains a later
+		// event, this request was already resolved and must not be shown again.
+		if event.Type == "ask_permission" && index != len(events)-1 {
+			continue
+		}
+		sequence++
 		emit(sequence, event.Type, json.RawMessage(event.Payload))
 	}
 	if run.Status.IsTerminal() {
@@ -287,7 +292,7 @@ func (s *Server) streamChatRun(c *gin.Context) {
 					emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, final)
 				}
 			} else {
-				sequence = event.Sequence
+				sequence++
 				emit(sequence, event.Type, json.RawMessage(event.Payload))
 			}
 			if event.Type == "done" {

@@ -5957,7 +5957,8 @@ body {
 
 /* react-markdown 输出的是裸 <p>，这里对应官网 .ds-markdown-paragraph 的 margin */
 .ds-markdown p {
-    margin: 16px 0
+    margin: 16px 0;
+    white-space: pre-wrap
 }
 
 .message-body pre,.reasoning-content pre,.stored-tool-result pre {
