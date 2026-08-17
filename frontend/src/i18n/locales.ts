@@ -101,7 +101,7 @@ export const resources = {
           title: '会话标题',
         },
         concierge: {
-          select: '选择 Concierge',
+          select: '选择助理',
           start: '开始新的对话',
           notSelected: '未选择 Concierge',
           selectBeforeStarting: '请先选择顾问再开始新会话',

@@ -419,12 +419,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
+  const newSessionConcierge = draftConcierge ?? selectedConcierge
 
   useEffect(() => {
-    if (resolvedSessionId != null || draftConcierge == null) return
-    setDraftToolGroups(draftConcierge.default_tool_groups)
-    setDraftPlugins(draftConcierge.default_plugins)
-  }, [draftConcierge, resolvedSessionId])
+    if (resolvedSessionId != null || newSessionConcierge == null) return
+    setDraftToolGroups(newSessionConcierge.default_tool_groups)
+    setDraftPlugins(newSessionConcierge.default_plugins)
+  }, [newSessionConcierge, resolvedSessionId])
 
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
@@ -671,12 +672,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
   const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || t('chat.concierge.notSelected')
   const sessionConcierge = concierges.find(concierge => concierge.name === activeSession?.SourceConcierge)
-  const toolGroups = activeSession == null ? (draftConcierge?.tool_groups ?? []) : [...new Set([
+  const toolGroups = activeSession == null ? (newSessionConcierge?.tool_groups ?? []) : [...new Set([
     ...(activeSession.Settings.tool_groups ?? []),
     ...(sessionConcierge?.tool_groups ?? []),
   ])].filter(toolGroup => toolGroup !== 'web').sort((left, right) => left.localeCompare(right))
   const activeToolGroups = (activeSession == null ? draftToolGroups : activeSession.Settings.tool_groups).filter(toolGroup => toolGroup !== 'web')
-  const plugins = activeSession == null ? (draftConcierge?.plugins ?? []) : [...new Set([...(sessionConcierge?.plugins ?? []), ...(activeSession.Settings.plugins ?? [])])]
+  const plugins = activeSession == null ? (newSessionConcierge?.plugins ?? []) : [...new Set([...(sessionConcierge?.plugins ?? []), ...(activeSession.Settings.plugins ?? [])])]
     .sort((left, right) => left.localeCompare(right))
   const activePlugins = activeSession == null ? draftPlugins : activeSession.Settings.plugins
 
