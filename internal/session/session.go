@@ -248,22 +248,22 @@ func (s *Service) AppendMessagesAtLeaf(sessionID uint, parentID, expectedLeaf *u
 }
 
 // AppendMessagesAtLeafWithDeliveries is AppendMessagesAtLeaf with explicit
-// assistant file deliveries atomically attached to the final message.
-func (s *Service) AppendMessagesAtLeafWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, expectedLeaf, true, true, msgs, deliveries)
+// assistant file deliveries and an optional transaction commit hook.
+func (s *Service) AppendMessagesAtLeafWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery, commit func(*gorm.DB) error) ([]store.ChatMessage, error) {
+	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, expectedLeaf, true, true, msgs, deliveries, commit)
 }
 
 // AppendMessagesDetachedWithDeliveries persists an inactive branch and its
 // final-message attachments without changing the active leaf.
-func (s *Service) AppendMessagesDetachedWithDeliveries(sessionID, projectID uint, parentID *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, nil, false, false, msgs, deliveries)
+func (s *Service) AppendMessagesDetachedWithDeliveries(sessionID, projectID uint, parentID *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery, commit func(*gorm.DB) error) ([]store.ChatMessage, error) {
+	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, nil, false, false, msgs, deliveries, commit)
 }
 
 func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, expectedLeaf, true, checkActiveLeaf, msgs, nil)
+	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, expectedLeaf, true, checkActiveLeaf, msgs, nil, nil)
 }
 
-func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, advanceActiveLeaf, checkActiveLeaf bool, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery) ([]store.ChatMessage, error) {
+func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, advanceActiveLeaf, checkActiveLeaf bool, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery, commit func(*gorm.DB) error) ([]store.ChatMessage, error) {
 	if len(msgs) == 0 {
 		return nil, nil
 	}
@@ -311,6 +311,9 @@ func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parent
 			if updated.RowsAffected != 1 {
 				return ErrStaleActiveLeaf
 			}
+		}
+		if commit != nil {
+			return commit(tx)
 		}
 		return nil
 	})

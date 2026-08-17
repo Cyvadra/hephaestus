@@ -408,11 +408,15 @@ func (s *Service) ClaimNotifications(sessionID uint) ([]agent.Notification, erro
 }
 
 func (s *Service) AcknowledgeNotifications(ids []uint) error {
+	return s.AcknowledgeNotificationsTx(s.db, ids)
+}
+
+func (s *Service) AcknowledgeNotificationsTx(tx *gorm.DB, ids []uint) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	now := time.Now()
-	return s.db.Model(&store.SubagentEvent{}).Where("id IN ? AND consumed_at IS NULL", ids).Updates(map[string]any{"consumed_at": &now, "claimed_at": nil}).Error
+	return tx.Model(&store.SubagentEvent{}).Where("id IN ? AND consumed_at IS NULL", ids).Updates(map[string]any{"consumed_at": &now, "claimed_at": nil}).Error
 }
 
 func (s *Service) ReleaseNotifications(ids []uint) error {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -60,12 +61,14 @@ type Service struct {
 
 	// onRunEnded notifies the delivery layer that a session's run finished,
 	// so completions that arrived too late to be steered can be delivered.
-	onRunEnded func(sessionID uint)
+	onRunEnded func(sessionID uint, status store.ChatRunStatus)
 }
 
 // SetOnRunEnded registers a callback invoked after a run reaches a terminal
 // state for the given session.
-func (s *Service) SetOnRunEnded(fn func(sessionID uint)) { s.onRunEnded = fn }
+func (s *Service) SetOnRunEnded(fn func(sessionID uint, status store.ChatRunStatus)) {
+	s.onRunEnded = fn
+}
 
 func New(db *gorm.DB) *Service {
 	return &Service{db: db, ctrl: runctrl.New(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}}
@@ -116,12 +119,20 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(map[string]any{
 		"status": store.ChatRunRunning, "started_at": &now,
 	}).Error; err != nil {
-		s.finish(runID, store.ChatRunInterrupted, nil, err)
+		if finishErr := s.finish(runID, store.ChatRunInterrupted, nil, err); finishErr != nil {
+			log.Printf("chatrun: finalize run %d after start failure: %v", runID, finishErr)
+		}
 		return
 	}
+	var progressErr error
 	result, runErr := execute(ctx, func(delta chat.StreamEvent) {
-		s.recordDelta(runID, delta)
+		if progressErr == nil {
+			progressErr = s.recordDelta(runID, delta)
+		}
 	})
+	if runErr == nil {
+		runErr = progressErr
+	}
 	status := store.ChatRunSucceeded
 	if runErr != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -137,29 +148,33 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 			status = store.ChatRunFailed
 		}
 	}
-	s.finish(runID, status, result, runErr)
+	if err := s.finish(runID, status, result, runErr); err != nil {
+		log.Printf("chatrun: finalize run %d: %v", runID, err)
+		return
+	}
 	if s.onRunEnded != nil {
-		s.onRunEnded(sessionID)
+		s.onRunEnded(sessionID, status)
 	}
 }
 
-func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) {
+func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) error {
 	payload, err := json.Marshal(delta)
 	if err != nil {
-		return
+		return fmt.Errorf("chatrun: encode progress: %w", err)
 	}
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	sequence := s.sequences[runID] + 1
 	event := store.ChatRunEvent{RunID: runID, Sequence: sequence, Type: delta.Type, Payload: payload}
 	if err := s.db.Create(&event).Error; err != nil {
-		return
+		return fmt.Errorf("chatrun: persist progress: %w", err)
 	}
 	s.sequences[runID] = sequence
 	s.publish(runID, ProgressEvent{Sequence: sequence, Type: delta.Type, Payload: payload})
+	return nil
 }
 
-func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) {
+func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) error {
 	finished := time.Now()
 	update := map[string]any{"status": status, "finished_at": &finished}
 	snapshot, snapshotErr := s.snapshot(runID)
@@ -180,8 +195,11 @@ func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result,
 			}
 		}
 	}
-	_ = s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(update).Error
+	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(update).Error; err != nil {
+		return fmt.Errorf("chatrun: persist terminal state: %w", err)
+	}
 	s.publish(runID, ProgressEvent{Type: "done"})
+	return nil
 }
 
 func (s *Service) snapshot(runID uint) (store.ChatRunSnapshot, error) {
@@ -347,6 +365,11 @@ func (s *Service) publish(runID uint, event ProgressEvent) {
 		select {
 		case ch <- event:
 		default:
+			delete(s.subs[runID], ch)
+			close(ch)
 		}
+	}
+	if len(s.subs[runID]) == 0 {
+		delete(s.subs, runID)
 	}
 }

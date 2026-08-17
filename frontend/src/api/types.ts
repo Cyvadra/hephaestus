@@ -86,7 +86,7 @@ export interface StreamToolCall {
   output_carriage_return?: boolean
 }
 
-export type ChatRunKind = 'message' | 'regenerate' | 'continue'
+export type ChatRunKind = 'message' | 'regenerate' | 'continue' | 'subagent_resume'
 export type ChatRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
 export interface ChatRunSnapshot {

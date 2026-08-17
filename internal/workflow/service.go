@@ -26,6 +26,7 @@ var (
 	ErrWorkflowNotFound = errors.New("workflow: workflow not found")
 	ErrProjectNotFound  = errors.New("workflow: project not found")
 	ErrInvalidInput     = errors.New("workflow: invalid input")
+	ErrShuttingDown     = errors.New("workflow: service is shutting down")
 )
 
 // Runner is the agent-loop contract the workflow executor needs, satisfied
@@ -77,9 +78,11 @@ type Service struct {
 
 	// mu guards subs (live progress subscribers). Run cancellation lives in
 	// ctrl (runctrl.Controller).
-	mu   sync.Mutex
-	ctrl *runctrl.Controller
-	subs map[uint]map[chan ProgressEvent]struct{}
+	mu           sync.Mutex
+	ctrl         *runctrl.Controller
+	subs         map[uint]map[chan ProgressEvent]struct{}
+	wg           sync.WaitGroup
+	shuttingDown bool
 }
 
 // NewService wires the workflow executor to its dependencies.
@@ -123,14 +126,23 @@ func (s *Service) Start(workflowName, projectName string, input map[string]any) 
 		return nil, fmt.Errorf("workflow: marshal input: %w", err)
 	}
 
+	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return nil, ErrShuttingDown
+	}
 	run := store.NewWorkflowRun(wf, projectName, inputJSON, 1)
 	if err := s.db.Create(run).Error; err != nil {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("workflow: create run: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.ctrl.Register(run.ID, cancel)
+	s.wg.Add(1)
+	s.mu.Unlock()
 	go func() {
+		defer s.wg.Done()
 		defer s.ctrl.Release(run.ID)
 		_, _ = s.execute(runCtx, run.ID, reg)
 	}()
@@ -431,5 +443,9 @@ func (s *Service) Reconcile() error {
 // Shutdown cancels every active run. It is called during process shutdown;
 // workers observe cancellation and finalize their run statuses.
 func (s *Service) Shutdown() {
+	s.mu.Lock()
+	s.shuttingDown = true
+	s.mu.Unlock()
 	s.ctrl.Shutdown()
+	s.wg.Wait()
 }

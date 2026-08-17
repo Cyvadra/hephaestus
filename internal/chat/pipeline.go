@@ -50,7 +50,7 @@ type Pipeline struct {
 
 type NotificationSource interface {
 	ClaimNotifications(uint) ([]agent.Notification, error)
-	AcknowledgeNotifications([]uint) error
+	AcknowledgeNotificationsTx(*gorm.DB, []uint) error
 	ReleaseNotifications([]uint) error
 }
 
@@ -267,6 +267,7 @@ type TurnOptions struct {
 	OnDelta         func(StreamEvent)
 	ReasoningEffort string
 	DisabledTools   []string
+	NotificationIDs []uint
 }
 
 func applyTurnOptions(identity registry.Identity, toolset []toolkit.Tool, opts TurnOptions) (registry.Identity, []toolkit.Tool) {
@@ -369,7 +370,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 		return nil, err
 	}
 	incomingPersistMessages = append(incomingPersistMessages, editedUser)
-	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, incomingPersistMessages, opts.OnDelta)
+	result, err := p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, parentID, expectedLeaf, incomingPersistMessages, opts.NotificationIDs, opts.OnDelta)
 	if result != nil && err == nil {
 		summaryDone := p.scheduleSessionSummary(ctx, prep.settings.Plugins, result.turn, opts.OnDelta)
 		p.awaitSessionSummary(ctx, summaryDone, opts.OnDelta)
@@ -534,7 +535,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 		return nil, err
 	}
 
-	return p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, opts.OnDelta)
+	return p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, opts.NotificationIDs, opts.OnDelta)
 }
 
 // runFrom runs converse and persists its output as a single chain parented
@@ -542,9 +543,10 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 // and persisted as the incoming turn's injected messages plus pending user
 // message (Run's case); when empty, the chain is parented directly onto an
 // already-persisted user message (Regenerate's case).
-func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newInputMessages []store.ChatMessage, onDelta func(StreamEvent)) (*TurnResult, error) {
+func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newInputMessages []store.ChatMessage, claimedNotificationIDs []uint, onDelta func(StreamEvent)) (*TurnResult, error) {
 	turn.Identity = identity
 	toPersist, deliveries, notificationIDs, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
+	notificationIDs = append(claimedNotificationIDs, notificationIDs...)
 	acknowledged := false
 	defer func() {
 		if !acknowledged && p.notifications != nil {
@@ -563,17 +565,15 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 		return nil, converseErr
 	}
 
-	saved, err := p.sessions.AppendMessagesAtLeafWithDeliveries(sessionID, projectID, parentID, expectedLeaf, persistMessages, deliveries)
+	commit := p.notificationCommit(notificationIDs)
+	saved, err := p.sessions.AppendMessagesAtLeafWithDeliveries(sessionID, projectID, parentID, expectedLeaf, persistMessages, deliveries, commit)
 	if errors.Is(err, session.ErrStaleActiveLeaf) {
 		// The active branch moved under us mid-turn. Keep the already
 		// generated output as a reachable-but-inactive branch instead of
 		// discarding it, and tell the caller the branch was not activated.
-		detached, detachErr := p.sessions.AppendMessagesDetachedWithDeliveries(sessionID, projectID, parentID, persistMessages, deliveries)
+		detached, detachErr := p.sessions.AppendMessagesDetachedWithDeliveries(sessionID, projectID, parentID, persistMessages, deliveries, commit)
 		if detachErr != nil {
 			return nil, detachErr
-		}
-		if err := p.acknowledgeNotifications(notificationIDs); err != nil {
-			return nil, err
 		}
 		acknowledged = true
 		final := detached[len(detached)-1]
@@ -586,9 +586,6 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
 	}
 	if err != nil {
-		return nil, err
-	}
-	if err := p.acknowledgeNotifications(notificationIDs); err != nil {
 		return nil, err
 	}
 	acknowledged = true
@@ -839,11 +836,13 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, nil
 }
 
-func (p *Pipeline) acknowledgeNotifications(ids []uint) error {
-	if p.notifications == nil {
+func (p *Pipeline) notificationCommit(ids []uint) func(*gorm.DB) error {
+	if p.notifications == nil || len(ids) == 0 {
 		return nil
 	}
-	return p.notifications.AcknowledgeNotifications(ids)
+	return func(tx *gorm.DB) error {
+		return p.notifications.AcknowledgeNotificationsTx(tx, ids)
+	}
 }
 
 // lastUserMessage returns the trailing message of messages, which must be

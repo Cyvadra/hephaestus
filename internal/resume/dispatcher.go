@@ -7,8 +7,8 @@ package resume
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
@@ -51,7 +51,11 @@ func (d *Dispatcher) Deliver(sessionID uint) {
 	for i := range notifications {
 		ids[i] = notifications[i].ID
 	}
-	release := func() { _ = d.subagents.ReleaseNotifications(ids) }
+	release := func() {
+		if err := d.subagents.ReleaseNotifications(ids); err != nil {
+			log.Printf("resume: release notifications for session %d: %v", sessionID, err)
+		}
+	}
 
 	sess, err := d.sessions.Get(sessionID)
 	if err != nil {
@@ -67,7 +71,7 @@ func (d *Dispatcher) Deliver(sessionID uint) {
 	text := subagent.FormatNotifications(notifications)
 	request := map[string]any{"text": text}
 	_, err = d.chatRuns.Start(sessionID, sess.ProjectID, store.ChatRunSubagentResume, request, func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
-		result, runErr := d.pipeline.Run(ctx, sessionID, text, chat.TurnOptions{OnDelta: onDelta})
+		result, runErr := d.pipeline.Run(ctx, sessionID, text, chat.TurnOptions{OnDelta: onDelta, NotificationIDs: ids})
 		if result == nil {
 			return &chatrun.Result{}, runErr
 		}
@@ -77,13 +81,7 @@ func (d *Dispatcher) Deliver(sessionID uint) {
 		}
 		return &chatrun.Result{FinalMessageID: finalMessageID, Response: map[string]any{"message": result.Message}}, runErr
 	})
-	switch {
-	case err == nil:
-		// The resume turn will acknowledge the notifications once its
-		// transcript is durable; leave them claimed.
-	case errors.Is(err, chatrun.ErrRunActive):
-		release()
-	default:
+	if err != nil {
 		release()
 	}
 }

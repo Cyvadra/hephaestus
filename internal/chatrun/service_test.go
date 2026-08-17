@@ -92,6 +92,23 @@ func TestIsActiveRunConflictRecognizesPostgresConstraint(t *testing.T) {
 	}
 }
 
+func TestPublishDisconnectsLaggingSubscriber(t *testing.T) {
+	svc := &Service{subs: map[uint]map[chan ProgressEvent]struct{}{}}
+	ch := make(chan ProgressEvent, 1)
+	ch <- ProgressEvent{Sequence: 1}
+	svc.subs[7] = map[chan ProgressEvent]struct{}{ch: {}}
+
+	svc.publish(7, ProgressEvent{Sequence: 2})
+
+	if _, ok := svc.subs[7]; ok {
+		t.Fatal("lagging subscriber remained registered")
+	}
+	<-ch
+	if _, ok := <-ch; ok {
+		t.Fatal("lagging subscriber channel remained open")
+	}
+}
+
 func TestActiveForSessionReturnsNotFoundWhenNoRunIsActive(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
@@ -125,10 +142,14 @@ func TestStartRejectsConcurrentRunForSession(t *testing.T) {
 	_ = waitForTerminalRun(t, svc, first.ID)
 }
 
-func TestCancelledRunIsTerminal(t *testing.T) {
+func TestCancelledRunInvokesRunEnded(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
+	var callbackCount atomic.Int32
+	svc.SetOnRunEnded(func(_ uint, _ store.ChatRunStatus) {
+		callbackCount.Add(1)
+	})
 	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(ctx context.Context, _ func(chat.StreamEvent)) (*Result, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -142,6 +163,9 @@ func TestCancelledRunIsTerminal(t *testing.T) {
 	final := waitForTerminalRun(t, svc, run.ID)
 	if final.Status != store.ChatRunCancelled {
 		t.Fatalf("expected cancelled run, got %s", final.Status)
+	}
+	if callbackCount.Load() != 1 {
+		t.Fatalf("cancelled run invoked onRunEnded %d times, want 1", callbackCount.Load())
 	}
 }
 

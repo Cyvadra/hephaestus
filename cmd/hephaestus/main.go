@@ -189,7 +189,9 @@ func main() {
 	// idle (or that were rebuilt by subagent Reconcile above).
 	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
 	subagentSvc.SetOnCompletion(dispatcher.Deliver)
-	chatRunSvc.SetOnRunEnded(dispatcher.Deliver)
+	chatRunSvc.SetOnRunEnded(func(sessionID uint, _ store.ChatRunStatus) {
+		dispatcher.Deliver(sessionID)
+	})
 	if err := dispatcher.Sweep(); err != nil {
 		log.Fatalf("subagents: sweep pending completions: %v", err)
 	}

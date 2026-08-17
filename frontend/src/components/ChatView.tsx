@@ -501,7 +501,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
-			completed = true
           if (data.command_response) setCommandResponse(data.command_response)
           if (data.session_target) {
 			switchedSession = true
@@ -513,6 +512,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           if (!isCurrent()) return
                        clearStreamingPresentation()
           await loadHistory(targetSessionId!, undefined, epoch)
+          completed = true
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
@@ -555,11 +555,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
-			completed = true
           if (!isCurrent()) return
                        clearStreamingPresentation()
 			setRegeneratingMessageId(null)
           await loadHistory(resolvedSessionId, undefined, epoch)
+          completed = true
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
@@ -601,11 +601,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
-			completed = true
           if (!isCurrent()) return
                        clearStreamingPresentation()
 			setContinuingMessageId(null)
           await loadHistory(resolvedSessionId, undefined, epoch)
+          completed = true
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
