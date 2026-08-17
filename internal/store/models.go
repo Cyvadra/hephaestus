@@ -37,9 +37,10 @@ func (s ChatRunStatus) IsTerminal() bool {
 type ChatRunKind string
 
 const (
-	ChatRunMessage    ChatRunKind = "message"
-	ChatRunRegenerate ChatRunKind = "regenerate"
-	ChatRunContinue   ChatRunKind = "continue"
+	ChatRunMessage        ChatRunKind = "message"
+	ChatRunRegenerate     ChatRunKind = "regenerate"
+	ChatRunContinue       ChatRunKind = "continue"
+	ChatRunSubagentResume ChatRunKind = "subagent_resume"
 )
 
 // ChatRunSnapshot is the terminal aggregate retained for quick inspection.

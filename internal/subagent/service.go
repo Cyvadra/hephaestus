@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,7 +70,16 @@ type Service struct {
 	done    map[uint]chan struct{}
 	wg      sync.WaitGroup
 	closing bool
+
+	// onCompletion notifies the delivery layer that a background run finished
+	// and a completion event is now durable for the given root parent session.
+	onCompletion func(sessionID uint)
 }
+
+// SetOnCompletion registers a callback invoked after a background run's
+// completion event becomes durable, so an idle-session delivery layer can
+// pick it up. It is nil during Reconcile (dependencies not yet wired).
+func (s *Service) SetOnCompletion(fn func(sessionID uint)) { s.onCompletion = fn }
 
 func New(db *gorm.DB, maxDepth int) *Service {
 	return &Service{db: db, maxDepth: maxDepth, ctrl: runctrl.New(), done: map[uint]chan struct{}{}}
@@ -194,31 +204,48 @@ func (s *Service) finish(run *store.SubagentRun, status store.SubagentRunStatus,
 	if run.Schedule != store.SubagentScheduleBackground {
 		return nil
 	}
-	if err := createCompletionEvent(s.db, run, status, result, runError); err != nil {
+	deliverySessionID, err := createCompletionEvent(s.db, run, status, result, runError)
+	if err != nil {
 		return fmt.Errorf("create completion event: %w", err)
+	}
+	if s.onCompletion != nil {
+		s.onCompletion(deliverySessionID)
 	}
 	return nil
 }
 
-func createCompletionEvent(db *gorm.DB, run *store.SubagentRun, status store.SubagentRunStatus, result, runError string) error {
+// FormatNotifications joins claimed completion notifications into a single
+// user-facing message for durable delivery into the parent session transcript.
+func FormatNotifications(notifications []agent.Notification) string {
+	parts := make([]string, len(notifications))
+	for i := range notifications {
+		parts[i] = notifications[i].Text
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func createCompletionEvent(db *gorm.DB, run *store.SubagentRun, status store.SubagentRunStatus, result, runError string) (uint, error) {
 	payload, err := json.Marshal(completionPayload{
 		RunID: run.ID, Label: transform.LimitTextBytes(run.Label, 160), Status: status,
 		Summary: transform.LimitTextBytes(result, maxNotificationBytes/2), Error: transform.LimitTextBytes(runError, maxNotificationBytes/4),
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(payload) > maxNotificationBytes {
 		payload, err = json.Marshal(completionPayload{RunID: run.ID, Label: transform.LimitTextBytes(run.Label, 80), Status: status})
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 	deliverySessionID, err := rootParentSessionID(db, run)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return db.Where(store.SubagentEvent{RunID: run.ID}).FirstOrCreate(&store.SubagentEvent{RunID: run.ID, ParentSessionID: deliverySessionID, Payload: datatypes.JSON(payload)}).Error
+	if err := db.Where(store.SubagentEvent{RunID: run.ID}).FirstOrCreate(&store.SubagentEvent{RunID: run.ID, ParentSessionID: deliverySessionID, Payload: datatypes.JSON(payload)}).Error; err != nil {
+		return 0, err
+	}
+	return deliverySessionID, nil
 }
 
 func rootParentSessionID(db *gorm.DB, run *store.SubagentRun) (uint, error) {
@@ -333,7 +360,7 @@ func (s *Service) Reconcile() error {
 	}
 	for index := range missingEvents {
 		run := &missingEvents[index]
-		if err := createCompletionEvent(s.db, run, run.Status, run.Result, run.Error); err != nil {
+		if _, err := createCompletionEvent(s.db, run, run.Status, run.Result, run.Error); err != nil {
 			return fmt.Errorf("reconcile completion event for run %d: %w", run.ID, err)
 		}
 	}

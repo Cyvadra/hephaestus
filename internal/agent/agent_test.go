@@ -329,13 +329,13 @@ func TestRunInjectsInitialNotification(t *testing.T) {
 		t.Fatalf("calls = %d", len(llm.calls))
 	}
 	messages := llm.calls[0].messages
-	if len(messages) != 1 || messages[0].Role != ds4.RoleSystem || messages[0].Content != "Subagent completion: result" {
+	if len(messages) != 1 || messages[0].Role != ds4.RoleUser || messages[0].Content != "Subagent completion: result" {
 		t.Fatalf("messages = %+v", messages)
 	}
 	if claims != 1 {
 		t.Fatalf("claims = %d, want 1", claims)
 	}
-	if len(result.Messages) != 1 || result.Messages[0].Content != "done" {
+	if len(result.Messages) != 2 || result.Messages[0].Role != ds4.RoleUser || result.Messages[0].Content != "Subagent completion: result" || result.Messages[1].Content != "done" {
 		t.Fatalf("persisted messages = %+v", result.Messages)
 	}
 }
@@ -365,10 +365,43 @@ func TestRunClaimsNotificationsForEachModelBoundary(t *testing.T) {
 	if len(fake.calls[0].messages) < 2 || fake.calls[0].messages[len(fake.calls[0].messages)-1].Content != "first completion" {
 		t.Fatalf("first model context = %+v", fake.calls[0].messages)
 	}
-	for _, message := range result.Messages {
-		if message.Content == "first completion" {
-			t.Fatalf("notification leaked into persisted messages: %+v", result.Messages)
+	// The notification is durable: it appears in persisted order before the
+	// assistant tool-call message that followed it.
+	if len(result.Messages) < 1 || result.Messages[0].Role != ds4.RoleUser || result.Messages[0].Content != "first completion" {
+		t.Fatalf("notification missing from persisted messages: %+v", result.Messages)
+	}
+}
+
+func TestRunDeduplicatesReClaimedNotificationWithinTurn(t *testing.T) {
+	// A long turn may re-claim the same event after its lease expires; the
+	// runner must not inject (or persist) it a second time.
+	fake := &fakeLLM{responses: []*ds4.ChatResponse{
+		respWith([]ds4.ToolCall{toolCall("call-1", "echo", "{}")}, ""),
+		respWith(nil, "done"),
+	}}
+	runner := testRunner(fake, nil)
+	request := sessionRequest(fake, []toolkit.Tool{echoTool{name: "echo"}}, plugin.TurnContext{SessionID: 7, Messages: []store.ChatMessage{{Role: ds4.RoleUser, Content: "go"}}})
+	request.ClaimNotifications = func() ([]Notification, error) {
+		return []Notification{{ID: 11, Text: "same completion"}}, nil
+	}
+	result, err := runner.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range result.Messages {
+		if m.Content == "same completion" {
+			count++
 		}
+	}
+	if count != 1 {
+		t.Fatalf("notification persisted %d times, want 1: %+v", count, result.Messages)
+	}
+	// The context for the second model boundary must not repeat it either.
+	last := fake.calls[1].messages
+	tail := last[len(last)-1].Content
+	if tail == "same completion" {
+		t.Fatalf("notification repeated at later model boundary: %+v", last)
 	}
 }
 

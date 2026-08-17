@@ -123,6 +123,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	var toPersist []store.ChatMessage
 	var deliveries []toolkit.FileDelivery
 	var notificationIDs []uint
+	// injected guards against a long turn re-claiming the same completion
+	// event at a later model boundary (the lease can expire mid-turn).
+	injected := map[uint]struct{}{}
 	toolset := toolkit.FilterScope(req.Toolset, req.Scope)
 	allowedTools := make(map[string]toolkit.Tool, len(toolset))
 	for _, tool := range toolset {
@@ -138,9 +141,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 				return nil, err
 			}
 			for _, notification := range pending {
+				if _, ok := injected[notification.ID]; ok {
+					continue
+				}
+				injected[notification.ID] = struct{}{}
 				notificationIDs = append(notificationIDs, notification.ID)
-				notificationMessage := store.ChatMessage{Role: ds4.RoleSystem, Content: notification.Text, Timestamp: time.Now()}
+				notificationMessage := store.ChatMessage{Role: ds4.RoleUser, Content: notification.Text, Timestamp: time.Now()}
 				messages = append(messages, notificationMessage)
+				// Persist the completion as a durable user message so the
+				// transcript reflects when the parent learned of the result;
+				// the ack happens only after this message is stored.
+				toPersist = append(toPersist, notificationMessage)
 				turn.Messages = messages
 			}
 		}

@@ -57,7 +57,15 @@ type Service struct {
 	sequences    map[uint]uint64
 	wg           sync.WaitGroup
 	shuttingDown bool
+
+	// onRunEnded notifies the delivery layer that a session's run finished,
+	// so completions that arrived too late to be steered can be delivered.
+	onRunEnded func(sessionID uint)
 }
+
+// SetOnRunEnded registers a callback invoked after a run reaches a terminal
+// state for the given session.
+func (s *Service) SetOnRunEnded(fn func(sessionID uint)) { s.onRunEnded = fn }
 
 func New(db *gorm.DB) *Service {
 	return &Service{db: db, ctrl: runctrl.New(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}}
@@ -87,7 +95,7 @@ func (s *Service) Start(sessionID, projectID uint, kind store.ChatRunKind, reque
 	s.sequences[run.ID] = 0
 	s.progressMu.Unlock()
 	s.wg.Add(1)
-	go s.execute(ctx, run.ID, execute)
+	go s.execute(ctx, run.ID, sessionID, execute)
 	return run, nil
 }
 
@@ -99,7 +107,7 @@ func isActiveRunConflict(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "idx_chat_runs_active_session"
 }
 
-func (s *Service) execute(ctx context.Context, runID uint, execute Execute) {
+func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Execute) {
 	defer s.wg.Done()
 	defer s.ctrl.Release(runID)
 	defer s.closeRun(runID)
@@ -130,6 +138,9 @@ func (s *Service) execute(ctx context.Context, runID uint, execute Execute) {
 		}
 	}
 	s.finish(runID, status, result, runErr)
+	if s.onRunEnded != nil {
+		s.onRunEnded(sessionID)
+	}
 }
 
 func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) {

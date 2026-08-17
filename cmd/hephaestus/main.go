@@ -37,6 +37,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/plugin/builtin"
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
+	"github.com/Cyvadra/hephaestus/internal/resume"
 	"github.com/Cyvadra/hephaestus/internal/server"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
@@ -183,6 +184,14 @@ func main() {
 	chatRunSvc := chatrun.New(db)
 	if err := chatRunSvc.Reconcile(); err != nil {
 		log.Fatalf("chat runs: reconcile stale runs: %v", err)
+	}
+	// Deliver any completions that finished while their parent session was
+	// idle (or that were rebuilt by subagent Reconcile above).
+	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
+	subagentSvc.SetOnCompletion(dispatcher.Deliver)
+	chatRunSvc.SetOnRunEnded(dispatcher.Deliver)
+	if err := dispatcher.Sweep(); err != nil {
+		log.Fatalf("subagents: sweep pending completions: %v", err)
 	}
 	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
 	commands.SetRunCanceler(chatRunSvc.CancelSession)
