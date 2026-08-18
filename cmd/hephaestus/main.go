@@ -134,11 +134,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("weather: %v", err)
 	}
-	pluginReg.Register(builtin.NewMetaphysicsPlugin(builtin.MetaphysicsConfig{
+	pluginReg.Register(builtin.NewEnvironmentPlugin(builtin.EnvironmentConfig{
 		Location:    cfg.EnvironmentLocation,
 		Coordinates: weather.Location{Latitude: cfg.EnvironmentLatitude, Longitude: cfg.EnvironmentLongitude},
 		Timezone:    cfg.EnvironmentTimezone,
 		Weather:     weatherClient,
+	}))
+	pluginReg.Register(builtin.NewMetaphysicsPlugin(builtin.MetaphysicsConfig{
+		Timezone: cfg.EnvironmentTimezone,
 	}))
 	pluginReg.Register(builtin.NewSessionSummaryPlugin(db, llmClient, 5*time.Minute))
 	pluginReg.Register(builtin.NewStorylineStatusPlugin(db, llmClient))

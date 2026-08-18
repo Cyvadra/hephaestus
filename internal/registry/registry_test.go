@@ -124,7 +124,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		"send_notification": true,
 		"spawn":             true, "fork": true, "await": true,
 	}
-	if err := reg.Validate(knownTools, map[string]bool{"metaphysics": true}); err != nil {
+	if err := reg.Validate(knownTools, map[string]bool{"environment": true, "metaphysics": true}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)
 	}
 	if got, want := reg.ToolGroups["basic"].Tools, []string{"send_file"}; !slices.Equal(got, want) {

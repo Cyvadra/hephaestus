@@ -139,7 +139,7 @@ func Load() (*Config, error) {
 		EnvironmentLocation:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_LOCATION")),
 		EnvironmentTimezone:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_TIMEZONE")),
 		WeatherProviders:         splitCommaSeparated(getenvDefault("HEPHAESTUS_WEATHER_PROVIDERS", "open_meteo,wttr,met_no")),
-		FixedPlugins:             splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "metaphysics,session_summary")),
+		FixedPlugins:             splitCommaSeparated(getenvDefault("HEPHAESTUS_FIXED_PLUGINS", "environment,metaphysics,session_summary")),
 		SubagentMaxDepth:         env.int("HEPHAESTUS_SUBAGENT_MAX_DEPTH", 2),
 	}
 	var errLatitude, errLongitude error
