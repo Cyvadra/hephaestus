@@ -1046,18 +1046,6 @@ function mergeToolActivity(current: StreamActivity[], sequence: number, incoming
       activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && activity.toolCall.index === incoming.index,
     )
   }
-  if (index === -1) {
-    // Providers may stream a tool's name and id after its initial argument
-    // fragments. Until then, associate the fragment with the latest pending
-    // call in this LLM response rather than rendering one card per chunk.
-    for (let currentIndex = current.length - 1; currentIndex >= 0; currentIndex--) {
-      const activity = current[currentIndex]
-      if (activity.type === 'tool' && activity.toolCall.call_index === incoming.call_index && activity.toolCall.status === 'calling') {
-        index = currentIndex
-        break
-      }
-    }
-  }
   if (index === -1) return [...current, { type: 'tool', sequence, toolCall: incoming }]
 
   const existing = current[index]
