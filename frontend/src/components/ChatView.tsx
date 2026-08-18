@@ -15,6 +15,7 @@ import i18n from '../i18n'
 
 const COMMAND_HELP_CACHE_KEY = 'hephaestus.commandHelp'
 const COMMAND_HELP_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const WIDE_CHAT_HISTORY_STORAGE_KEY = 'hephaestus.wideChatHistory'
 const HISTORY_NAV_TOP_THRESHOLD = 120
 const HISTORY_NAV_BOTTOM_THRESHOLD = 900
 const HISTORY_NAV_UNLOCK_DISTANCE = 48
@@ -169,6 +170,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [draftPlugins, setDraftPlugins] = useState<string[]>([])
   const [previousUserMessage, setPreviousUserMessage] = useState<UserMessageNavigationItem | null>(null)
   const [showBackToBottom, setShowBackToBottom] = useState(false)
+  const [wideChatHistory, setWideChatHistory] = useState(() => localStorage.getItem(WIDE_CHAT_HISTORY_STORAGE_KEY) === 'true')
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
@@ -801,6 +803,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   }
   }, [resolvedSessionId])
 
+  const handleChatHeaderDoubleClick = () => {
+    setWideChatHistory(current => {
+      const next = !current
+      localStorage.setItem(WIDE_CHAT_HISTORY_STORAGE_KEY, String(next))
+      return next
+    })
+  }
+
   const lastAssistantIdx = displayMessages.map(item => item.message.Role).lastIndexOf('assistant')
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
@@ -836,7 +846,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           <span>{t('chat.dropFiles.limits')}</span>
         </div>
       )}
-      <header className="chat-header">
+      <header
+        className="chat-header"
+        onDoubleClick={event => {
+          if (event.target instanceof Element && event.target.closest('.chat-history-message')) return
+          handleChatHeaderDoubleClick()
+        }}
+      >
         <div className="chat-header-content">
           {resolvedSessionId == null ? <h2 className="chat-header-title">{headerTitle}</h2> : (
             <label className="chat-header-title-editor">
@@ -885,7 +901,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           </button>
         )}
       </header>
-      <div className="messages-region">
+      <div className={'messages-region' + (wideChatHistory && !isNewSession ? ' wide-chat-history' : '')}>
         <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>
         {isNewSession ? (
           <div className="empty-state-card">

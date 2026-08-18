@@ -5788,6 +5788,10 @@ body {
     flex: 1
 }
 
+.messages-region.wide-chat-history {
+    --chat-content-max-width: 100%
+}
+
 .messages-pane {
     box-sizing: border-box;
     width: 100%;
@@ -6381,6 +6385,10 @@ body {
     right: calc(50% - var(--chat-content-max-width) / 2 + 1.5em);
     bottom: 1.5em;
     box-shadow: 0 3px 12px #00000014
+}
+
+.wide-chat-history .chat-back-to-bottom {
+    right: 1.5em
 }
 
 .chat-back-to-bottom:hover {
