@@ -187,6 +187,7 @@ export default function App() {
             setConfigurationRefreshKey(value => value + 1)
             navigate(routes.configurations(), { replace: true })
           }}
+          onReturnToOverview={() => navigate(routes.configurations())}
           onOpenNavigation={() => setConfigurationSidebarOpen(true)}
         /> : <ChatView
           sessionId={sessionId}

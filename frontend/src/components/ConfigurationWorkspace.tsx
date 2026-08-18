@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Database, ListTree, LoaderCircle, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
+import { AlertCircle, Check, ChevronLeft, Database, ListTree, LoaderCircle, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, listConfigurations, replaceConfiguration } from '../api/client'
@@ -20,10 +20,11 @@ interface Props {
   onCreate: (kind: ConfigurationKind) => void
   onSaved: (kind: ConfigurationKind, name: string) => void
   onDeleted: () => void
+  onReturnToOverview: () => void
   onOpenNavigation: () => void
 }
 
-export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSaved, onDeleted, onOpenNavigation }: Props) {
+export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSaved, onDeleted, onReturnToOverview, onOpenNavigation }: Props) {
   const { t } = useTranslation()
   const [value, setValue] = useState<Configuration | null>(null)
   const [valueSelectionKey, setValueSelectionKey] = useState('')
@@ -81,7 +82,7 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
   if (kind == null) return <ConfigurationOverview lists={lists} onCreate={onCreate} onOpenNavigation={onOpenNavigation} />
-  if (isConstantsOverview) return <ConstantsWorkspace refreshKey={refreshKey} onDirtyChange={onDirtyChange} onSaved={() => { onDirtyChange(false); onSaved('constants', '') }} onOpenNavigation={onOpenNavigation} />
+  if (isConstantsOverview) return <ConstantsWorkspace refreshKey={refreshKey} onDirtyChange={onDirtyChange} onSaved={() => { onDirtyChange(false); onSaved('constants', '') }} onReturnToOverview={onReturnToOverview} onOpenNavigation={onOpenNavigation} />
   const meta = getConfigurationMeta(kind)
   const validationDescriptors = currentValue == null ? {} : validateConfiguration(kind, currentValue, catalog.constants)
   const errors = Object.fromEntries(Object.entries(validationDescriptors).map(([field, descriptor]) => [field, renderDescriptor(t, descriptor)]))
@@ -169,7 +170,7 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
     <div className="configuration-workspace">
       <header className="configuration-workspace-header">
         <button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button>
-        <div><span className="configuration-eyebrow"><Database size={14} />{t('configuration.databaseConfiguration')} · {t(`${meta.translationKey}.singular`)}</span><h1>{isNew ? t('configuration.createNamed', { name: t(`${meta.translationKey}.label`) }) : currentValue?.name ?? name}</h1><p>{t(`${meta.translationKey}.description`)}</p></div>
+        <div><button className="configuration-eyebrow configuration-return" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={onReturnToOverview}><ChevronLeft size={15} /><Database size={14} />{t('configuration.databaseConfiguration')} · {t(`${meta.translationKey}.singular`)}</button><h1>{isNew ? t('configuration.createNamed', { name: t(`${meta.translationKey}.label`) }) : currentValue?.name ?? name}</h1><p>{t(`${meta.translationKey}.description`)}</p></div>
       </header>
       <div className="configuration-workspace-scroll">
         {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} onNotify={notify} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
@@ -192,7 +193,7 @@ function ConfigurationOverview({ lists, onCreate, onOpenNavigation }: { lists: C
 
 type ConstantDraft = ConstantConfiguration & { id: number }
 
-function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onOpenNavigation }: { refreshKey: number; onDirtyChange: (dirty: boolean) => void; onSaved: () => void; onOpenNavigation: () => void }) {
+function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onReturnToOverview, onOpenNavigation }: { refreshKey: number; onDirtyChange: (dirty: boolean) => void; onSaved: () => void; onReturnToOverview: () => void; onOpenNavigation: () => void }) {
   const { t } = useTranslation()
   const nextDraftID = useRef(0)
   const createDraft = (constant: ConstantConfiguration): ConstantDraft => ({ ...constant, id: nextDraftID.current++ })
@@ -239,7 +240,7 @@ function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onOpenNavigati
   }
 
   return <div className="configuration-workspace">
-    <header className="configuration-workspace-header"><button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button><div><span className="configuration-eyebrow"><Database size={14} />{t('configuration.databaseConfiguration')}</span><h1>{t('configuration.kinds.constants.label')}</h1><p>{t('configuration.kinds.constants.description')}</p></div></header>
+    <header className="configuration-workspace-header"><button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button><div><button className="configuration-eyebrow configuration-return" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={onReturnToOverview}><ChevronLeft size={15} /><Database size={14} />{t('configuration.databaseConfiguration')}</button><h1>{t('configuration.kinds.constants.label')}</h1><p>{t('configuration.kinds.constants.description')}</p></div></header>
     <div className="configuration-workspace-scroll"><div className="configuration-constants-editor">{loading ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <>{constants.map((item, index) => <div className="configuration-constant-row" key={item.id}><input aria-label={t('configuration.form.name')} value={item.name} placeholder="variable_name" onChange={event => update(index, { name: event.target.value })} /><input aria-label={t('configuration.form.value')} value={item.value} placeholder={t('configuration.form.value')} onChange={event => update(index, { value: event.target.value })} /><button type="button" aria-label={t('common.delete')} title={t('common.delete')} onClick={() => setConstants(current => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button></div>)}<button className="configuration-add-row" type="button" onClick={() => setConstants(current => [...current, createDraft({ name: '', value: '' })])}><Plus size={15} />{t('common.create')}</button>{!valid && <p className="configuration-constants-error">{t('configuration.validation.constantNameInvalid')}</p>}</>}</div></div>
     {!loading && <footer className="configuration-action-bar"><div /><div><button type="button" disabled={!dirty || submitting} onClick={() => setConstants(baseline)}><RotateCcw size={15} />{t('common.reset')}</button><button className="primary" type="button" disabled={!dirty || submitting || !valid} onClick={() => void save()}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{t('common.saveChanges')}</button></div></footer>}
     {notification && <div className={`configuration-toast ${notification.type}`} role={notification.type === 'error' ? 'alert' : 'status'}><span>{notification.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}</span><p>{notification.message}</p><button type="button" aria-label={t('common.close')} onClick={() => setNotification(null)}><X size={15} /></button></div>}

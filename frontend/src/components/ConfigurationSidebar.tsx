@@ -38,6 +38,11 @@ export default function ConfigurationSidebar({ activeKind, activeName, refreshKe
 
   useEffect(() => onListsChange(lists), [lists, onListsChange])
 
+  useEffect(() => {
+    if (activeKind == null || activeKind === 'constants') return
+    setCollapsed(current => current.includes(activeKind) ? current.filter(kind => kind !== activeKind) : current)
+  }, [activeKind])
+
   const load = useCallback(async (kinds = CONFIGURATION_META.map(item => item.kind)) => {
     setLoading(current => [...new Set([...current, ...kinds])])
     const results = await Promise.allSettled(kinds.map(async kind => ({ kind, values: await listConfigurations(kind) as Configuration[] })))

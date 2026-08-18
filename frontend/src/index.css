@@ -5037,7 +5037,7 @@ body {
 .sidebar-brand-icon {
     width: 24px;
     height: 24px;
-    transform: rotate(180deg)
+    /* transform: rotate(180deg) */
 }
 
 .sidebar-brand-wordmark {
@@ -8191,6 +8191,8 @@ body[data-ds-dark-theme] {
 .configuration-mobile-nav { display: none; align-items: center; gap: 6px; width: max-content; height: 32px; padding: 0 10px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; font: inherit; font-size: 11px; cursor: pointer }
 .configuration-workspace-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 28px 40px 21px; border-bottom: 1px solid var(--dsw-alias-border-l1) }
 .configuration-workspace-header > div:first-child { min-width: 0 }
+.configuration-return { padding: 2px 5px 2px 2px; margin-left: -2px; background: transparent; border: 0; border-radius: 5px; cursor: pointer }
+.configuration-return:hover,.configuration-return:focus-visible { background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 8%,transparent); outline: none }
 .configuration-eyebrow { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-button-primary-fill); font-size: 11px; line-height: 16px; font-weight: 600; text-transform: uppercase }
 .configuration-workspace-header h1 { overflow: hidden; margin: 5px 0 3px; font-size: 24px; line-height: 32px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap }
 .configuration-workspace-header p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 19px }
