@@ -193,13 +193,13 @@ func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
 	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
 	response, err := client.ContinueStream(
 		context.Background(),
-		registry.Identity{},
+		registry.Identity{MaxTokens: 256000},
 		[]store.ChatMessage{
 			{Role: ds4.RoleUser, Content: "Tell a story"},
 			{Role: ds4.RoleAssistant, Content: "", ToolCalls: datatypes.JSON(`[{"id":"call-1","type":"function","function":{"name":"shell","arguments":"{}"}}]`)},
 			{Role: ds4.RoleTool, Content: "tool output", ToolCallID: "call-1"},
 		},
-		store.ChatMessage{Role: ds4.RoleAssistant, Content: "Once upon"},
+		store.ChatMessage{Role: ds4.RoleAssistant, Content: "Once upon", ReasoningContent: "original reasoning"},
 		nil,
 	)
 	if err != nil {
@@ -209,8 +209,18 @@ func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
 		t.Fatalf("request path = %q, want beta prefix endpoint", requestPath)
 	}
 	last := request.Messages[len(request.Messages)-1]
-	if last.Role != ds4.RoleAssistant || last.Content != "Once upon" || !last.Prefix {
+	if last.Role != ds4.RoleAssistant || last.Content != "Once upon" || last.ReasoningContent != "original reasoning" || !last.Prefix {
 		t.Fatalf("expected final assistant prefix, got %+v", last)
+	}
+	if request.Thinking == nil || request.Thinking.Type != "disabled" || request.ReasoningEffort != "" {
+		t.Fatalf("thinking = %+v, reasoning_effort = %q", request.Thinking, request.ReasoningEffort)
+	}
+	if request.MaxTokens != continuationMaxTokens {
+		t.Fatalf("max_tokens = %d, want %d", request.MaxTokens, continuationMaxTokens)
+	}
+	beforePrefix := request.Messages[len(request.Messages)-2]
+	if beforePrefix.Role != ds4.RoleUser || beforePrefix.Content != "Tell a story" {
+		t.Fatalf("message before prefix = %+v, want original user history", beforePrefix)
 	}
 	if len(request.Tools) != 0 {
 		t.Fatalf("expected continuation request to disable tools, got %+v", request.Tools)

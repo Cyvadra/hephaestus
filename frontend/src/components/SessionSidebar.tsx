@@ -48,6 +48,12 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   }, [reload, refreshKey])
 
   useEffect(() => {
+    if (mode !== 'chat' || project == null) return
+    const interval = window.setInterval(() => { void reload() }, 5_000)
+    return () => window.clearInterval(interval)
+  }, [mode, project, reload])
+
+  useEffect(() => {
     if (sessionUpdate == null) return
     setSessions(current => {
       const withoutUpdated = current.filter(session => session.ID !== sessionUpdate.ID)

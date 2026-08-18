@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
+	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/project"
@@ -36,6 +37,7 @@ type Service struct {
 	registries   *registry.Store
 	sessions     *session.Service
 	pipeline     *chat.Pipeline
+	chatRuns     *chatrun.Service
 	commands     *command.Service
 	projects     *project.Service
 	interactions *interaction.Manager
@@ -56,9 +58,10 @@ type pendingApproval struct {
 }
 
 // New creates an external-channel runtime.
-func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, commands *command.Service, projects *project.Service, interactions *interaction.Manager, configured ...channels.Channel) *Service {
+func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pipeline *chat.Pipeline, chatRuns *chatrun.Service, commands *command.Service, projects *project.Service, interactions *interaction.Manager, configured ...channels.Channel) *Service {
 	return &Service{
 		db: db, registries: registries, sessions: sessions, pipeline: pipeline,
+		chatRuns: chatRuns,
 		commands: commands, projects: projects, interactions: interactions,
 		channels: configured, timeout: defaultApprovalTimeout,
 		queues: map[string]chan channels.InboundMessage{}, pending: map[string]pendingApproval{},
@@ -113,6 +116,11 @@ func (s *Service) handleInbound(ctx context.Context, message channels.InboundMes
 		s.mu.Unlock()
 		return
 	}
+	if isStopCommand(message.Content) {
+		s.mu.Unlock()
+		s.processStop(ctx, message)
+		return
+	}
 	queue := s.queues[key]
 	if queue == nil {
 		queue = make(chan channels.InboundMessage, 16)
@@ -125,6 +133,30 @@ func (s *Service) handleInbound(ctx context.Context, message channels.InboundMes
 	case queue <- message:
 	case <-ctx.Done():
 	}
+}
+
+func isStopCommand(text string) bool {
+	fields := strings.Fields(text)
+	return len(fields) > 0 && fields[0] == "/stop"
+}
+
+// processStop bypasses the per-chat message queue so it can interrupt the
+// turn currently occupying that queue.
+func (s *Service) processStop(ctx context.Context, message channels.InboundMessage) {
+	external := s.findChannel(message.Channel)
+	if external == nil {
+		return
+	}
+	sessionID, err := s.boundSession(message.Channel, message.ChatID)
+	if err != nil {
+		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: err.Error()})
+		return
+	}
+	response, err := s.commands.Execute(sessionID, "/stop")
+	if err != nil {
+		response = err.Error()
+	}
+	_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
 }
 
 func (s *Service) runStack(ctx context.Context, queue <-chan channels.InboundMessage) {
@@ -163,33 +195,44 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		return
 	}
 
-	turnCtx, cancel := context.WithCancel(ctx)
-	registrationID := s.commands.RegisterCancel(sessionID, cancel)
-	defer func() {
-		s.commands.UnregisterCancel(sessionID, registrationID)
-		cancel()
-	}()
 	sessionRow, err := s.sessions.Get(sessionID)
 	if err != nil {
 		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: fmt.Sprintf("channel: load active session: %v", err)})
 		return
 	}
-	result, runErr := s.pipeline.Run(turnCtx, sessionID, text, channelTurnOptions(sessionRow.ActiveLeafMessageID, func(event chat.StreamEvent) {
-		if event.Type == interaction.EventAskPermission && event.Interaction != nil {
-			s.beginApproval(ctx, external, message, *event.Interaction)
+	done := make(chan struct{})
+	_, err = s.chatRuns.Start(sessionID, sessionRow.ProjectID, store.ChatRunMessage, map[string]any{"text": text, "channel": message.Channel}, func(turnCtx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
+		defer close(done)
+		result, runErr := s.pipeline.Run(turnCtx, sessionID, text, channelTurnOptions(sessionRow.ActiveLeafMessageID, func(event chat.StreamEvent) {
+			onDelta(event)
+			if event.Type == interaction.EventAskPermission && event.Interaction != nil {
+				s.beginApproval(ctx, external, message, *event.Interaction)
+			}
+			// Reasoning, deltas and tool events intentionally become "_" at the
+			// external-channel boundary and are not sent.
+		}))
+		if runErr != nil {
+			if !errors.Is(runErr, context.Canceled) {
+				_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: runErr.Error()})
+			}
+			return nil, runErr
 		}
-		// Reasoning, deltas and tool events intentionally become "_" at the
-		// external-channel boundary and are not sent.
-	}))
-	if runErr != nil {
-		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: runErr.Error()})
+		if result == nil || result.Message == nil {
+			return nil, nil
+		}
+		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: result.Message.Content})
+		s.sendAttachments(ctx, external, message.ChatID, sessionID, result.Message.ID)
+		return &chatrun.Result{FinalMessageID: &result.Message.ID, Response: map[string]any{"content": result.Message.Content}}, nil
+	})
+	if err != nil {
+		response := err.Error()
+		if errors.Is(err, chatrun.ErrRunActive) {
+			response = "A task is already running for this session."
+		}
+		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
 		return
 	}
-	if result == nil || result.Message == nil {
-		return
-	}
-	_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: result.Message.Content})
-	s.sendAttachments(ctx, external, message.ChatID, sessionID, result.Message.ID)
+	<-done
 }
 
 func channelTurnOptions(expectedLeaf *uint, onDelta func(chat.StreamEvent)) chat.TurnOptions {

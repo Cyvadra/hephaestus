@@ -207,7 +207,7 @@ func main() {
 		}
 		configuredChannels = append(configuredChannels, qqChannel)
 	}
-	channelService := channelruntime.New(db, registryStore, sessions, pipeline, commands, projects, interactions, configuredChannels...)
+	channelService := channelruntime.New(db, registryStore, sessions, pipeline, chatRunSvc, commands, projects, interactions, configuredChannels...)
 	if err := channelService.Start(ctx); err != nil {
 		log.Fatalf("channel: %v", err)
 	}

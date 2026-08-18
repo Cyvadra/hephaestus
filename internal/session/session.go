@@ -372,19 +372,30 @@ func insertChain(tx *gorm.DB, sessionID uint, parentID *uint, msgs []store.ChatM
 }
 
 // EditAssistantAtLeaf creates an edited sibling of messageID and makes it
-// the active leaf. The original message and all of its descendants remain
-// unchanged and reachable through the session's message tree.
-func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, content, reasoningContent string) (*store.ChatMessage, error) {
+// the active leaf. Reasoning and attachments are inherited from the source;
+// only the user-visible content is editable.
+func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, content string) (*store.ChatMessage, error) {
+	return s.cloneAssistantAtLeaf(sessionID, messageID, expectedLeaf, content, store.MessageStatusComplete)
+}
+
+// ContinueAssistantAtLeaf creates an expanded sibling of messageID and makes
+// it the active leaf. The caller supplies the complete expanded content, not
+// only the generated suffix.
+func (s *Service) ContinueAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, content, status string) (*store.ChatMessage, error) {
+	return s.cloneAssistantAtLeaf(sessionID, messageID, expectedLeaf, content, status)
+}
+
+func (s *Service) cloneAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, content, status string) (*store.ChatMessage, error) {
 	if strings.TrimSpace(content) == "" {
 		return nil, ErrEmptyContent
 	}
 
-	edited := store.ChatMessage{
-		SessionID:        sessionID,
-		Timestamp:        time.Now(),
-		Role:             "assistant",
-		Content:          content,
-		ReasoningContent: reasoningContent,
+	cloned := store.ChatMessage{
+		SessionID: sessionID,
+		Timestamp: time.Now(),
+		Role:      "assistant",
+		Content:   content,
+		Status:    status,
 	}
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -407,6 +418,7 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 		if hasToolCalls(target.ToolCalls) {
 			return ErrToolCallMessage
 		}
+		cloned.ReasoningContent = target.ReasoningContent
 
 		all, err := loadMessages(tx, sessionID)
 		if err != nil {
@@ -427,9 +439,9 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 			return ErrMessageNotOnPath
 		}
 
-		edited.ParentMessageID = target.ParentMessageID
-		if err := tx.Create(&edited).Error; err != nil {
-			return fmt.Errorf("session: create edited assistant message: %w", err)
+		cloned.ParentMessageID = target.ParentMessageID
+		if err := tx.Create(&cloned).Error; err != nil {
+			return fmt.Errorf("session: create assistant sibling: %w", err)
 		}
 		var attachments []store.MessageAttachment
 		if err := tx.Where("message_id = ?", target.ID).Find(&attachments).Error; err != nil {
@@ -437,14 +449,14 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 		}
 		for index := range attachments {
 			attachments[index].ID = 0
-			attachments[index].MessageID = edited.ID
+			attachments[index].MessageID = cloned.ID
 			attachments[index].CreatedAt = time.Now()
 		}
 		if len(attachments) > 0 {
 			if err := tx.Create(&attachments).Error; err != nil {
 				return fmt.Errorf("session: copy assistant attachments for edit: %w", err)
 			}
-			edited.Attachments = attachments
+			cloned.Attachments = attachments
 		}
 		updated := tx.Model(&store.Session{}).Where("id = ?", sessionID)
 		if previousLeaf == nil {
@@ -453,8 +465,8 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 			updated = updated.Where("active_leaf_message_id = ?", *previousLeaf)
 		}
 		updated = updated.Updates(map[string]any{
-			"active_leaf_message_id": edited.ID,
-			"last_message_time":      edited.Timestamp,
+			"active_leaf_message_id": cloned.ID,
+			"last_message_time":      cloned.Timestamp,
 		})
 		if updated.Error != nil {
 			return fmt.Errorf("session: activate edited assistant message: %w", updated.Error)
@@ -467,7 +479,7 @@ func (s *Service) EditAssistantAtLeaf(sessionID, messageID, expectedLeaf uint, c
 	if err != nil {
 		return nil, err
 	}
-	return &edited, nil
+	return &cloned, nil
 }
 
 func hasToolCalls(raw datatypes.JSON) bool {

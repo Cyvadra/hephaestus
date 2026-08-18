@@ -14,7 +14,7 @@ interface Props {
   childrenMap: Map<number | null, ChatMessage[]>
   onBranchSwitch: (leafId: number) => void
   onEditResend: (newText: string) => void
-  onEditAssistant: (content: string, reasoningContent: string) => Promise<void>
+  onEditAssistant: (content: string) => Promise<void>
   editSaving?: boolean
   editDisabled?: boolean
   forkDisabled?: boolean
@@ -28,7 +28,6 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const [editing, setEditing] = useState(false)
   const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
   const [editText, setEditText] = useState(msg.Content)
-  const [editReasoning, setEditReasoning] = useState(msg.ReasoningContent)
   const [copied, setCopied] = useState(false)
   const [reasoningPinned, setReasoningPinned] = useState(false)
   const [reasoningHovered, setReasoningHovered] = useState(false)
@@ -67,7 +66,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const handleAssistantEditSubmit = async () => {
     if (!editText.trim() || editDisabled) return
     try {
-      await onEditAssistant(editText.trim(), editReasoning)
+      await onEditAssistant(editText.trim())
       setEditing(false)
     } catch {
       // ChatView surfaces the request error without discarding the draft.
@@ -178,16 +177,6 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                   autoFocus
                 />
               </label>
-              <label className="message-editor-field">
-                <span>{t('chat.reasoning.process')}</span>
-                <textarea
-                  value={editReasoning}
-                  onChange={event => setEditReasoning(event.target.value)}
-                  onKeyDown={handleAssistantEditKeyDown}
-                  className="message-editor-textarea reasoning-editor-textarea"
-                  rows={4}
-                />
-              </label>
               <div className="message-editor-actions">
                 <button onClick={() => setEditing(false)} className="message-action-btn" disabled={editSaving}>{t('common.cancel')}</button>
                 <button onClick={() => void handleAssistantEditSubmit()} className="composer-send-btn" disabled={!editText.trim() || editDisabled}>
@@ -232,7 +221,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 </IconButton>
                 {canEdit && (
                   <button
-                    onClick={() => { setEditText(msg.Content); setEditReasoning(msg.ReasoningContent); setEditing(true) }}
+                    onClick={() => { setEditText(msg.Content); setEditing(true) }}
                     className="message-action-btn message-icon-btn"
                     disabled={editDisabled}
                     aria-label={t('chat.message.edit')}

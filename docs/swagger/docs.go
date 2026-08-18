@@ -2011,9 +2011,6 @@ const docTemplate = `{
                 },
                 "content": {
                     "type": "string"
-                },
-                "reasoning_content": {
-                    "type": "string"
                 }
             }
         },

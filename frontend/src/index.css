@@ -6299,10 +6299,6 @@ body {
     display: block
 }
 
-.reasoning-editor-textarea {
-    min-height: 68px
-}
-
 .composer-panel {
     position: relative;
     box-sizing: border-box;

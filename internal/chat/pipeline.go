@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Cyvadra/ds4"
@@ -31,6 +32,8 @@ const (
 	// compressionTriggerRatio matches the design doc's "current context
 	// length > 80% max context length" compression trigger.
 	compressionTriggerRatio = 0.8
+	continuationAttempts    = 3
+	continuationBridge      = "\n\n"
 )
 
 // Pipeline runs turns for sessions.
@@ -416,10 +419,9 @@ func (p *Pipeline) awaitSessionSummary(ctx context.Context, done <-chan struct{}
 	}
 }
 
-// Continue resumes an incomplete assistant response at the active session
-// leaf. The prefix remains in history and the generated suffix is persisted
-// as its child, so the complete reply can be reconstructed without copying
-// the already-generated content.
+// Continue expands the assistant response at the active session leaf. The
+// result is persisted as a complete-content sibling of the prefix, preserving
+// the original response as a selectable branch.
 func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts TurnOptions) (*TurnResult, error) {
 	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
 	if err != nil {
@@ -432,8 +434,8 @@ func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts
 		return nil, fmt.Errorf("chat: session %d has no message to continue", sessionID)
 	}
 	prefix := prep.activePath[len(prep.activePath)-1]
-	if prefix.ID != messageID || prefix.Role != ds4.RoleAssistant || prefix.Status != store.MessageStatusIncomplete || prefix.Content == "" {
-		return nil, fmt.Errorf("chat: message %d is not a continuable incomplete assistant response", messageID)
+	if prefix.ID != messageID || prefix.Role != ds4.RoleAssistant || strings.TrimSpace(prefix.Content) == "" || len(prefix.ToolCalls) > 0 {
+		return nil, fmt.Errorf("chat: message %d is not a continuable assistant response", messageID)
 	}
 
 	contextMessages, err := p.buildContext(prep.registry, prep.settings, prep.activePath[:len(prep.activePath)-1], prep.compRow, prep.vars)
@@ -442,47 +444,62 @@ func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts
 	}
 	response, err := p.continueResponse(ctx, prep.identity, contextMessages, prefix, opts.OnDelta)
 	if err != nil {
-		if response.Content == "" && response.ReasoningContent == "" && len(response.ToolCalls) == 0 {
+		if response.Content == "" {
 			return nil, err
 		}
-		if _, saveErr := p.sessions.AppendMessagesAtLeaf(sessionID, &messageID, &messageID, []store.ChatMessage{response}); saveErr != nil {
+		if _, saveErr := p.sessions.ContinueAssistantAtLeaf(sessionID, messageID, messageID, prefix.Content+response.Content, store.MessageStatusIncomplete); saveErr != nil {
 			return nil, saveErr
 		}
 		return nil, err
 	}
-	response.Status = store.MessageStatusComplete
-	saved, err := p.sessions.AppendMessagesAtLeaf(sessionID, &messageID, &messageID, []store.ChatMessage{response})
+	if response.Content == "" {
+		return nil, errors.New("chat: continuation returned no content")
+	}
+	saved, err := p.sessions.ContinueAssistantAtLeaf(sessionID, messageID, messageID, prefix.Content+response.Content, store.MessageStatusComplete)
 	if err != nil {
 		return nil, err
 	}
-	final := saved[0]
-	return &TurnResult{Message: &final, Metadata: map[string]any{}}, nil
+	return &TurnResult{Message: saved, Metadata: map[string]any{}}, nil
 }
 
 func (p *Pipeline) continueResponse(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, prefix store.ChatMessage, onDelta func(StreamEvent)) (store.ChatMessage, error) {
-	response, err := p.llm.ContinueStream(ctx, identity, messages, prefix, func(delta llm.StreamDelta) {
-		if onDelta == nil {
-			return
-		}
-		if delta.Content != "" {
-			onDelta(StreamEvent{Type: "delta", Text: delta.Content})
-		}
-		if delta.ReasoningContent != "" {
-			onDelta(StreamEvent{Type: "reasoning", Text: delta.ReasoningContent})
-		}
-	})
-	if err != nil {
-		var incomplete *llm.IncompleteResponseError
-		if errors.As(err, &incomplete) && hasMessageContent(incomplete.Message) {
-			partial, convertErr := agent.StoreMessageFromDS4(incomplete.Message)
-			if convertErr == nil {
-				partial.Status = store.MessageStatusIncomplete
-				return partial, err
+	for attempt := 0; attempt < continuationAttempts; attempt++ {
+		requestPrefix := prefix
+		requestPrefix.Content += continuationBridge
+		emittedContent := false
+		response, err := p.llm.ContinueStream(ctx, identity, messages, requestPrefix, func(delta llm.StreamDelta) {
+			if onDelta != nil && delta.Content != "" {
+				text := delta.Content
+				if !emittedContent {
+					text = continuationBridge + text
+					emittedContent = true
+				}
+				onDelta(StreamEvent{Type: "delta", Text: text})
 			}
+		})
+		if err != nil {
+			var incomplete *llm.IncompleteResponseError
+			if errors.As(err, &incomplete) && incomplete.Message.Content != "" {
+				partial, convertErr := agent.StoreMessageFromDS4(incomplete.Message)
+				if convertErr == nil {
+					partial.Content = continuationBridge + partial.Content
+					partial.ReasoningContent = ""
+					partial.Status = store.MessageStatusIncomplete
+					return partial, err
+				}
+			}
+			return store.ChatMessage{}, err
 		}
-		return store.ChatMessage{}, err
+		message, convertErr := agent.StoreMessageFromDS4(*response.FirstMessage())
+		if convertErr != nil {
+			return store.ChatMessage{}, convertErr
+		}
+		if message.Content != "" {
+			message.Content = continuationBridge + message.Content
+			return message, nil
+		}
 	}
-	return agent.StoreMessageFromDS4(*response.FirstMessage())
+	return store.ChatMessage{}, errors.New("chat: continuation returned no content")
 }
 
 // Regenerate re-answers the nearest ancestor user message on sessionID's

@@ -120,7 +120,6 @@ export const editAssistantMessage = (
   messageId: number,
   activeLeafMessageId: number,
   content: string,
-  reasoningContent: string,
 ) =>
   fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/messages/${messageId}/edit`, {
     method: 'POST',
@@ -128,7 +127,6 @@ export const editAssistantMessage = (
     body: JSON.stringify({
       active_leaf_message_id: activeLeafMessageId,
       content,
-      reasoning_content: reasoningContent,
     }),
   })
 

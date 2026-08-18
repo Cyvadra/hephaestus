@@ -346,7 +346,6 @@ type streamEventEnvelope struct {
 type editAssistantMessageRequest struct {
 	ActiveLeafMessageID uint   `json:"active_leaf_message_id" binding:"required"`
 	Content             string `json:"content" binding:"required"`
-	ReasoningContent    string `json:"reasoning_content"`
 }
 
 // editAssistantMessage godoc
@@ -388,7 +387,6 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 		messageID,
 		req.ActiveLeafMessageID,
 		req.Content,
-		req.ReasoningContent,
 	)
 	if err != nil {
 		switch {

@@ -205,14 +205,14 @@ func TestIntegration_EditAssistantAtLeaf(t *testing.T) {
 		t.Fatalf("AppendMessages: %v", err)
 	}
 
-	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[3].ID, "edited", "new reasoning")
+	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[3].ID, "edited")
 	if err != nil {
 		t.Fatalf("EditAssistantAtLeaf: %v", err)
 	}
 	if edited.ID == saved[1].ID || edited.ParentMessageID == nil || *edited.ParentMessageID != saved[0].ID {
 		t.Fatalf("expected a sibling of message %d, got %+v", saved[1].ID, edited)
 	}
-	if edited.Content != "edited" || edited.ReasoningContent != "new reasoning" {
+	if edited.Content != "edited" || edited.ReasoningContent != "old reasoning" {
 		t.Fatalf("unexpected edited fields: %+v", edited)
 	}
 
@@ -262,29 +262,66 @@ func TestIntegration_EditAssistantAtLeafValidation(t *testing.T) {
 		t.Fatalf("AppendMessages: %v", err)
 	}
 
-	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[0].ID, saved[2].ID, "edited", ""); !errors.Is(err, session.ErrNotAssistant) {
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[0].ID, saved[2].ID, "edited"); !errors.Is(err, session.ErrNotAssistant) {
 		t.Fatalf("expected ErrNotAssistant, got %v", err)
 	}
-	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[2].ID, saved[2].ID, "edited", ""); !errors.Is(err, session.ErrToolCallMessage) {
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[2].ID, saved[2].ID, "edited"); !errors.Is(err, session.ErrToolCallMessage) {
 		t.Fatalf("expected ErrToolCallMessage, got %v", err)
 	}
-	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[2].ID, "  ", ""); !errors.Is(err, session.ErrEmptyContent) {
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[2].ID, "  "); !errors.Is(err, session.ErrEmptyContent) {
 		t.Fatalf("expected ErrEmptyContent, got %v", err)
 	}
 	branch, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{{Role: "assistant", Content: "other root"}})
 	if err != nil {
 		t.Fatalf("AppendMessages branch: %v", err)
 	}
-	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, branch[0].ID, "edited", ""); !errors.Is(err, session.ErrMessageNotOnPath) {
+	if _, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, branch[0].ID, "edited"); !errors.Is(err, session.ErrMessageNotOnPath) {
 		t.Fatalf("expected ErrMessageNotOnPath, got %v", err)
 	}
 
-	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[2].ID, "edited inactive branch", "")
+	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[2].ID, "edited inactive branch")
 	if err != nil {
 		t.Fatalf("edit locally selected inactive branch: %v", err)
 	}
 	if edited.ParentMessageID == nil || *edited.ParentMessageID != saved[0].ID {
 		t.Fatalf("expected edited sibling on selected branch, got %+v", edited)
+	}
+}
+
+func TestIntegration_ContinueAssistantAtLeafCreatesExpandedSibling(t *testing.T) {
+	db := openTestDB(t)
+	svc := session.New(db)
+	sess := newTestSession(t, db, "hephaestus-it-continue-assistant")
+
+	saved, err := svc.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "question"},
+		{Role: "assistant", Content: "prefix", ReasoningContent: "original reasoning"},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+	attachment := store.MessageAttachment{SessionID: sess.ID, MessageID: saved[1].ID, ProjectID: sess.ProjectID, Path: "result.txt"}
+	if err := db.Create(&attachment).Error; err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+
+	continued, err := svc.ContinueAssistantAtLeaf(sess.ID, saved[1].ID, saved[1].ID, "prefix suffix", store.MessageStatusComplete)
+	if err != nil {
+		t.Fatalf("ContinueAssistantAtLeaf: %v", err)
+	}
+	if continued.ParentMessageID == nil || *continued.ParentMessageID != saved[0].ID {
+		t.Fatalf("expected continuation sibling under user %d, got %+v", saved[0].ID, continued)
+	}
+	if continued.Content != "prefix suffix" || continued.ReasoningContent != "original reasoning" || len(continued.Attachments) != 1 {
+		t.Fatalf("unexpected continued message: %+v", continued)
+	}
+
+	again, err := svc.ContinueAssistantAtLeaf(sess.ID, continued.ID, continued.ID, "prefix suffix again", store.MessageStatusIncomplete)
+	if err != nil {
+		t.Fatalf("continue expanded sibling: %v", err)
+	}
+	if again.ParentMessageID == nil || *again.ParentMessageID != saved[0].ID || again.Status != store.MessageStatusIncomplete {
+		t.Fatalf("expected repeated continuation sibling marked incomplete, got %+v", again)
 	}
 }
 
@@ -310,7 +347,7 @@ func TestIntegration_EditAssistantInvalidatesCoveredCompression(t *testing.T) {
 		t.Fatalf("StoreCompression: %v", err)
 	}
 
-	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[1].ID, "edited", "")
+	edited, err := svc.EditAssistantAtLeaf(sess.ID, saved[1].ID, saved[1].ID, "edited")
 	if err != nil {
 		t.Fatalf("EditAssistantAtLeaf: %v", err)
 	}

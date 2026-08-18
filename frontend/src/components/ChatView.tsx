@@ -629,7 +629,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setLocalLeafId(newLeafId)
   }, [])
 
-  const handleEditAssistant = useCallback(async (messageId: number, content: string, reasoningContent: string) => {
+  const handleEditAssistant = useCallback(async (messageId: number, content: string) => {
     if (resolvedSessionId == null || localLeafId == null) return
 
     setError(null)
@@ -640,7 +640,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         messageId,
         localLeafId,
         content,
-        reasoningContent,
       )
       await loadHistory(resolvedSessionId)
       if (response.message) setLocalLeafId(response.message.ID)
@@ -809,13 +808,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               childrenMap={childrenMap}
               onBranchSwitch={handleBranchSwitch}
               onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID)}
-              onEditAssistant={(content, reasoningContent) => handleEditAssistant(item.message.ID, content, reasoningContent)}
+              onEditAssistant={(content) => handleEditAssistant(item.message.ID, content)}
               editSaving={editingMessageId === item.message.ID}
               editDisabled={streaming || editingMessageId != null}
               forkDisabled={streaming || forking}
               onFork={idx === lastAssistantIdx ? undefined : () => void handleForkAtMessage(item.message.ID)}
               onRegenerate={idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
-              onContinue={idx === lastAssistantIdx && !streaming && item.message.Status === 'incomplete' && item.message.Content.trim()
+              onContinue={item.message.ID === localLeafId && idx === lastAssistantIdx && !streaming && item.message.Content.trim() && (!item.message.ToolCalls || item.message.ToolCalls.length === 0)
                 ? () => handleContinue(item.message.ID)
                 : undefined}
             />
@@ -832,7 +831,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
             />
           </div>
         )}
-        {streaming && regeneratingMessageId == null && (
+        {streaming && regeneratingMessageId == null && continuingMessageId == null && (
           <div className="message-row assistant">
 			<GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} />
           </div>
@@ -978,20 +977,6 @@ function groupToolChains(path: ChatMessage[]): DisplayMessage[] {
     if (message.Role !== 'assistant') {
       grouped.push({ message })
       index++
-      continue
-    }
-
-    const continuation = path[index + 1]
-    if (message.Status === 'incomplete' && continuation?.Role === 'assistant' && continuation.ParentMessageID === message.ID) {
-      grouped.push({
-        message: {
-          ...continuation,
-          Content: message.Content + continuation.Content,
-        },
-        branchMessage: message,
-        processMessages: [message, continuation],
-      })
-      index += 2
       continue
     }
 

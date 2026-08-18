@@ -28,8 +28,21 @@ func TestChannelTurnOptionsPreservesExpectedLeaf(t *testing.T) {
 	}
 }
 
+func TestIsStopCommand(t *testing.T) {
+	for _, input := range []string{"/stop", " /stop ", "/stop now"} {
+		if !isStopCommand(input) {
+			t.Errorf("isStopCommand(%q) = false", input)
+		}
+	}
+	for _, input := range []string{"stop", "/status", ""} {
+		if isStopCommand(input) {
+			t.Errorf("isStopCommand(%q) = true", input)
+		}
+	}
+}
+
 func TestStopClosesQueuesAndPreventsNewWorkers(t *testing.T) {
-	svc := New(nil, nil, nil, nil, nil, nil, nil)
+	svc := New(nil, nil, nil, nil, nil, nil, nil, nil)
 	queue := make(chan channels.InboundMessage)
 	svc.queues["qq\x00chat"] = queue
 	svc.workers.Add(1)

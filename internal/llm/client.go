@@ -19,6 +19,8 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
+const continuationMaxTokens = 8192
+
 // Client wraps a ds4.Client with Identity-aware request building.
 type Client struct {
 	ds4 *ds4.Client
@@ -113,13 +115,18 @@ func (c *Client) CallStream(ctx context.Context, identity registry.Identity, mes
 	return c.stream(ctx, builder, onDelta)
 }
 
-// ContinueStream resumes an incomplete assistant message using ds4's chat
-// prefix-completion API. messages must exclude prefix, which is appended as
-// the final assistant response before Continue marks it as the request prefix.
+// ContinueStream expands an assistant message using ds4's chat prefix-
+// completion API. messages must exclude prefix, which is appended as the
+// final assistant response before Continue marks it as the request prefix.
 // The provider rejects function calls with prefixes, so tools are disabled
 // for this continuation request only. Its beta endpoint also rejects prior
 // tool-call messages, so those history entries are excluded for this request.
+// Thinking is disabled because the prefix's original reasoning is immutable.
 func (c *Client) ContinueStream(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, prefix store.ChatMessage, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
+	identity.ReasoningEffort = registry.ReasoningNone
+	if identity.MaxTokens == 0 || identity.MaxTokens > continuationMaxTokens {
+		identity.MaxTokens = continuationMaxTokens
+	}
 	builder := c.buildChat(identity, withoutToolCalls(messages), nil)
 	builder.AppendResponse(&ds4.ChatResponse{Choices: []ds4.Choice{{Message: store2ds4(prefix)}}}).Continue(0)
 	return c.stream(ctx, builder, onDelta)
