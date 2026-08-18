@@ -5,11 +5,13 @@ identity: default
 impressions: []
 tool_groups:
   - basic
+  - chat_history
   - project
   - web
   - shell
 default_tool_groups:
   - basic
+  - chat_history
   - project
   - web
   - shell

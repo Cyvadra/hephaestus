@@ -3,6 +3,7 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,19 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 	}
 	if err := reg.Validate(knownTools, map[string]bool{"metaphysics": true}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)
+	}
+	if got, want := reg.ToolGroups["basic"].Tools, []string{"send_file"}; !slices.Equal(got, want) {
+		t.Fatalf("basic tools = %v, want %v", got, want)
+	}
+	if got, want := reg.ToolGroups["chat_history"].Tools, []string{"chat_history_search", "chat_history_read"}; !slices.Equal(got, want) {
+		t.Fatalf("chat_history tools = %v, want %v", got, want)
+	}
+	concierge := reg.Concierges["default"]
+	if got, want := concierge.ToolGroups, []string{"basic", "chat_history", "project", "web", "shell"}; !slices.Equal(got, want) {
+		t.Fatalf("default concierge tool groups = %v, want %v", got, want)
+	}
+	if got, want := concierge.DefaultToolGroups, []string{"basic", "chat_history", "project", "web", "shell"}; !slices.Equal(got, want) {
+		t.Fatalf("default concierge default tool groups = %v, want %v", got, want)
 	}
 
 	identity := reg.Identities["example"]

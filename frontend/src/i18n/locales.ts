@@ -94,6 +94,10 @@ export const resources = {
           viewResult: '查看执行结果',
           truncatedResult: '[结果过长，已截断]',
         },
+        navigation: {
+          previousUserMessage: '跳转到上一条用户消息，第 {{index}} 条，共 {{total}} 条',
+          backToBottom: '回到底部',
+        },
         permission: {
           processing: '正在处理',
           autoApprove: '{{count}} 秒后自动允许',
@@ -335,6 +339,10 @@ export const resources = {
           called: 'Called',
           viewResult: 'View result',
           truncatedResult: '[Result was truncated because it is too long]',
+        },
+        navigation: {
+          previousUserMessage: 'Jump to previous user message, {{index}} of {{total}}',
+          backToBottom: 'Back to bottom',
         },
         permission: {
           processing: 'Processing',

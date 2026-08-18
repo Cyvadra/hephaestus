@@ -5,6 +5,7 @@ import type { GenerationOptions, ReasoningEffort } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
 
 interface Props {
+  focusKey?: string
   onSend: (text: string, files: File[]) => void
   commandHelp: string | null
   commandHelpLoading: boolean
@@ -40,7 +41,7 @@ function getStoredSendShortcut(): SendShortcut {
   return sendShortcutChoices.includes(stored as SendShortcut) ? stored as SendShortcut : 'enter'
 }
 
-export default function Composer({ onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle }: Props) {
+export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -69,6 +70,10 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
   useEffect(() => {
     firstMatchedCommandRef.current?.scrollIntoView({ block: 'nearest' })
   }, [commandQuery, commandHelp])
+
+  useEffect(() => {
+    if (focusKey?.startsWith('new:')) textareaRef.current?.focus()
+  }, [focusKey])
 
   useEffect(() => () => {
     if (sendShortcutTimerRef.current != null) window.clearTimeout(sendShortcutTimerRef.current)
@@ -177,6 +182,7 @@ export default function Composer({ onSend, commandHelp, commandHelpLoading, onCo
         <div className="composer-input-row">
           <textarea
             ref={textareaRef}
+            autoFocus
             value={text}
             onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}

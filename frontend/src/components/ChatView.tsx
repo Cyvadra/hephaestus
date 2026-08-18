@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
-import { UploadCloud, Zap } from 'lucide-react'
+import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
 import { authFetch } from '../api/auth'
@@ -10,11 +10,38 @@ import MessageBubble from './MessageBubble'
 import Composer from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
-import { pendingAttachmentPrefix } from '../lib/attachments'
+import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
 import i18n from '../i18n'
 
 const COMMAND_HELP_CACHE_KEY = 'hephaestus.commandHelp'
 const COMMAND_HELP_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const HISTORY_NAV_TOP_THRESHOLD = 120
+const HISTORY_NAV_BOTTOM_THRESHOLD = 900
+const HISTORY_NAV_UNLOCK_DISTANCE = 48
+const HISTORY_NAV_TARGET_OFFSET = 28
+const STRUCTURED_MESSAGE_PREFIX = /^[<`[>#{(*-]/
+
+interface UserMessageNavigationItem {
+  id: number
+  summary: string
+  index: number
+}
+
+function sameNavigationItem(left: UserMessageNavigationItem | null, right: UserMessageNavigationItem | null): boolean {
+  return left?.id === right?.id && left?.summary === right?.summary && left?.index === right?.index
+}
+
+function summarizeUserMessage(content: string): string {
+  const body = parseAttachmentPrefix(content)?.body ?? content
+  const lines = body.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  if (lines.length === 0) return ''
+  const line = STRUCTURED_MESSAGE_PREFIX.test(body.trimStart()) ? lines[lines.length - 1] : lines[0]
+  return line.replace(/\s+/g, ' ')
+}
+
+function messageScrollTop(pane: HTMLElement, message: HTMLElement): number {
+  return message.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop
+}
 
 interface Props {
   sessionId: number | null
@@ -140,6 +167,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'high', webSearch: false })
   const [draftToolGroups, setDraftToolGroups] = useState<string[]>([])
   const [draftPlugins, setDraftPlugins] = useState<string[]>([])
+  const [previousUserMessage, setPreviousUserMessage] = useState<UserMessageNavigationItem | null>(null)
+  const [showBackToBottom, setShowBackToBottom] = useState(false)
   const messagesPaneRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
@@ -150,6 +179,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const initializedOptionsSessionRef = useRef<number | null>(null)
   const createdSessionRef = useRef<number | null>(null)
   const cancelledTitleEditRef = useRef(false)
+  const lockedUserMessageIdRef = useRef<number | null>(null)
 
   const clearStreamingPresentation = useCallback(() => {
     setStreaming(false)
@@ -184,6 +214,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     initializedOptionsSessionRef.current = null
     createdSessionRef.current = null
     shouldAutoScrollRef.current = true
+    lockedUserMessageIdRef.current = null
+    setPreviousUserMessage(null)
+    setShowBackToBottom(false)
   }, [sessionId])
 
   const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal, epoch = viewEpochRef.current) => {
@@ -287,12 +320,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (!shouldAutoScrollRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [streamingText, streamingActivities])
-
-  const handleMessagesScroll = () => {
-    const pane = messagesPaneRef.current
-    if (!pane) return
-    shouldAutoScrollRef.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40
-  }
 
   const handleHeaderTitleSubmit = useCallback(async () => {
     if (resolvedSessionId == null) return
@@ -429,6 +456,94 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const childrenMap = buildChildrenMap(messages)
   const path = activePath(localLeafId, byId)
   const displayMessages = groupToolChains(path)
+  const userMessageNavigationItems: UserMessageNavigationItem[] = displayMessages
+    .filter(item => item.message.Role === 'user')
+    .map((item, index) => ({
+      id: item.message.ID,
+      summary: summarizeUserMessage(item.message.Content),
+      index: index + 1,
+    }))
+  if (optimisticUserMessage) {
+    userMessageNavigationItems.push({
+      id: optimisticUserMessage.ID,
+      summary: summarizeUserMessage(optimisticUserMessage.Content),
+      index: userMessageNavigationItems.length + 1,
+    })
+  }
+  const userMessageNavigationRef = useRef(userMessageNavigationItems)
+  userMessageNavigationRef.current = userMessageNavigationItems
+
+  const syncScrollNavigation = useCallback(() => {
+    const pane = messagesPaneRef.current
+    if (!pane) return
+    const distanceFromBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight
+    shouldAutoScrollRef.current = distanceFromBottom < 40
+    const isNavigationVisible = pane.scrollTop >= HISTORY_NAV_TOP_THRESHOLD && distanceFromBottom >= HISTORY_NAV_BOTTOM_THRESHOLD
+    setShowBackToBottom(isNavigationVisible)
+    if (!isNavigationVisible) {
+      setPreviousUserMessage(null)
+      return
+    }
+
+    const items = userMessageNavigationRef.current
+    const elements = new Map(Array.from(pane.querySelectorAll<HTMLElement>('[data-user-message-id]')).map(element => [
+      Number(element.dataset.userMessageId),
+      element,
+    ]))
+    let candidate: UserMessageNavigationItem | null = null
+    for (const item of items) {
+      const element = elements.get(item.id)
+      if (element && messageScrollTop(pane, element) <= pane.scrollTop + 1) candidate = item
+      else if (element) break
+    }
+
+    const lockedId = lockedUserMessageIdRef.current
+    if (lockedId != null) {
+      const lockedElement = elements.get(lockedId)
+      const lockedItem = items.find(item => item.id === lockedId)
+      const movedUpPastTarget = lockedElement && pane.scrollTop < messageScrollTop(pane, lockedElement) - HISTORY_NAV_UNLOCK_DISTANCE
+      const movedDownToLaterMessage = lockedItem && candidate && candidate.index > lockedItem.index
+      if (lockedElement && lockedItem && !movedUpPastTarget && !movedDownToLaterMessage) {
+        setPreviousUserMessage(current => sameNavigationItem(current, lockedItem) ? current : lockedItem)
+        return
+      }
+      lockedUserMessageIdRef.current = null
+    }
+
+    setPreviousUserMessage(current => sameNavigationItem(current, candidate) ? current : candidate)
+  }, [])
+
+  const handleMessagesScroll = useCallback(() => {
+    syncScrollNavigation()
+  }, [syncScrollNavigation])
+
+  useLayoutEffect(() => {
+    syncScrollNavigation()
+  }, [messages, localLeafId, optimisticUserMessage, syncScrollNavigation])
+
+  useEffect(() => {
+    const pane = messagesPaneRef.current
+    if (!pane) return
+    const observer = new ResizeObserver(syncScrollNavigation)
+    observer.observe(pane)
+    return () => observer.disconnect()
+  }, [syncScrollNavigation])
+
+  const handlePreviousUserMessageClick = useCallback(() => {
+    const pane = messagesPaneRef.current
+    if (!pane || !previousUserMessage) return
+    const target = pane.querySelector<HTMLElement>(`[data-user-message-id="${previousUserMessage.id}"]`)
+    if (!target) return
+    lockedUserMessageIdRef.current = previousUserMessage.id
+    pane.scrollTo({ top: Math.max(0, messageScrollTop(pane, target) - HISTORY_NAV_TARGET_OFFSET), behavior: 'smooth' })
+  }, [previousUserMessage])
+
+  const handleBackToBottom = useCallback(() => {
+    const pane = messagesPaneRef.current
+    if (!pane) return
+    lockedUserMessageIdRef.current = null
+    pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
+  }, [])
   const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
   const newSessionConcierge = draftConcierge ?? selectedConcierge
 
@@ -757,8 +872,21 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
             <span>{conciergeNickname}</span>
           </div>
         </div>
+        {previousUserMessage && (
+          <button
+            type="button"
+            className="chat-history-message"
+            onClick={handlePreviousUserMessageClick}
+            title={`${previousUserMessage.summary} [${previousUserMessage.index}/${userMessageNavigationItems.length}]`}
+            aria-label={t('chat.navigation.previousUserMessage', { index: previousUserMessage.index, total: userMessageNavigationItems.length })}
+          >
+            <span>{previousUserMessage.summary}</span>
+            <small>[{previousUserMessage.index}/{userMessageNavigationItems.length}]</small>
+          </button>
+        )}
       </header>
-      <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>
+      <div className="messages-region">
+        <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>
         {isNewSession ? (
           <div className="empty-state-card">
             <h2>{isChoosingConcierge ? t('chat.concierge.select') : t('chat.concierge.start')}</h2>
@@ -845,9 +973,22 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         {uploadWarnings.length > 0 && (
           <div className="upload-warning-block">{uploadWarnings.map(warning => <div key={warning}>{warning}</div>)}</div>
         )}
-        <div ref={bottomRef} />
+          <div ref={bottomRef} />
+        </div>
+        {showBackToBottom && (
+          <button
+            type="button"
+            className="chat-back-to-bottom"
+            onClick={handleBackToBottom}
+            title={t('chat.navigation.backToBottom')}
+            aria-label={t('chat.navigation.backToBottom')}
+          >
+            <ArrowDown aria-hidden="true" size={17} />
+          </button>
+        )}
       </div>
       <Composer
+        focusKey={resolvedSessionId == null ? `new:${isChoosingConcierge}` : String(resolvedSessionId)}
         onSend={(text, files) => handleSend(text, files)}
         commandHelp={commandHelp}
         commandHelpLoading={commandHelpLoading}

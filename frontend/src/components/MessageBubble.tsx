@@ -102,7 +102,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
 
   if (isUser) {
     return (
-      <div className="message-row user">
+      <div className="message-row user" data-user-message-id={msg.ID}>
         <div className={'message-stack user' + (editing ? ' editing' : '')} style={editing && userEditWidth != null ? { width: `min(100%, ${userEditWidth}px)` } : undefined}>
           {editing ? (
             <div className="message-editor">
