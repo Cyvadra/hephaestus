@@ -1,8 +1,10 @@
 import { useEffect, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, Blocks, Check, Wrench, X } from 'lucide-react'
+import { ArrowUp, Blocks, Check, ShieldCheck, Wrench, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { GenerationOptions, ReasoningEffort } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
+
+export type AuthorizationMode = 'timeoutDeny' | 'askEachTime' | 'allowAll'
 
 interface Props {
   focusKey?: string
@@ -23,6 +25,9 @@ interface Props {
   pluginDescriptions: Record<string, string>
   activePlugins: string[]
   onPluginToggle: (plugin: string, active: boolean) => void
+  authorizationMode: AuthorizationMode
+  authorizationDisabled: boolean
+  onAuthorizationModeChange: (mode: AuthorizationMode) => void
 }
 
 const reasoningChoices: ReasoningEffort[] = [
@@ -41,7 +46,7 @@ function getStoredSendShortcut(): SendShortcut {
   return sendShortcutChoices.includes(stored as SendShortcut) ? stored as SendShortcut : 'enter'
 }
 
-export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle }: Props) {
+export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, authorizationDisabled, onAuthorizationModeChange }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -245,6 +250,11 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                 <WebIcon />
                 <span>{t('chat.compose.webSearch')}</span>
               </button>
+              <AuthorizationModeControl
+                mode={authorizationMode}
+                disabled={authorizationDisabled}
+                onChange={onAuthorizationModeChange}
+              />
               {toolGroups.length > 0 && (
                 <SelectableOptionsControl
                   label={t('chat.compose.tools')}
@@ -321,6 +331,55 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AuthorizationModeControl({ mode, disabled, onChange }: { mode: AuthorizationMode; disabled: boolean; onChange: (mode: AuthorizationMode) => void }) {
+  const { t } = useTranslation()
+  const controlRef = useRef<HTMLDivElement>(null)
+  const menu = useHoverMenu(controlRef)
+  const choices: AuthorizationMode[] = ['timeoutDeny', 'askEachTime', 'allowAll']
+
+  return (
+    <div
+      className="composer-reasoning-control"
+      ref={controlRef}
+      onMouseEnter={() => { if (!disabled) menu.openOnHover() }}
+      onMouseLeave={menu.scheduleClose}
+    >
+      <button
+        type="button"
+        className={'composer-option-btn' + (mode === 'allowAll' || menu.open ? ' active' : '')}
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={menu.open}
+        onClick={menu.pinOpen}
+        onFocus={() => { if (!disabled) menu.pinOpen() }}
+        title={t('chat.compose.authorization.select')}
+      >
+        <ShieldCheck aria-hidden="true" size={14} />
+        <span>{t('chat.compose.authorization.label')}</span>
+      </button>
+      {menu.open && (
+        <div className="composer-options-menu" role="menu" aria-label={t('chat.compose.authorization.select')} onMouseEnter={menu.cancelClose} onMouseLeave={menu.scheduleClose}>
+          {choices.map(choice => (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={mode === choice}
+              key={choice}
+              onClick={() => {
+                onChange(choice)
+                menu.close()
+              }}
+            >
+              <span>{t(`chat.compose.authorization.${choice}`)}</span>
+              {mode === choice && <Check aria-hidden="true" size={14} />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

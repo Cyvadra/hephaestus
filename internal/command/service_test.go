@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 )
@@ -150,6 +151,30 @@ func TestKeysOfSortsNamesForStableListReferences(t *testing.T) {
 func TestSwitchSessionIsNotAdvertisedOrSupported(t *testing.T) {
 	if strings.Contains(helpText, "identity|concierge|session|project") {
 		t.Fatal("help still advertises a server-side session switch")
+	}
+}
+
+func TestInteractAutomaticApprovalCommands(t *testing.T) {
+	service := testService()
+	service.interactions = interaction.NewManager()
+
+	if _, err := service.Execute(7, "/interact "+interactionAutoApprove); err != nil {
+		t.Fatalf("enable automatic approval: %v", err)
+	}
+	if !service.AutoApprove(7) {
+		t.Fatal("automatic approval should be enabled")
+	}
+	if service.AutoApprove(8) {
+		t.Fatal("automatic approval should remain scoped to its session")
+	}
+	if _, err := service.Execute(7, "/interact "+interactionCancelAutoApprove); err != nil {
+		t.Fatalf("cancel automatic approval: %v", err)
+	}
+	if service.AutoApprove(7) {
+		t.Fatal("automatic approval should be disabled")
+	}
+	if _, err := service.Execute(7, "/interact auto-deny"); err == nil {
+		t.Fatal("deprecated automatic approval command should be rejected")
 	}
 }
 

@@ -66,14 +66,57 @@ type pending struct {
 // calls queue behind the visible request, which keeps `/interact approve` and
 // `/interact deny` unambiguous without requiring a request id in the command.
 type Manager struct {
-	mu      sync.Mutex
-	nextID  uint64
-	pending map[uint]*pending
-	changed map[uint]chan struct{}
+	mu          sync.Mutex
+	nextID      uint64
+	pending     map[uint]*pending
+	changed     map[uint]chan struct{}
+	autoApprove map[uint]bool
 }
 
 func NewManager() *Manager {
-	return &Manager{pending: map[uint]*pending{}, changed: map[uint]chan struct{}{}}
+	return &Manager{
+		pending:     map[uint]*pending{},
+		changed:     map[uint]chan struct{}{},
+		autoApprove: map[uint]bool{},
+	}
+}
+
+// SetAutoApprove changes whether permission requests in sessionID are
+// automatically approved. The setting applies only to this runtime.
+func (m *Manager) SetAutoApprove(sessionID uint, enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if enabled {
+		m.autoApprove[sessionID] = true
+		return
+	}
+	delete(m.autoApprove, sessionID)
+}
+
+// EnableAutoApprove enables automatic approval and approves the request, if
+// any, currently awaiting a response in sessionID.
+func (m *Manager) EnableAutoApprove(sessionID uint) error {
+	m.mu.Lock()
+	m.autoApprove[sessionID] = true
+	p := m.pending[sessionID]
+	m.mu.Unlock()
+	if p == nil {
+		return nil
+	}
+	select {
+	case p.decision <- true:
+		return nil
+	default:
+		return fmt.Errorf("interaction: request %d has already been answered", p.request.ID)
+	}
+}
+
+// AutoApprove reports whether permission requests for sessionID are
+// automatically approved.
+func (m *Manager) AutoApprove(sessionID uint) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.autoApprove[sessionID]
 }
 
 // RequestPermission emits an ask_permission event and blocks until the user
@@ -81,6 +124,10 @@ func NewManager() *Manager {
 func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, details string) error {
 	for {
 		m.mu.Lock()
+		if m.autoApprove[sessionID] {
+			m.mu.Unlock()
+			return nil
+		}
 		if _, occupied := m.pending[sessionID]; !occupied {
 			if m.changed[sessionID] == nil {
 				m.changed[sessionID] = make(chan struct{})

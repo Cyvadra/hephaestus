@@ -27,7 +27,22 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const defaultApprovalTimeout = 2 * time.Minute
+const (
+	defaultApprovalTimeout = 30 * time.Second
+
+	approvalConfirmedChinese              = "确认"
+	automaticApprovalEnableChinese        = "全部同意"
+	automaticApprovalEnableSessionChinese = "允许当前会话中所有操作"
+	automaticApprovalCancelChinese        = "取消自动授权"
+	automaticApprovalEnableEnglish        = "approve all"
+	automaticApprovalEnableSessionEnglish = "allow all operations in this session"
+	automaticApprovalCancelEnglish        = "cancel automatic approval"
+
+	approvalPrompt                    = "\nReply \"确认\" or \"yes\" to approve; any other reply denies. Approval is automatic after the timeout."
+	automaticApprovalPrompt           = "\nReply \"全部同意\" or \"approve all\" to allow later operations in this session; reply \"取消自动授权\" or \"cancel automatic approval\" to turn this off."
+	automaticApprovalEnabledResponse  = "已允许当前会话中的后续操作。\nAutomatic approval is enabled for this session."
+	automaticApprovalDisabledResponse = "已取消当前会话的自动授权。\nAutomatic approval is disabled for this session."
+)
 
 // Service owns external channels and routes each chat through one serialized
 // message stack. Approval responses bypass the stack because the active turn
@@ -105,6 +120,10 @@ func (s *Service) Stop(ctx context.Context) error {
 
 func (s *Service) handleInbound(ctx context.Context, message channels.InboundMessage) {
 	key := bindingKey(message.Channel, message.ChatID)
+	if autoApproval, ok := automaticApprovalCommand(message.Content); ok {
+		s.processAutomaticApproval(ctx, message, autoApproval)
+		return
+	}
 	s.mu.Lock()
 	if pending, ok := s.pending[key]; ok {
 		delete(s.pending, key)
@@ -315,7 +334,8 @@ func (s *Service) beginApproval(ctx context.Context, external channels.Channel, 
 	if request.Details != "" {
 		prompt += "\n" + request.Details
 	}
-	prompt += "\n请回复“确认”同意，其他回复视为拒绝。超时将自动同意。"
+	prompt += approvalPrompt
+	prompt += automaticApprovalPrompt
 	_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: prompt})
 	time.AfterFunc(s.timeout, func() {
 		s.mu.Lock()
@@ -411,9 +431,51 @@ func bindingKey(channelName, chatID string) string { return channelName + "\x00"
 func isApproval(text string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(text))
 	switch normalized {
-	case "确认", "yes", "y", "1":
+	case approvalConfirmedChinese, "yes", "y", "1":
 		return true
 	default:
 		return false
 	}
+}
+
+func automaticApprovalCommand(text string) (enabled bool, ok bool) {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	switch normalized {
+	case automaticApprovalEnableChinese, automaticApprovalEnableSessionChinese,
+		automaticApprovalEnableEnglish, automaticApprovalEnableSessionEnglish:
+		return true, true
+	case automaticApprovalCancelChinese, automaticApprovalCancelEnglish:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func (s *Service) processAutomaticApproval(ctx context.Context, message channels.InboundMessage, enabled bool) {
+	external := s.findChannel(message.Channel)
+	if external == nil {
+		return
+	}
+	sessionID, err := s.boundSession(message.Channel, message.ChatID)
+	if err != nil {
+		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: err.Error()})
+		return
+	}
+	if enabled {
+		s.mu.Lock()
+		delete(s.pending, bindingKey(message.Channel, message.ChatID))
+		s.mu.Unlock()
+		err = s.interactions.EnableAutoApprove(sessionID)
+	} else {
+		s.interactions.SetAutoApprove(sessionID, false)
+	}
+	if err != nil {
+		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: err.Error()})
+		return
+	}
+	response := automaticApprovalEnabledResponse
+	if !enabled {
+		response = automaticApprovalDisabledResponse
+	}
+	_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
 }

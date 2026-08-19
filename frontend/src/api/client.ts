@@ -142,6 +142,13 @@ export const respondToInteraction = (sessionId: number, approved: boolean) =>
     body: JSON.stringify({ text: approved ? '/interact approve' : '/interact deny' }),
   })
 
+export const setAutomaticApproval = (sessionId: number, enabled: boolean) =>
+  fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: enabled ? '/interact auto-approve' : '/interact cancel-auto-approve' }),
+  })
+
 const configurationURL = (kind: ConfigurationKind, name?: string) => {
   const base = `${BASE}/configurations/${encodeURIComponent(kind)}`
   return name == null ? base : `${base}/${encodeURIComponent(name)}`

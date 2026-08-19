@@ -1,8 +1,9 @@
-import { useEffect, useEffectEvent, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '../i18n'
 import Markdown from './Markdown'
 import type { InteractionRequest, StreamToolCall } from '../api/types'
+import type { AuthorizationMode } from './Composer'
 
 export type StreamActivity =
   | { type: 'reasoning'; sequence: number; content: string }
@@ -13,9 +14,11 @@ interface Props {
   content: string
   activities: StreamActivity[]
 	onRespondToPermission?: (request: InteractionRequest, approved: boolean) => Promise<boolean>
+  authorizationMode?: AuthorizationMode
+  onAutoApprovePermission?: (request: InteractionRequest) => Promise<boolean>
 }
 
-export default function GenerationProgress({ content, activities, onRespondToPermission }: Props) {
+export default function GenerationProgress({ content, activities, onRespondToPermission, authorizationMode = 'askEachTime', onAutoApprovePermission }: Props) {
   const { t } = useTranslation()
   return (
     <div className="message-stack generation-progress">
@@ -30,7 +33,7 @@ export default function GenerationProgress({ content, activities, onRespondToPer
           ) : activity.type === 'tool' ? (
             <StreamToolActivity key={activity.sequence} toolCall={activity.toolCall} />
           ) : (
-			<PermissionActivity key={activity.sequence} request={activity.request} onRespond={onRespondToPermission} />
+      <PermissionActivity key={activity.sequence} request={activity.request} onRespond={onRespondToPermission} authorizationMode={authorizationMode} onAutoApprove={onAutoApprovePermission} />
           ))}
           {activities.length === 0 && <span className="reasoning-pending">{t('chat.reasoning.analyzing')}</span>}
         </div>
@@ -47,10 +50,11 @@ export default function GenerationProgress({ content, activities, onRespondToPer
   )
 }
 
-function PermissionActivity({ request, onRespond }: { request: InteractionRequest; onRespond?: (request: InteractionRequest, approved: boolean) => Promise<boolean> }) {
+function PermissionActivity({ request, onRespond, authorizationMode, onAutoApprove }: { request: InteractionRequest; onRespond?: (request: InteractionRequest, approved: boolean) => Promise<boolean>; authorizationMode: AuthorizationMode; onAutoApprove?: (request: InteractionRequest) => Promise<boolean> }) {
   const { t } = useTranslation()
   const [secondsRemaining, setSecondsRemaining] = useState(20)
   const [responding, setResponding] = useState(false)
+	const autoApproveRequestedRef = useRef(false)
 
   useEffect(() => {
     const originalTitle = document.title
@@ -76,20 +80,30 @@ function PermissionActivity({ request, onRespond }: { request: InteractionReques
     if (!accepted) setResponding(false)
   })
 
-  const autoRespond = useEffectEvent(() => {
-    void respond(true)
+  const autoRespond = useEffectEvent((approved: boolean) => {
+	void respond(approved)
   })
 
   useEffect(() => {
-    if (secondsRemaining === 0) autoRespond()
-  }, [secondsRemaining])
+    if (authorizationMode === 'allowAll') {
+    if (!autoApproveRequestedRef.current && onAutoApprove) {
+      autoApproveRequestedRef.current = true
+      void onAutoApprove(request).then(accepted => {
+        if (!accepted) autoApproveRequestedRef.current = false
+      })
+    }
+      return
+    }
+    if (authorizationMode === 'timeoutDeny' && secondsRemaining === 5) autoRespond(false)
+    if (authorizationMode === 'askEachTime' && secondsRemaining === 0) autoRespond(true)
+  }, [authorizationMode, onAutoApprove, request, secondsRemaining])
 
   return <div className="tool-activity-list">
     <div className="tool-activity">
       <div className="tool-activity-header">
         <span className="tool-status-dot" data-status="calling" />
         <strong>{request.title}</strong>
-        <span>{responding ? t('chat.permission.processing') : t('chat.permission.autoApprove', { count: secondsRemaining })}</span>
+        <span>{responding ? t('chat.permission.processing') : t(`chat.permission.${authorizationMode}`, { count: secondsRemaining })}</span>
       </div>
       <pre>{request.details}</pre>
       <div className="message-editor-actions permission-response-actions">

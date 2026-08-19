@@ -129,6 +129,7 @@ export interface HistoryResponse {
   session: Session
   messages: ChatMessage[]
   reasoning_effort: string
+  auto_approve: boolean
 }
 
 export type ReasoningEffort = 'none' | 'high' | 'max'

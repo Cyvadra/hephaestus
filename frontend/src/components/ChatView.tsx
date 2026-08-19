@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, updateSession } from '../api/client'
+import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, setAutomaticApproval, updateSession } from '../api/client'
 import { authFetch } from '../api/auth'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
-import Composer from './Composer'
+import Composer, { type AuthorizationMode } from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
 import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
@@ -16,6 +16,7 @@ import i18n from '../i18n'
 const COMMAND_HELP_CACHE_KEY = 'hephaestus.commandHelp'
 const COMMAND_HELP_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WIDE_CHAT_HISTORY_STORAGE_KEY = 'hephaestus.wideChatHistory'
+const AUTHORIZATION_PREFERENCE_STORAGE_KEY_PREFIX = 'hephaestus.authorizationPreference.'
 const HISTORY_NAV_TOP_THRESHOLD = 120
 const HISTORY_NAV_BOTTOM_THRESHOLD = 900
 const HISTORY_NAV_UNLOCK_DISTANCE = 48
@@ -26,6 +27,16 @@ interface UserMessageNavigationItem {
   id: number
   summary: string
   index: number
+}
+
+function authorizationPreferenceStorageKey(project: string): string {
+  return `${AUTHORIZATION_PREFERENCE_STORAGE_KEY_PREFIX}${project}`
+}
+
+function authorizationPreference(project: string | null): Exclude<AuthorizationMode, 'allowAll'> {
+  if (project == null) return 'askEachTime'
+  const stored = localStorage.getItem(authorizationPreferenceStorageKey(project))
+  return stored === 'timeoutDeny' || stored === 'askEachTime' ? stored : 'askEachTime'
 }
 
 function sameNavigationItem(left: UserMessageNavigationItem | null, right: UserMessageNavigationItem | null): boolean {
@@ -166,6 +177,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [activeSession, setActiveSession] = useState<Session | null>(null)
   const [headerTitleDraft, setHeaderTitleDraft] = useState('')
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'high', webSearch: false })
+  const [authorizationMode, setAuthorizationMode] = useState<AuthorizationMode>(() => authorizationPreference(project))
   const [draftToolGroups, setDraftToolGroups] = useState<string[]>([])
   const [draftPlugins, setDraftPlugins] = useState<string[]>([])
   const [previousUserMessage, setPreviousUserMessage] = useState<UserMessageNavigationItem | null>(null)
@@ -227,6 +239,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setActiveSession(h.session)
     setMessages(h.messages)
     setLocalLeafId(h.session.ActiveLeafMessageID)
+    setAuthorizationMode(h.auto_approve ? 'allowAll' : authorizationPreference(project))
     if (initializedOptionsSessionRef.current !== targetSessionId) {
       setGenerationOptions({
         reasoningEffort: composerReasoningEffort(h.session.ReasoningEffort || h.reasoning_effort),
@@ -234,7 +247,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       })
       initializedOptionsSessionRef.current = targetSessionId
     }
-  }, [])
+  }, [project])
+
+  useEffect(() => {
+    if (resolvedSessionId == null) setAuthorizationMode(authorizationPreference(project))
+  }, [project, resolvedSessionId])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -803,6 +820,27 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   }
   }, [resolvedSessionId])
 
+  const handleAutomaticPermissionApproval = useCallback(async (_request: InteractionRequest): Promise<boolean> => {
+    if (resolvedSessionId == null) return false
+    try {
+      await setAutomaticApproval(resolvedSessionId, true)
+      setStreamingActivities(current => current.filter(activity => activity.type !== 'permission'))
+      return true
+    } catch (cause) {
+      setError(String(cause))
+      return false
+    }
+  }, [resolvedSessionId])
+
+  const handleAuthorizationModeChange = useCallback((mode: AuthorizationMode) => {
+    setAuthorizationMode(mode)
+    if (mode !== 'allowAll' && project != null) {
+      localStorage.setItem(authorizationPreferenceStorageKey(project), mode)
+    }
+    if (resolvedSessionId == null) return
+    void setAutomaticApproval(resolvedSessionId, mode === 'allowAll').catch((cause: unknown) => setError(String(cause)))
+  }, [project, resolvedSessionId])
+
   const handleChatHeaderDoubleClick = () => {
     setWideChatHistory(current => {
       const next = !current
@@ -941,7 +979,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         ) : (
           displayMessages.map((item, idx) => regeneratingMessageId === item.message.ID || continuingMessageId === item.message.ID ? (
             <div className="message-row assistant" key={item.message.ID}>
-  			<GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} />
+          <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
             </div>
           ) : (
             <MessageBubble
@@ -977,7 +1015,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         )}
         {streaming && regeneratingMessageId == null && continuingMessageId == null && (
           <div className="message-row assistant">
-			<GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} />
+      <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
           </div>
         )}
         {commandResponse && (
@@ -1015,6 +1053,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onFilesChange={handleFilesChange}
         generationOptions={generationOptions}
         onGenerationOptionsChange={handleGenerationOptionsChange}
+    authorizationMode={authorizationMode}
+    authorizationDisabled={streaming || resolvedSessionId == null}
+    onAuthorizationModeChange={handleAuthorizationModeChange}
         toolGroups={toolGroups}
         activeToolGroups={activeToolGroups}
         onToolGroupToggle={(toolGroup, active) => {

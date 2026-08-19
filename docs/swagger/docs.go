@@ -2025,6 +2025,9 @@ const docTemplate = `{
         "internal_server.historyResponse": {
             "type": "object",
             "properties": {
+				"auto_approve": {
+					"type": "boolean"
+				},
                 "messages": {
                     "type": "array",
                     "items": {

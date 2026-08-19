@@ -34,6 +34,14 @@ type Kind string
 const (
 	maxSessionListItems = 20
 
+	interactionApprove           = "approve"
+	interactionDeny              = "deny"
+	interactionAutoApprove       = "auto-approve"
+	interactionCancelAutoApprove = "cancel-auto-approve"
+	interactionUsage             = "command: usage: /interact <approve|deny|auto-approve|cancel-auto-approve>"
+	autoApproveEnabledResponse   = "Automatic approval enabled for this session. Any pending request was approved."
+	autoApproveDisabledResponse  = "Automatic approval disabled for this session."
+
 	KindIdentity   Kind = "identity"
 	KindImpression Kind = "impression"
 	KindToolGroup  Kind = "toolgroup"
@@ -62,6 +70,12 @@ type Service struct {
 	lastList map[uint]map[Kind][]string
 	cancels  map[uint]cancelRegistration
 	nextTurn uint64
+}
+
+// AutoApprove reports whether permission requests are automatically approved
+// for sessionID.
+func (s *Service) AutoApprove(sessionID uint) bool {
+	return s.interactions != nil && s.interactions.AutoApprove(sessionID)
 }
 
 type cancelRegistration struct {
@@ -198,19 +212,32 @@ func (s *Service) ExecuteResult(sessionID uint, text string) (Result, error) {
 }
 
 func (s *Service) interact(sessionID uint, args []string) (string, error) {
-	if len(args) != 1 || (args[0] != "approve" && args[0] != "deny") {
-		return "", fmt.Errorf("command: usage: /interact <approve|deny>")
+	if len(args) != 1 {
+		return "", fmt.Errorf(interactionUsage)
 	}
 	if s.interactions == nil {
 		return "", fmt.Errorf("command: interactions are not configured")
 	}
-	if err := s.interactions.Respond(sessionID, args[0] == "approve"); err != nil {
+	switch args[0] {
+	case interactionAutoApprove:
+		if err := s.interactions.EnableAutoApprove(sessionID); err != nil {
+			return "", err
+		}
+		return autoApproveEnabledResponse, nil
+	case interactionCancelAutoApprove:
+		s.interactions.SetAutoApprove(sessionID, false)
+		return autoApproveDisabledResponse, nil
+	case interactionApprove, interactionDeny:
+	default:
+		return "", fmt.Errorf(interactionUsage)
+	}
+	if err := s.interactions.Respond(sessionID, args[0] == interactionApprove); err != nil {
 		if errors.Is(err, interaction.ErrNoPending) {
 			return "", fmt.Errorf("command: no interaction is awaiting a response")
 		}
 		return "", err
 	}
-	if args[0] == "approve" {
+	if args[0] == interactionApprove {
 		return "Permission approved. Continuing the task.", nil
 	}
 	return "Permission denied. The requested operation will not run.", nil
@@ -229,7 +256,7 @@ const helpText = `Available commands:
 /deactivate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - disable
 /clear - archive this session and start a fresh one with the same settings
 /new - archive this session and start a fresh one from its source concierge
-/interact <approve|deny> - respond to a pending runtime request`
+/interact <approve|deny|auto-approve|cancel-auto-approve> - respond to a pending runtime request or change session automatic approval`
 
 // kindDescriptor bundles the per-Kind lookups /list and /detail need, so
 // adding a new Kind means adding one table entry instead of extending two

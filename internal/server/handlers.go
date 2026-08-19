@@ -169,6 +169,7 @@ type historyResponse struct {
 	Session         store.Session       `json:"session"`
 	Messages        []store.ChatMessage `json:"messages"`
 	ReasoningEffort string              `json:"reasoning_effort"`
+	AutoApprove     bool                `json:"auto_approve"`
 }
 
 // getHistory godoc
@@ -212,7 +213,12 @@ func (s *Server) getHistory(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusOK, historyResponse{Session: *sess, Messages: messages, ReasoningEffort: identity.ReasoningEffort})
+	c.JSON(http.StatusOK, historyResponse{
+		Session:         *sess,
+		Messages:        messages,
+		ReasoningEffort: identity.ReasoningEffort,
+		AutoApprove:     s.commands.AutoApprove(sessionID),
+	})
 }
 
 // downloadAttachment godoc

@@ -48,6 +48,53 @@ func TestRequestPermissionReturnsDenied(t *testing.T) {
 	}
 }
 
+func TestAutoApproveCanBeEnabledAndDisabledPerSession(t *testing.T) {
+	manager := NewManager()
+	manager.SetAutoApprove(7, true)
+
+	if err := manager.RequestPermission(context.Background(), 7, "Allow command?", "rm -rf build"); err != nil {
+		t.Fatalf("auto-approved request: %v", err)
+	}
+	if !manager.AutoApprove(7) {
+		t.Fatal("session should have automatic approval enabled")
+	}
+	if manager.AutoApprove(8) {
+		t.Fatal("automatic approval must not affect another session")
+	}
+
+	manager.SetAutoApprove(7, false)
+	if manager.AutoApprove(7) {
+		t.Fatal("session should have automatic approval disabled")
+	}
+	events := make(chan Event, 1)
+	ctx := WithReporter(context.Background(), func(event Event) { events <- event })
+	done := make(chan error, 1)
+	go func() { done <- manager.RequestPermission(ctx, 7, "Allow command?", "rm -rf build") }()
+	<-events
+	if err := manager.Respond(7, true); err != nil {
+		t.Fatalf("approve after disabling automatic approval: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("request should be approved: %v", err)
+	}
+}
+
+func TestEnableAutoApproveApprovesPendingRequest(t *testing.T) {
+	manager := NewManager()
+	events := make(chan Event, 1)
+	ctx := WithReporter(context.Background(), func(event Event) { events <- event })
+	done := make(chan error, 1)
+	go func() { done <- manager.RequestPermission(ctx, 7, "Allow command?", "rm -rf build") }()
+	<-events
+
+	if err := manager.EnableAutoApprove(7); err != nil {
+		t.Fatalf("enable automatic approval: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("pending request should be approved: %v", err)
+	}
+}
+
 // TestRequestPermissionHonorsApprovalRacingCancellation guards against a
 // Respond that races the caller's context cancellation: the buffered
 // decision channel can hold an approval that select's pseudo-random choice

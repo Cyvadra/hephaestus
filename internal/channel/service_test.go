@@ -8,7 +8,7 @@ import (
 )
 
 func TestIsApproval(t *testing.T) {
-	for _, input := range []string{"确认", "YES", " y ", "1"} {
+	for _, input := range []string{approvalConfirmedChinese, "YES", " y ", "1"} {
 		if !isApproval(input) {
 			t.Errorf("isApproval(%q) = false", input)
 		}
@@ -17,6 +17,29 @@ func TestIsApproval(t *testing.T) {
 		if isApproval(input) {
 			t.Errorf("isApproval(%q) = true", input)
 		}
+	}
+}
+
+func TestAutomaticApprovalCommand(t *testing.T) {
+	for _, input := range []string{
+		automaticApprovalEnableChinese,
+		" " + automaticApprovalEnableSessionChinese + " ",
+		"APPROVE ALL",
+		automaticApprovalEnableSessionEnglish,
+	} {
+		enabled, ok := automaticApprovalCommand(input)
+		if !ok || !enabled {
+			t.Errorf("automaticApprovalCommand(%q) = (%v, %v), want (true, true)", input, enabled, ok)
+		}
+	}
+	for _, input := range []string{automaticApprovalCancelChinese, "CANCEL AUTOMATIC APPROVAL"} {
+		enabled, ok := automaticApprovalCommand(input)
+		if !ok || enabled {
+			t.Errorf("automaticApprovalCommand(%q) = (%v, %v), want (false, true)", input, enabled, ok)
+		}
+	}
+	if _, ok := automaticApprovalCommand("全部允许吧"); ok {
+		t.Error("unexpected automatic approval command match")
 	}
 }
 
