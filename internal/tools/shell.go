@@ -155,9 +155,9 @@ func NewShellToolWithConfig(config ShellConfig) (*ShellTool, error) {
 	return &ShellTool{enabled: config.Enabled, timeout: timeout, backend: backend}, nil
 }
 
-// SetInteractionManager enables user confirmation for commands matched by
-// the high-risk policy. It is optional so direct callers can use ShellTool
-// without an HTTP interaction surface.
+// SetInteractionManager enables user confirmation requested by the model or
+// required by the fallback policy. It is wired from cmd/hephaestus/main.go;
+// direct callers can omit it when no interactive approval surface is available.
 func (t *ShellTool) SetInteractionManager(manager *interaction.Manager) {
 	t.interactions = manager
 }
@@ -171,18 +171,22 @@ func (t *ShellTool) Example() string {
 	if hostInfo == "" {
 		return ""
 	}
-	return `{"command": "uname -a"}` + "\n\u2192 " + hostInfo
+	return `{"command": "uname -a", "requires_confirmation": false}` + "\n\u2192 " + hostInfo
 }
 
 func (ShellTool) Name() string       { return "shell" }
 func (t *ShellTool) Available() bool { return t.enabled }
 func (ShellTool) Audited() bool      { return true }
 func (ShellTool) Description() string {
-	return "Runs one shell command on the configured execution host in the current Project and returns stdout and stderr. Use ordinary shell commands for file inspection, editing, searching, tests, and process control."
+	return "Runs one shell command on the configured execution host in the current Project and returns stdout and stderr. Use ordinary shell commands for file inspection, editing, searching, tests, and process control. Request user confirmation for commands that may be destructive, elevate privileges, change system state, or execute untrusted external code."
 }
 func (ShellTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{
 		"command": map[string]any{"type": "string", "description": "A complete shell command to run."},
+		"requires_confirmation": map[string]any{
+			"type":        "boolean",
+			"description": "Whether the command should require explicit user approval before execution. Set true for potentially destructive operations, privilege elevation, system-state changes, or execution of untrusted external code. Defaults to false; server safety rules may still require approval.",
+		},
 		"working_directory": map[string]any{
 			"type":        "string",
 			"description": "Execution directory. Defaults to the bound Project; shared temporary paths are also allowed.",
@@ -202,11 +206,13 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	if strings.TrimSpace(command) == "" {
 		return toolkit.ErrorResult("shell: command is required")
 	}
-	if denied, pattern := deniedCommand(command); denied {
+	requiresConfirmation, _ := args["requires_confirmation"].(bool)
+	denied, _ := deniedCommand(command)
+	if requiresConfirmation || denied {
 		if t.interactions == nil {
-			return toolkit.ErrorResult(fmt.Sprintf("shell: command rejected by safety policy (%s)", pattern))
+			return toolkit.ErrorResult("shell: command requires interactive approval, but interactions are not configured")
 		}
-		if err := t.requestPermission(ctx, command, pattern); err != nil {
+		if err := t.requestPermission(ctx, command); err != nil {
 			return toolkit.ErrorResult("shell: " + err.Error())
 		}
 	}
@@ -253,13 +259,13 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	return toolkit.SilentResult(output.String())
 }
 
-func (t *ShellTool) requestPermission(ctx context.Context, command, pattern string) error {
+func (t *ShellTool) requestPermission(ctx context.Context, command string) error {
 	sessionID, ok := toolkit.SessionIDFromContext(ctx)
 	if !ok || sessionID == 0 {
-		return fmt.Errorf("command rejected by safety policy (%s): no session available for confirmation", pattern)
+		return fmt.Errorf("command requires interactive approval, but no session is available")
 	}
 	if !interaction.HasReporter(ctx) {
 		return fmt.Errorf("command requires interactive approval; use the streaming message endpoint")
 	}
-	return t.interactions.RequestPermission(ctx, sessionID, "Allow high-risk command?", fmt.Sprintf("Command:\n%s\n\nMatched safety rule: %s", command, pattern))
+	return t.interactions.RequestPermission(ctx, sessionID, "Allow high-risk command?", fmt.Sprintf("Command:\n%s", command))
 }

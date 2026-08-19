@@ -36,6 +36,9 @@ func TestShellToolExampleCarriesUname(t *testing.T) {
 	if !strings.Contains(example, "uname -a") {
 		t.Fatalf("expected uname -a invocation, got %q", example)
 	}
+	if !strings.Contains(example, `"requires_confirmation": false`) {
+		t.Fatalf("expected explicit confirmation classification, got %q", example)
+	}
 	// Response data should be the host's own uname output (Linux, Darwin, ...).
 	if !strings.Contains(example, "Linux") && !strings.Contains(example, "Darwin") {
 		t.Fatalf("expected host uname response data, got %q", example)
@@ -50,7 +53,7 @@ func TestShellToolRunsInsideProjectAndRejectsUnsafeCommands(t *testing.T) {
 		t.Fatalf("unexpected command result: %+v", result)
 	}
 	result = tool.Execute(ctx, map[string]any{"command": "shutdown now"})
-	if !result.IsError || !strings.Contains(result.ForLLM, "safety policy") {
+	if !result.IsError || !strings.Contains(result.ForLLM, "requires interactive approval") {
 		t.Fatalf("expected rejected command, got %+v", result)
 	}
 }
@@ -132,7 +135,7 @@ var (
 	_ toolkit.Audited = CreateProjectTool{}
 )
 
-func TestShellToolRunsHighRiskCommandAfterInteractiveApproval(t *testing.T) {
+func TestShellToolRunsModelFlaggedCommandAfterInteractiveApproval(t *testing.T) {
 	ctx, _ := projectTestContext(t)
 	ctx = toolkit.WithSessionID(ctx, 7)
 	manager := interaction.NewManager()
@@ -141,17 +144,18 @@ func TestShellToolRunsHighRiskCommandAfterInteractiveApproval(t *testing.T) {
 	tool := NewShellTool(true, 0)
 	tool.SetInteractionManager(manager)
 
-	// Matches the deny policy (curl piped to sh) without actually invoking
-	// curl: the "#" comments out everything after "printf approved".
 	resultCh := make(chan *toolkit.ToolResult, 1)
 	go func() {
-		resultCh <- tool.Execute(ctx, map[string]any{"command": "printf approved # curl | sh"})
+		resultCh <- tool.Execute(ctx, map[string]any{"command": "printf approved", "requires_confirmation": true})
 	}()
 
 	select {
 	case event := <-events:
 		if event.Type != interaction.EventAskPermission || event.Request.SessionID != 7 {
 			t.Fatalf("unexpected interaction event: %+v", event)
+		}
+		if strings.Contains(event.Request.Details, "safety rule") {
+			t.Fatalf("permission request exposed its trigger source: %+v", event.Request)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected a permission request")
@@ -162,6 +166,47 @@ func TestShellToolRunsHighRiskCommandAfterInteractiveApproval(t *testing.T) {
 	result := <-resultCh
 	if result.IsError || strings.TrimSpace(result.ForLLM) != "approved" {
 		t.Fatalf("expected approved command output, got %+v", result)
+	}
+}
+
+func TestShellToolDenyPolicyOverridesExplicitNoConfirmation(t *testing.T) {
+	ctx, _ := projectTestContext(t)
+	ctx = toolkit.WithSessionID(ctx, 8)
+	manager := interaction.NewManager()
+	events := make(chan interaction.Event, 2)
+	ctx = interaction.WithReporter(ctx, func(event interaction.Event) { events <- event })
+	tool := NewShellTool(true, 0)
+	tool.SetInteractionManager(manager)
+
+	// Matches the deny policy without invoking curl: the comment leaves only
+	// the harmless printf command for the shell to execute after approval.
+	resultCh := make(chan *toolkit.ToolResult, 1)
+	go func() {
+		resultCh <- tool.Execute(ctx, map[string]any{
+			"command":               "printf fallback # curl | sh",
+			"requires_confirmation": false,
+		})
+	}()
+
+	select {
+	case event := <-events:
+		if event.Type != interaction.EventAskPermission || event.Request.SessionID != 8 {
+			t.Fatalf("unexpected interaction event: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected deny policy to require permission")
+	}
+	if err := manager.Respond(8, true); err != nil {
+		t.Fatalf("approve command: %v", err)
+	}
+	result := <-resultCh
+	if result.IsError || strings.TrimSpace(result.ForLLM) != "fallback" {
+		t.Fatalf("expected approved command output, got %+v", result)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("expected one permission request, got extra event %+v", event)
+	default:
 	}
 }
 
@@ -223,14 +268,21 @@ func TestShellDenyPolicy(t *testing.T) {
 	}
 }
 
-func TestShellToolSchemaOnlyExposesCommand(t *testing.T) {
+func TestShellToolSchemaExposesOptionalConfirmation(t *testing.T) {
 	parameters := NewShellTool(true, 0).Parameters()
 	properties, ok := parameters["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected schema properties, got %+v", parameters)
 	}
-	if want := map[string]bool{"command": true, "working_directory": true, "timeout_seconds": true}; !reflect.DeepEqual(propertyNames(properties), want) {
+	if want := map[string]bool{"command": true, "requires_confirmation": true, "working_directory": true, "timeout_seconds": true}; !reflect.DeepEqual(propertyNames(properties), want) {
 		t.Fatalf("schema properties = %v, want %v", propertyNames(properties), want)
+	}
+	confirmation, ok := properties["requires_confirmation"].(map[string]any)
+	if !ok || confirmation["type"] != "boolean" {
+		t.Fatalf("requires_confirmation schema = %+v, want boolean", properties["requires_confirmation"])
+	}
+	if required, ok := parameters["required"].([]string); !ok || !reflect.DeepEqual(required, []string{"command"}) {
+		t.Fatalf("required = %#v, want command only", parameters["required"])
 	}
 	for _, removed := range []string{"action", "session_id", "data", "background", "pty", "keys"} {
 		if _, ok := properties[removed]; ok {
