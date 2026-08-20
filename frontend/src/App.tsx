@@ -109,6 +109,17 @@ export default function App() {
     localStorage.setItem(LAST_CONCIERGE_ID_KEY, conciergeId)
   }, [])
 
+  const setActiveProject = useCallback((nextProject: string) => {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject)
+    setStoredProject(nextProject)
+  }, [])
+
+  useEffect(() => {
+    if (chatRoute?.project && chatRoute.project !== storedProject) {
+      setActiveProject(chatRoute.project)
+    }
+  }, [chatRoute?.project, setActiveProject, storedProject])
+
   const handleStartDraft = useCallback((concierge: ConciergeItem) => {
     setDraftConcierge(concierge)
     handleConciergeResolved(concierge.name)
@@ -130,19 +141,17 @@ export default function App() {
   }, [sessionSidebarOpen])
 
   const handleProjectChange = useCallback((nextProject: string) => {
-    localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject)
-    setStoredProject(nextProject)
+    setActiveProject(nextProject)
     setDraftConcierge(null)
     navigate(routes.chatNew(nextProject))
-  }, [navigate])
+  }, [navigate, setActiveProject])
 
   const handleProjectsLoaded = useCallback((defaultProject: string) => {
     if (route.type !== 'root') return
     const nextProject = localStorage.getItem(ACTIVE_PROJECT_KEY) ?? defaultProject
-    localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject)
-    setStoredProject(nextProject)
+    setActiveProject(nextProject)
     navigate(routes.chatNew(nextProject), { replace: true })
-  }, [navigate, route.type])
+  }, [navigate, route.type, setActiveProject])
 
   const handleSessionCreated = useCallback((id: number) => {
     setDraftConcierge(null)
@@ -155,11 +164,10 @@ export default function App() {
   }, [])
 
   const handleSessionTarget = useCallback((target: SessionTarget) => {
-    localStorage.setItem(ACTIVE_PROJECT_KEY, target.project)
-    setStoredProject(target.project)
+    setActiveProject(target.project)
     setDraftConcierge(null)
     navigate(routes.chat(target.project, target.id))
-  }, [navigate])
+  }, [navigate, setActiveProject])
 
   return (
     <div className={`app-shell ${mode}-shell${sessionSidebarOpen ? ' session-sidebar-open' : ''}`}>

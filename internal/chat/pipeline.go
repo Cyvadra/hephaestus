@@ -315,10 +315,10 @@ func (p *Pipeline) prepareTurn(ctx context.Context, sessionID uint, opts TurnOpt
 // Run processes one incoming user message for sessionID: it assembles
 // context (identity, impressions, compression, active-path history), calls
 // the LLM (running the tool loop as needed), and persists the resulting
-// user/assistant/tool messages as a single transaction. On an error or
-// cancellation, the latest records that were obtained are persisted, with
-// an incomplete assistant response marked accordingly. With
-// with opts.OnDelta set, assistant content deltas are streamed as they arrive
+// user/assistant/tool messages as a single transaction. When an interrupted
+// LLM stream leaves a persistable assistant response, Run returns it with
+// Metadata["incomplete"] set instead of an error. With opts.OnDelta set,
+// assistant content deltas are streamed as they arrive
 // while persistence still only happens once the turn completes.
 func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
 	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
@@ -607,13 +607,16 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 	}
 	acknowledged = true
 	final := saved[len(saved)-1]
-	if converseErr != nil {
+	if converseErr != nil && final.Role == ds4.RoleAssistant {
 		turn.Messages[len(turn.Messages)-1] = final
 		if turn.Metadata == nil {
 			turn.Metadata = map[string]any{}
 		}
 		turn.Metadata["incomplete"] = true
 		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, nil
+	}
+	if converseErr != nil {
 		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
 	}
 
