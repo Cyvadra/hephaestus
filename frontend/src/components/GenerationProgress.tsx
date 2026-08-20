@@ -109,6 +109,7 @@ function PermissionActivity({ request, onRespond, authorizationMode, onAutoAppro
       <div className="message-editor-actions permission-response-actions">
         <button type="button" className="message-action-btn" disabled={responding} onClick={async () => { if (responding || !onRespond) return; setResponding(true); const accepted = await onRespond(request, false); if (!accepted) setResponding(false) }}>{t('common.cancel')}</button>
         <button type="button" className="composer-send-btn permission-approve-pulse" disabled={responding} onClick={async () => { if (responding || !onRespond) return; setResponding(true); const accepted = await onRespond(request, true); if (!accepted) setResponding(false) }}>{t('chat.permission.authorize')}</button>
+        <button type="button" className="message-action-btn" disabled={responding || !onAutoApprove} onClick={async () => { if (responding || !onAutoApprove) return; setResponding(true); const accepted = await onAutoApprove(request); if (!accepted) setResponding(false) }}>{t('chat.permission.allowAllAction')}</button>
       </div>
     </div>
   </div>
