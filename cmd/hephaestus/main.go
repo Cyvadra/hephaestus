@@ -143,6 +143,11 @@ func main() {
 	pluginReg.Register(builtin.NewMetaphysicsPlugin(builtin.MetaphysicsConfig{
 		Timezone: cfg.EnvironmentTimezone,
 	}))
+	traditionalCCPlugin, err := builtin.NewTraditionalCCPlugin()
+	if err != nil {
+		log.Fatalf("plugin: initialize traditional-cc: %v", err)
+	}
+	pluginReg.Register(traditionalCCPlugin)
 	pluginReg.Register(builtin.NewSessionSummaryPlugin(db, llmClient, 5*time.Minute))
 	pluginReg.Register(builtin.NewStorylineStatusPlugin(db, llmClient))
 	pluginReg.Register(builtin.NewOptionsPlugin(llmClient))
