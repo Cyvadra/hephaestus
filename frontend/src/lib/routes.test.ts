@@ -7,6 +7,7 @@ describe('routes', () => {
       type: 'chat-new',
       project: 'project alpha/中文',
     })
+    expect(routes.chat('default-workspace', 308)).toBe('/default-workspace/308')
   })
 
   it('round-trips encoded configuration names', () => {
@@ -15,10 +16,11 @@ describe('routes', () => {
       kind: 'identities',
       name: 'name with/slash',
     })
+    expect(parseRoute('/configurations/constants')).toEqual({ type: 'configuration-constants' })
   })
 
   it('rejects invalid session identifiers', () => {
-    expect(parseRoute('/projects/default/chats/0')).toEqual({ type: 'invalid' })
-    expect(parseRoute('/projects/default/chats/not-a-number')).toEqual({ type: 'invalid' })
+    expect(parseRoute('/default/0')).toEqual({ type: 'invalid' })
+    expect(parseRoute('/default/not-a-number')).toEqual({ type: 'invalid' })
   })
 })
