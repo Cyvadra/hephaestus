@@ -1,4 +1,4 @@
-import { Check, Globe2, LogOut, Moon, Settings } from 'lucide-react'
+import { Check, Globe2, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supportedLanguages } from '../i18n'
@@ -6,6 +6,14 @@ import { useHoverMenu } from '../lib/useHoverMenu'
 import { logout } from '../api/auth'
 
 const NIGHT_MODE_STORAGE_KEY = 'hephaestus.nightMode'
+type ThemeMode = 'light' | 'dark' | 'system'
+
+function getThemeMode(): ThemeMode {
+  const storedMode = localStorage.getItem(NIGHT_MODE_STORAGE_KEY)
+  if (storedMode === 'true' || storedMode === 'dark') return 'dark'
+  if (storedMode === 'false' || storedMode === 'light') return 'light'
+  return 'system'
+}
 
 interface Props {
   mode: 'chat' | 'configurations'
@@ -17,14 +25,23 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
   const { t, i18n } = useTranslation()
   const rootRef = useRef<HTMLDivElement>(null)
   const menu = useHoverMenu(rootRef)
-  const [nightMode, setNightMode] = useState(() => localStorage.getItem(NIGHT_MODE_STORAGE_KEY) === 'true')
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getThemeMode)
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
   const configurationLabel = mode === 'configurations' ? t('app.returnToChat') : t('app.configurationManagement')
+  const darkTheme = themeMode === 'dark' || (themeMode === 'system' && systemPrefersDark)
 
   useLayoutEffect(() => {
-    document.body.toggleAttribute('data-ds-dark-theme', nightMode)
-    document.body.classList.toggle('dark', nightMode)
-    localStorage.setItem(NIGHT_MODE_STORAGE_KEY, String(nightMode))
-  }, [nightMode])
+    document.body.toggleAttribute('data-ds-dark-theme', darkTheme)
+    document.body.classList.toggle('dark', darkTheme)
+    localStorage.setItem(NIGHT_MODE_STORAGE_KEY, themeMode)
+  }, [darkTheme, themeMode])
+
+  useLayoutEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const updateSystemPreference = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches)
+    mediaQuery.addEventListener('change', updateSystemPreference)
+    return () => mediaQuery.removeEventListener('change', updateSystemPreference)
+  }, [])
 
   const openConfiguration = () => {
     if (mode === 'configurations') onCloseConfigurations()
@@ -65,16 +82,12 @@ export default function SidebarSettingsMenu({ mode, onOpenConfigurations, onClos
           {i18n.resolvedLanguage === language && <Check aria-label={t('app.selectedLanguage', { language: t(`app.languages.${language}`) })} size={15} />}
         </button>)}
         <div className="sidebar-settings-divider" />
-        <button
-          className="sidebar-settings-option"
-          type="button"
-          role="menuitemcheckbox"
-          aria-checked={nightMode}
-          onClick={() => setNightMode(enabled => !enabled)}
-        >
-          <span className="sidebar-settings-option-label"><Moon aria-hidden="true" size={15} />{t('app.nightMode')}</span>
-          <span className="sidebar-settings-switch" aria-hidden="true"><span /></span>
-        </button>
+        <div className="sidebar-settings-heading">{t('app.theme')}</div>
+        <div className="sidebar-theme-selector" role="radiogroup" aria-label={t('app.theme')}>
+          <button className="sidebar-theme-option" type="button" role="radio" aria-checked={themeMode === 'light'} onClick={() => setThemeMode('light')} title={t('app.themeLight')}><Sun aria-hidden="true" size={14} /><span>{t('app.themeLight')}</span></button>
+          <button className="sidebar-theme-option" type="button" role="radio" aria-checked={themeMode === 'dark'} onClick={() => setThemeMode('dark')} title={t('app.themeDark')}><Moon aria-hidden="true" size={14} /><span>{t('app.themeDark')}</span></button>
+          <button className="sidebar-theme-option" type="button" role="radio" aria-checked={themeMode === 'system'} onClick={() => setThemeMode('system')} title={t('app.themeSystem')}><Monitor aria-hidden="true" size={14} /><span>{t('app.themeSystem')}</span></button>
+        </div>
         <button className="sidebar-settings-option" type="button" role="menuitem" onClick={openConfiguration}>
           <Settings aria-hidden="true" size={15} />
           <span>{configurationLabel}</span>

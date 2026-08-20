@@ -6,7 +6,10 @@ export const resources = {
         configurationManagement: '配置管理',
         language: '语言',
         settings: '设置',
-        nightMode: '夜间模式',
+        theme: '主题',
+        themeLight: '日间',
+        themeDark: '夜间',
+        themeSystem: '跟随',
         selectedLanguage: '当前语言：{{language}}',
         languages: {
           'zh-CN': '简体中文',
@@ -270,7 +273,10 @@ export const resources = {
         configurationManagement: 'Configuration management',
         language: 'Language',
         settings: 'Settings',
-        nightMode: 'Night mode',
+        theme: 'Theme',
+        themeLight: 'Light',
+        themeDark: 'Dark',
+        themeSystem: 'System',
         selectedLanguage: 'Current language: {{language}}',
         languages: {
           'zh-CN': 'Simplified Chinese',
