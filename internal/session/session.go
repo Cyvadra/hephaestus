@@ -493,8 +493,9 @@ func hasToolCalls(raw datatypes.JSON) bool {
 	return len(calls) > 0
 }
 
-// Replace archives sessionID and creates its replacement in one transaction.
-func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store.SessionSettings) (*store.Session, error) {
+// Replace creates a replacement session and optionally archives sessionID in
+// one transaction.
+func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store.SessionSettings, archive bool) (*store.Session, error) {
 	next := &store.Session{SourceConcierge: sourceConcierge, Settings: datatypes.NewJSONType(settings), LastMessageTime: time.Now()}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		var previous store.Session
@@ -502,8 +503,10 @@ func (s *Service) Replace(sessionID uint, sourceConcierge string, settings store
 			return err
 		}
 		next.ProjectID = previous.ProjectID
-		if err := tx.Model(&previous).Update("flag_archived", true).Error; err != nil {
-			return err
+		if archive {
+			if err := tx.Model(&previous).Update("flag_archived", true).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Create(next).Error
 	}); err != nil {

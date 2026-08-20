@@ -353,8 +353,8 @@
 - /activate [impression|toolgroup|plugin] <id> or id list like "1,2,3" - 新增/激活相关能力
 - /deactivate [impression|toolgroup|plugin] <id> or id list - 关闭相关能力
   - 此三项的 activate / deactivate，需要同步更新 session 设置
-- /clear - 归档当前 session，并以当前 session 的设定，新开并进入一个 session，实现上下文清除的效果
-- /new - 类似`/clear`，但以当前 Concierge 的设定开启新 session （当前 session 中所做的 config diff 将失效，以 Concierge 为准）
+- /clear [true|false] - 以当前 session 的设定，新开并进入一个 session，实现上下文清除的效果；参数省略或为 false 时保留当前 session，传 true 时归档当前 session
+- /new [true|false] - 类似`/clear`，但以当前 Concierge 的设定开启新 session （当前 session 中所做的 config diff 将失效，以 Concierge 为准）；参数省略或为 false 时保留当前 session，传 true 时归档当前 session
 - 命令性质的用户输入，不能混入到 LLM 的 context
 - 指令需要有 template response 回复给用户，但 response 不进 history，不落盘
 

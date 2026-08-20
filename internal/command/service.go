@@ -131,13 +131,34 @@ func IsCommand(text string) bool {
 	return strings.HasPrefix(strings.TrimSpace(text), "/")
 }
 
+type commandDefinition struct {
+	name string
+	help string
+}
+
+var commandDefinitions = []commandDefinition{
+	{name: "help", help: "show this help"},
+	{name: "ping", help: "platform health"},
+	{name: "stop", help: "stop the current task"},
+	{name: "status", help: "session info, context usage, recent warnings"},
+	{name: "list", help: "list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)"},
+	{name: "detail", help: "show details of one option"},
+	{name: "switch", help: "switch settings, project, or selected session"},
+	{name: "activate", help: "enable session capabilities"},
+	{name: "deactivate", help: "disable session capabilities"},
+	{name: "clear", help: "start a fresh session with the same settings"},
+	{name: "new", help: "start a fresh session from its source concierge"},
+	{name: "interact", help: "respond to a pending request or change session automatic approval"},
+}
+
 // Names returns every supported slash command without the leading slash.
 // External channel adapters use this to register platform command routing.
 func Names() []string {
-	return []string{
-		"help", "ping", "stop", "status", "list", "detail",
-		"switch", "activate", "deactivate", "clear", "new", "interact",
+	names := make([]string, 0, len(commandDefinitions))
+	for _, definition := range commandDefinitions {
+		names = append(names, definition.name)
 	}
+	return names
 }
 
 // RegisterCancel records cancel as the way to interrupt sessionID's
@@ -200,9 +221,9 @@ func (s *Service) ExecuteResult(sessionID uint, text string) (Result, error) {
 	case "/deactivate":
 		response, err = s.setActive(sessionID, args, false)
 	case "/clear":
-		response, target, err = s.clear(sessionID)
+		response, target, err = s.clear(sessionID, args)
 	case "/new":
-		response, target, err = s.new(sessionID)
+		response, target, err = s.new(sessionID, args)
 	case "/interact":
 		response, err = s.interact(sessionID, args)
 	default:
@@ -243,20 +264,32 @@ func (s *Service) interact(sessionID uint, args []string) (string, error) {
 	return "Permission denied. The requested operation will not run.", nil
 }
 
-const helpText = `Available commands:
-/help - show this help
-/ping - platform health
-/stop - stop the current task
-/status - session info, context usage, recent warnings
-/list <kind> - list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)
-/detail <kind> <id> - show details of one option
-/switch <identity|concierge|project> <#id|name> - switch settings or project
-/switch session <ordinal|#session-id> - select another session
-/activate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - enable
-/deactivate <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - disable
-/clear - archive this session and start a fresh one with the same settings
-/new - archive this session and start a fresh one from its source concierge
-/interact <approve|deny|auto-approve|cancel-auto-approve> - respond to a pending runtime request or change session automatic approval`
+var helpText = formatHelp(commandDefinitions)
+
+func formatHelp(definitions []commandDefinition) string {
+	var b strings.Builder
+	b.WriteString("Available commands:\n")
+	for _, definition := range definitions {
+		switch definition.name {
+		case "list":
+			fmt.Fprintf(&b, "/list <kind> - %s\n", definition.help)
+		case "detail":
+			fmt.Fprintf(&b, "/detail <kind> <id> - %s\n", definition.help)
+		case "switch":
+			fmt.Fprintf(&b, "/switch <identity|concierge|project> <#id|name> - %s\n", definition.help)
+			b.WriteString("/switch session <ordinal|#session-id> - select another session\n")
+		case "activate", "deactivate":
+			fmt.Fprintf(&b, "/%s <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - %s\n", definition.name, definition.help)
+		case "interact":
+			fmt.Fprintf(&b, "/interact <approve|deny|auto-approve|cancel-auto-approve> - %s\n", definition.help)
+		case "clear", "new":
+			fmt.Fprintf(&b, "/%s [archive] - %s; archive defaults to false\n", definition.name, definition.help)
+		default:
+			fmt.Fprintf(&b, "/%s - %s\n", definition.name, definition.help)
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 // kindDescriptor bundles the per-Kind lookups /list and /detail need, so
 // adding a new Kind means adding one table entry instead of extending two
@@ -708,13 +741,27 @@ func firstUnavailable(names, available []string) string {
 	return ""
 }
 
-func (s *Service) clear(sessionID uint) (string, *SessionTarget, error) {
+func parseArchiveArgument(commandName string, args []string) (bool, error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	if len(args) != 1 || (args[0] != "true" && args[0] != "false") {
+		return false, fmt.Errorf("command: usage: /%s [true|false]", commandName)
+	}
+	return args[0] == "true", nil
+}
+
+func (s *Service) clear(sessionID uint, args []string) (string, *SessionTarget, error) {
+	archive, err := parseArchiveArgument("clear", args)
+	if err != nil {
+		return "", nil, err
+	}
 	sess, err := s.loadSession(sessionID)
 	if err != nil {
 		return "", nil, err
 	}
 	settings := sess.Settings.Data()
-	newSess, err := s.sessions.Replace(sess.ID, sess.SourceConcierge, settings)
+	newSess, err := s.sessions.Replace(sess.ID, sess.SourceConcierge, settings, archive)
 	if err != nil {
 		return "", nil, err
 	}
@@ -723,10 +770,14 @@ func (s *Service) clear(sessionID uint) (string, *SessionTarget, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return fmt.Sprintf("Archived session %d. New session: %d.", sess.ID, newSess.ID), target, nil
+	return newSessionResponse(sess.ID, newSess.ID, archive, ""), target, nil
 }
 
-func (s *Service) new(sessionID uint) (string, *SessionTarget, error) {
+func (s *Service) new(sessionID uint, args []string) (string, *SessionTarget, error) {
+	archive, err := parseArchiveArgument("new", args)
+	if err != nil {
+		return "", nil, err
+	}
 	sess, err := s.loadSession(sessionID)
 	if err != nil {
 		return "", nil, err
@@ -735,7 +786,7 @@ func (s *Service) new(sessionID uint) (string, *SessionTarget, error) {
 	if !ok {
 		return "", nil, fmt.Errorf("command: source concierge %q no longer exists", sess.SourceConcierge)
 	}
-	newSess, err := s.sessions.Replace(sess.ID, c.Name, session.SettingsFromConcierge(c))
+	newSess, err := s.sessions.Replace(sess.ID, c.Name, session.SettingsFromConcierge(c), archive)
 	if err != nil {
 		return "", nil, err
 	}
@@ -744,7 +795,18 @@ func (s *Service) new(sessionID uint) (string, *SessionTarget, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return fmt.Sprintf("Archived session %d. New session: %d (from concierge %q).", sess.ID, newSess.ID, c.Name), target, nil
+	return newSessionResponse(sess.ID, newSess.ID, archive, fmt.Sprintf("from concierge %q", c.Name)), target, nil
+}
+
+func newSessionResponse(previousID, nextID uint, archived bool, source string) string {
+	prefix := fmt.Sprintf("New session: %d", nextID)
+	if source != "" {
+		prefix += " (" + source + ")"
+	}
+	if !archived {
+		return prefix + "."
+	}
+	return fmt.Sprintf("Archived session %d. %s.", previousID, prefix)
 }
 
 func (s *Service) loadSession(id uint) (*store.Session, error) {

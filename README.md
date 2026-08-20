@@ -107,7 +107,16 @@ or concierge, or moves the session to another available project; `/activate`
 or `/deactivate` adjusts impressions, tool groups, and plugins. After
 `/list <kind>`, commands may use the displayed ordinal (for example, `1` or
 `#1`) or the entry name. When an operation asks for approval, respond with
-`/interact approve` or `/interact deny`.
+`/interact approve` or `/interact deny`. `/interact auto-approve` enables
+automatic approval for the current session for this server process and
+approves a request already waiting in that session; use
+`/interact cancel-auto-approve` to turn it off.
+
+`/clear [true|false]` starts and selects a new session with the current
+session's settings. `/new [true|false]` instead starts it from the source
+concierge's current settings. Their optional `archive` argument defaults to
+`false`, so the current session remains available; pass `true` to archive it
+while creating the new session.
 
 `/switch session <ordinal|#session-id>` selects another session without
 changing either session. The ordinal comes from the most recent `/list session`

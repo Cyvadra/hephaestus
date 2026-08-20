@@ -77,9 +77,11 @@ Plugin 的失败或超时不会中断正常会话；平台会跳过该次执行�
 - `/list`、`/detail`：浏览身份、印象、工具组、插件、Concierge、会话、Project、Workflow 和 Job。
 - `/switch`：切换 Identity、Concierge、Project 或打开另一个会话。
 - `/activate`、`/deactivate`：调整当前会话启用的 Impression、Tool Group 或非固定 Plugin。
-- `/clear`：归档当前会话，并基于当前会话设置创建新会话。
-- `/new`：归档当前会话，并从其源 Concierge 创建新会话。
+- `/clear [true|false]`：基于当前会话设置创建并切换到新会话。`archive` 默认为 `false`；传入 `true` 时归档当前会话。
+- `/new [true|false]`：从当前会话的源 Concierge 创建并切换到新会话。`archive` 默认为 `false`；传入 `true` 时归档当前会话。
 - `/interact approve|deny`：回应等待中的敏感操作确认。
+- `/interact auto-approve`：为当前 Session 开启本次服务进程内的自动授权；若已有等待中的请求，会立即同意该请求。
+- `/interact cancel-auto-approve`：关闭当前 Session 的自动授权。
 
 ## 工具与文件
 
@@ -92,7 +94,7 @@ Plugin 的失败或超时不会中断正常会话；平台会跳过该次执行�
 - 在启用后执行 Shell 命令，可选择本机或远程工作环境。
 - 将 Project 中已有文件作为助手附件发送给用户。
 
-高风险 Shell 操作会请求用户确认。网页流式对话可通过 `/interact` 明确同意或拒绝；外部通道会发送确认提示，收到明确同意后继续，超时则按当前个人部署策略自动同意。
+高风险 Shell 操作会请求用户确认。网页流式对话可通过 `/interact approve|deny` 明确同意或拒绝，也可通过 `/interact auto-approve` 在当前 Session 内临时允许后续操作；自动授权不写入数据库，服务重启后会关闭。外部通道会发送确认提示，收到明确同意后继续；也可回复“全部同意”或 “approve all”开启当前会话的自动授权，回复“取消自动授权”或 “cancel automatic approval”关闭它。超时处理遵循当前部署的授权策略。
 
 用户消息可携带多个附件。小型文本文件可直接作为提示上下文，支持的图片可在配置 OCR 后提取文本；未能提取的文件仍会保存在所属 Project 中。助手发送的文件是 Project 文件的受控引用：下载时会重新校验路径与文件状态，因此该文件之后可能更新或不再可用。
 

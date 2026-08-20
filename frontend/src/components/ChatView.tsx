@@ -13,8 +13,6 @@ import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutpu
 import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
 import i18n from '../i18n'
 
-const COMMAND_HELP_CACHE_KEY = 'hephaestus.commandHelp'
-const COMMAND_HELP_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WIDE_CHAT_HISTORY_STORAGE_KEY = 'hephaestus.wideChatHistory'
 const AUTHORIZATION_PREFERENCE_STORAGE_KEY_PREFIX = 'hephaestus.authorizationPreference.'
 const HISTORY_NAV_TOP_THRESHOLD = 120
@@ -85,31 +83,6 @@ function notifyPermissionRequest(request: InteractionRequest) {
   }
 }
 
-function readCommandHelpCache(): string | null {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(COMMAND_HELP_CACHE_KEY) ?? 'null')
-    if (
-      typeof value === 'object' && value !== null &&
-      typeof (value as { response?: unknown }).response === 'string' &&
-      typeof (value as { expiresAt?: unknown }).expiresAt === 'number' &&
-      (value as { expiresAt: number }).expiresAt > Date.now()
-    ) {
-      return (value as { response: string }).response
-    }
-  } catch {
-    // A malformed cache should not prevent command entry.
-  }
-  localStorage.removeItem(COMMAND_HELP_CACHE_KEY)
-  return null
-}
-
-function cacheCommandHelp(response: string) {
-  localStorage.setItem(COMMAND_HELP_CACHE_KEY, JSON.stringify({
-    response,
-    expiresAt: Date.now() + COMMAND_HELP_CACHE_TTL_MS,
-  }))
-}
-
 // consumeStream centralizes the event switch shared by send/regenerate/
 // continue, so all three streaming paths handle every event type
 // identically (in particular, ask_permission used to be silently dropped
@@ -165,7 +138,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [forking, setForking] = useState(false)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
-  const [commandHelp, setCommandHelp] = useState<string | null>(readCommandHelpCache)
+  const [commandHelp, setCommandHelp] = useState<string | null>(null)
   const [commandHelpLoading, setCommandHelpLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([])
@@ -388,7 +361,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       }
       const data = await response.json() as SendMessageResponse
       if (data.command_response) {
-        cacheCommandHelp(data.command_response)
         setCommandHelp(data.command_response)
       }
     } catch (cause) {

@@ -154,6 +154,37 @@ func TestSwitchSessionIsNotAdvertisedOrSupported(t *testing.T) {
 	}
 }
 
+func TestCommandNamesAndHelpShareDefinitions(t *testing.T) {
+	for _, name := range Names() {
+		if !strings.Contains(helpText, "/"+name) {
+			t.Fatalf("help omits registered command %q", name)
+		}
+	}
+}
+
+func TestParseArchiveArgumentDefaultsToFalse(t *testing.T) {
+	for _, test := range []struct {
+		args    []string
+		want    bool
+		wantErr bool
+	}{
+		{args: nil, want: false},
+		{args: []string{"false"}, want: false},
+		{args: []string{"true"}, want: true},
+		{args: []string{"TRUE"}, wantErr: true},
+		{args: []string{"1"}, wantErr: true},
+		{args: []string{"true", "false"}, wantErr: true},
+	} {
+		got, err := parseArchiveArgument("new", test.args)
+		if (err != nil) != test.wantErr {
+			t.Fatalf("parseArchiveArgument(%v) error = %v, wantErr %v", test.args, err, test.wantErr)
+		}
+		if err == nil && got != test.want {
+			t.Fatalf("parseArchiveArgument(%v) = %v, want %v", test.args, got, test.want)
+		}
+	}
+}
+
 func TestInteractAutomaticApprovalCommands(t *testing.T) {
 	service := testService()
 	service.interactions = interaction.NewManager()
