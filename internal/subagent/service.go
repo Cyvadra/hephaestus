@@ -136,7 +136,16 @@ func (s *Service) create(req Request, mode store.SubagentMode, schedule store.Su
 		}
 		run.Seed = datatypes.JSON(seed)
 	}
-	if err := s.db.Create(run).Error; err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		parent, err := store.LockSession(tx, req.ParentSessionID)
+		if err != nil {
+			return err
+		}
+		if parent.ProjectID != req.ProjectID {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(run).Error
+	}); err != nil {
 		return nil, fmt.Errorf("subagent: create run: %w", err)
 	}
 	s.done[run.ID] = make(chan struct{})
@@ -198,17 +207,24 @@ func (s *Service) finish(run *store.SubagentRun, status store.SubagentRunStatus,
 		runError = runErr.Error()
 		updates["error"] = runError
 	}
-	if err := s.db.Model(run).Updates(updates).Error; err != nil {
-		return fmt.Errorf("update terminal status: %w", err)
-	}
-	if run.Schedule != store.SubagentScheduleBackground {
+	var deliverySessionID uint
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(run).Updates(updates).Error; err != nil {
+			return fmt.Errorf("update terminal status: %w", err)
+		}
+		if run.Schedule != store.SubagentScheduleBackground {
+			return nil
+		}
+		var err error
+		deliverySessionID, err = createCompletionEvent(tx, run, status, result, runError)
+		if err != nil {
+			return fmt.Errorf("create completion event: %w", err)
+		}
 		return nil
+	}); err != nil {
+		return err
 	}
-	deliverySessionID, err := createCompletionEvent(s.db, run, status, result, runError)
-	if err != nil {
-		return fmt.Errorf("create completion event: %w", err)
-	}
-	if s.onCompletion != nil {
+	if run.Schedule == store.SubagentScheduleBackground && s.onCompletion != nil {
 		s.onCompletion(deliverySessionID)
 	}
 	return nil

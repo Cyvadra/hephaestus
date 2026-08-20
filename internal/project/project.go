@@ -12,9 +12,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -64,24 +66,20 @@ func (s *Service) Create(name, description string) (*store.Project, error) {
 	}
 
 	dir := filepath.Join(s.root, name)
-	createdDir := false
-	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
-		createdDir = true
-	} else if err != nil {
-		return nil, fmt.Errorf("project: inspect directory %q: %w", dir, err)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("project: directory %q already exists", dir)
+		}
 		return nil, fmt.Errorf("project: create directory %q: %w", dir, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(agentsSkeleton(name, description)), 0o644); err != nil {
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("project: write AGENTS.md: %w", err)
 	}
 
 	p := &store.Project{Name: name, Description: description}
 	if err := s.db.Create(p).Error; err != nil {
-		if createdDir {
-			_ = os.RemoveAll(dir)
-		}
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("project: persist %q: %w", name, err)
 	}
 	return p, nil
@@ -227,24 +225,41 @@ func (s *Service) Delete(name string, deleteDirectory bool) error {
 	if name == DefaultName {
 		return errors.New("project: the default project cannot be deleted")
 	}
-	p, err := s.GetByName(name)
+	var quarantined string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var p store.Project
+		query := tx.Where("name = ?", name)
+		if tx.Dialector.Name() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := query.First(&p).Error; err != nil {
+			return err
+		}
+		var sessionCount int64
+		if err := tx.Model(&store.Session{}).Where("project_id = ?", p.ID).Count(&sessionCount).Error; err != nil {
+			return fmt.Errorf("project: count sessions for %q: %w", name, err)
+		}
+		if sessionCount > 0 {
+			return fmt.Errorf("project: %q has sessions and cannot be deleted", name)
+		}
+		if deleteDirectory {
+			dir := s.Path(p)
+			quarantined = filepath.Join(s.root, fmt.Sprintf(".%s.deleting-%d", name, time.Now().UnixNano()))
+			if err := os.Rename(dir, quarantined); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("project: quarantine directory for %q: %w", name, err)
+			}
+		}
+		return tx.Delete(&p).Error
+	})
 	if err != nil {
-		return err
-	}
-
-	var sessionCount int64
-	if err := s.db.Model(&store.Session{}).Where("project_id = ?", p.ID).Count(&sessionCount).Error; err != nil {
-		return fmt.Errorf("project: count sessions for %q: %w", name, err)
-	}
-	if sessionCount > 0 {
-		return fmt.Errorf("project: %q has sessions and cannot be deleted", name)
-	}
-	if err := s.db.Delete(p).Error; err != nil {
+		if quarantined != "" {
+			_ = os.Rename(quarantined, filepath.Join(s.root, name))
+		}
 		return fmt.Errorf("project: delete %q: %w", name, err)
 	}
-	if deleteDirectory {
-		if err := os.RemoveAll(s.Path(*p)); err != nil {
-			return fmt.Errorf("project: remove directory for %q: %w", name, err)
+	if quarantined != "" {
+		if err := os.RemoveAll(quarantined); err != nil {
+			return fmt.Errorf("project: remove quarantined directory for %q: %w", name, err)
 		}
 	}
 	return nil

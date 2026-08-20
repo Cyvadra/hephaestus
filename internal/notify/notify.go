@@ -36,6 +36,8 @@ type Notifier struct {
 	cancel     context.CancelFunc
 	workers    sync.WaitGroup
 	stopOnce   sync.Once
+	queueMu    sync.Mutex
+	stopped    bool
 
 	mu   sync.Mutex
 	ring []Entry
@@ -80,6 +82,11 @@ func (n *Notifier) record(level, message string) {
 	n.mu.Unlock()
 
 	if n.webhookURL != "" {
+		n.queueMu.Lock()
+		defer n.queueMu.Unlock()
+		if n.stopped {
+			return
+		}
 		select {
 		case n.queue <- entry:
 		default:
@@ -93,7 +100,12 @@ func (n *Notifier) Shutdown(ctx context.Context) error {
 	if n.cancel == nil {
 		return nil
 	}
-	n.stopOnce.Do(n.cancel)
+	n.stopOnce.Do(func() {
+		n.queueMu.Lock()
+		n.stopped = true
+		close(n.queue)
+		n.queueMu.Unlock()
+	})
 	done := make(chan struct{})
 	go func() {
 		n.workers.Wait()
@@ -103,7 +115,9 @@ func (n *Notifier) Shutdown(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		n.cancel()
+		<-done
+		return nil
 	}
 }
 
@@ -113,7 +127,10 @@ func (n *Notifier) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case entry := <-n.queue:
+		case entry, ok := <-n.queue:
+			if !ok {
+				return
+			}
 			n.send(ctx, entry)
 		}
 	}

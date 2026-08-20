@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/hephaestus/internal/chat"
-	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -868,17 +867,13 @@ func (s *Server) deleteSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
-	if _, err := s.chatRuns.ActiveForSession(sessionID); err == nil {
-		c.JSON(http.StatusConflict, errorResponse{Error: "cannot delete a session while chat generation is running"})
-		return
-	} else if !errors.Is(err, chatrun.ErrRunNotFound) {
-		internalError(c, err)
-		return
-	}
-
 	err = s.sessions.Delete(sessionID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		return
+	}
+	if errors.Is(err, session.ErrSessionBusy) {
+		c.JSON(http.StatusConflict, errorResponse{Error: "cannot delete a session while background work is active"})
 		return
 	}
 	if err != nil {

@@ -12,8 +12,43 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestCreate_RejectsExistingDirectoryWithoutOverwritingAgents(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&store.Project{}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "existing-project")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := project.New(db, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Create("existing-project", "new description"); err == nil {
+		t.Fatal("expected existing directory to be rejected")
+	}
+	content, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "keep me" {
+		t.Fatalf("existing AGENTS.md was overwritten: %q", content)
+	}
+}
 
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()

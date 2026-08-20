@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,5 +67,27 @@ func TestNotifierShutdownCancelsRetryWait(t *testing.T) {
 	defer cancel()
 	if err := n.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestNotifierShutdownDrainsAcceptedEntries(t *testing.T) {
+	var received atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	n := New(server.URL)
+	for index := 0; index < 5; index++ {
+		n.Warn("queued %d", index)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := n.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := received.Load(); got != 5 {
+		t.Fatalf("delivered %d entries, want 5", got)
 	}
 }

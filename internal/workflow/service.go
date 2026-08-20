@@ -366,7 +366,7 @@ func (s *Service) runSteps(ctx context.Context, run *store.WorkflowRun, reg *reg
 			step.Status = status
 			step.Error = message
 			if err := s.db.Model(step).Updates(stepUpdates).Error; err != nil {
-				s.notify.Error("workflow: persist step %d failure: %v", step.ID, err)
+				return store.WorkflowRunFatal, nil, fmt.Errorf("workflow: persist failed step %d: %w", index+1, err)
 			}
 			failedStep := *step
 			s.publish(run.ID, ProgressEvent{Type: ProgressStep, Step: &failedStep})
@@ -376,7 +376,7 @@ func (s *Service) runSteps(ctx context.Context, run *store.WorkflowRun, reg *reg
 		step.Status = store.WorkflowRunSucceeded
 		step.Output = output
 		if err := s.db.Model(step).Updates(stepUpdates).Error; err != nil {
-			s.notify.Error("workflow: persist step %d success: %v", step.ID, err)
+			return store.WorkflowRunFatal, nil, fmt.Errorf("workflow: persist completed step %d: %w", index+1, err)
 		}
 		doneStep := *step
 		s.publish(run.ID, ProgressEvent{Type: ProgressStep, Step: &doneStep})

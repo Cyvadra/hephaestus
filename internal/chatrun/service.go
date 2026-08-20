@@ -85,7 +85,16 @@ func (s *Service) Start(sessionID, projectID uint, kind store.ChatRunKind, reque
 		Request:   datatypes.NewJSONType(request),
 		Snapshot:  datatypes.NewJSONType(store.ChatRunSnapshot{}),
 	}
-	if err := s.db.Create(run).Error; err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		session, err := store.LockSession(tx, sessionID)
+		if err != nil {
+			return err
+		}
+		if session.ProjectID != projectID {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(run).Error
+	}); err != nil {
 		if isActiveRunConflict(err) {
 			return nil, ErrRunActive
 		}

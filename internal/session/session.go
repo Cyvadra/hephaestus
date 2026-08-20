@@ -33,6 +33,7 @@ var (
 	ErrToolCallMessage  = errors.New("session: assistant messages with tool calls cannot be edited")
 	ErrMessageNotOnPath = errors.New("session: message is not on the selected active path")
 	ErrEmptyContent     = errors.New("session: message content cannot be empty")
+	ErrSessionBusy      = errors.New("session: background work is active")
 )
 
 // Patch describes user-editable session metadata. Nil fields are unchanged.
@@ -179,20 +180,62 @@ func (s *Service) Update(sessionID uint, patch Patch) (*store.Session, error) {
 // Delete removes a session and its dependent conversation records atomically.
 func (s *Service) Delete(sessionID uint) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		var sess store.Session
-		if err := tx.First(&sess, sessionID).Error; err != nil {
+		if _, err := store.LockSession(tx, sessionID); err != nil {
 			return err
 		}
-		if err := tx.Where("session_id = ?", sessionID).Delete(&store.ChannelBinding{}).Error; err != nil {
-			return fmt.Errorf("session: delete channel bindings: %w", err)
+		return deleteSessionTree(tx, sessionID)
+	})
+}
+
+func deleteSessionTree(tx *gorm.DB, sessionID uint) error {
+	var active int64
+	if err := tx.Model(&store.ChatRun{}).Where("session_id = ? AND status IN ?", sessionID, []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).Count(&active).Error; err != nil {
+		return err
+	}
+	if active == 0 {
+		if err := tx.Model(&store.SubagentRun{}).Where("parent_session_id = ? AND status IN ?", sessionID, []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning}).Count(&active).Error; err != nil {
+			return err
 		}
-		for _, model := range []any{&store.ChatRun{}, &store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
-			if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
+	}
+	if active > 0 {
+		return ErrSessionBusy
+	}
+
+	var runs []store.SubagentRun
+	if err := tx.Where("parent_session_id = ?", sessionID).Find(&runs).Error; err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.ChildSessionID != nil {
+			if err := deleteSessionTree(tx, *run.ChildSessionID); err != nil {
 				return err
 			}
 		}
-		return tx.Delete(&sess).Error
-	})
+		if err := tx.Where("run_id = ?", run.ID).Delete(&store.SubagentEvent{}).Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.Where("parent_session_id = ?", sessionID).Delete(&store.SubagentRun{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("session_id = ?", sessionID).Delete(&store.ChannelBinding{}).Error; err != nil {
+		return fmt.Errorf("session: delete channel bindings: %w", err)
+	}
+	var chatRuns []store.ChatRun
+	if err := tx.Select("id").Where("session_id = ?", sessionID).Find(&chatRuns).Error; err != nil {
+		return err
+	}
+	for _, run := range chatRuns {
+		if err := tx.Where("run_id = ?", run.ID).Delete(&store.ChatRunEvent{}).Error; err != nil {
+			return err
+		}
+	}
+	for _, model := range []any{&store.ChatRun{}, &store.MessageAttachment{}, &store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
+		if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Delete(&store.Session{}, sessionID).Error
 }
 
 // SettingsFromConcierge copies a concierge's default-enabled session settings.
@@ -219,6 +262,9 @@ func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMe
 	}
 
 	return &msg, s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := store.LockSession(tx, sessionID); err != nil {
+			return err
+		}
 		if err := tx.Create(&msg).Error; err != nil {
 			return fmt.Errorf("session: append message: %w", err)
 		}
@@ -272,6 +318,9 @@ func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parent
 	copy(out, msgs)
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := store.LockSession(tx, sessionID); err != nil {
+			return err
+		}
 		if err := insertChain(tx, sessionID, parentID, out); err != nil {
 			return err
 		}
@@ -333,7 +382,12 @@ func (s *Service) AppendMessagesDetached(sessionID uint, parentID *uint, msgs []
 	}
 	out := make([]store.ChatMessage, len(msgs))
 	copy(out, msgs)
-	if err := insertChain(s.db, sessionID, parentID, out); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := store.LockSession(tx, sessionID); err != nil {
+			return err
+		}
+		return insertChain(tx, sessionID, parentID, out)
+	}); err != nil {
 		return nil, err
 	}
 	return out, nil
