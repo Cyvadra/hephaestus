@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, type DragEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, setAutomaticApproval, updateSession } from '../api/client'
@@ -639,37 +639,40 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
   }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, t])
 
-  const handleRegenerate = useCallback(async (messageId: number) => {
+  const runExistingSessionStream = useCallback(async (
+    messageId: number,
+    createStream: (signal: AbortSignal) => AsyncGenerator<StreamEvent>,
+    setActiveMessageId: Dispatch<SetStateAction<number | null>>,
+  ) => {
     if (resolvedSessionId == null) return
 
     setError(null)
     setStreaming(true)
     setStreamingText('')
     setStreamingActivities([])
-    setRegeneratingMessageId(messageId)
+    setActiveMessageId(messageId)
     shouldAutoScrollRef.current = true
     const controller = new AbortController()
     streamAbortRef.current = controller
     streamSessionRef.current = resolvedSessionId
-		const epoch = viewEpochRef.current
-		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
+    const epoch = viewEpochRef.current
+    const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
     let completed = false
     try {
-      const gen = streamRegenerate(resolvedSessionId, generationOptions, controller.signal)
-      await consumeStream(gen, controller.signal, {
+      await consumeStream(createStream(controller.signal), controller.signal, {
         setStreamingText,
         setStreamingActivities,
         onSessionUpdated,
         onDone: async data => {
           if (!isCurrent()) return
-                       clearStreamingPresentation()
-			setRegeneratingMessageId(null)
+          clearStreamingPresentation()
+          setActiveMessageId(null)
           await loadHistory(resolvedSessionId, undefined, epoch)
           completed = true
           if (data.message) setLocalLeafId(data.message.ID)
         },
         onError: setError,
-			isCurrent,
+        isCurrent,
       })
     } catch (cause) {
       if (!controller.signal.aborted) setError(String(cause))
@@ -680,56 +683,28 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreaming(false)
         setStreamingText('')
         setStreamingActivities([])
-        setRegeneratingMessageId(null)
+        setActiveMessageId(null)
       }
     }
-  }, [clearStreamingPresentation, resolvedSessionId, loadHistory, onSessionUpdated, generationOptions])
+  }, [clearStreamingPresentation, loadHistory, onSessionUpdated, resolvedSessionId])
+
+  const handleRegenerate = useCallback(async (messageId: number) => {
+    if (resolvedSessionId == null) return
+    await runExistingSessionStream(
+      messageId,
+      signal => streamRegenerate(resolvedSessionId, generationOptions, signal),
+      setRegeneratingMessageId,
+    )
+  }, [generationOptions, resolvedSessionId, runExistingSessionStream])
 
   const handleContinue = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
-
-    setError(null)
-    setStreaming(true)
-    setStreamingText('')
-    setStreamingActivities([])
-    setContinuingMessageId(messageId)
-    shouldAutoScrollRef.current = true
-    const controller = new AbortController()
-    streamAbortRef.current = controller
-    streamSessionRef.current = resolvedSessionId
-		const epoch = viewEpochRef.current
-		const isCurrent = () => !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
-    let completed = false
-    try {
-      const gen = streamContinue(resolvedSessionId, messageId, controller.signal)
-      await consumeStream(gen, controller.signal, {
-        setStreamingText,
-        setStreamingActivities,
-        onSessionUpdated,
-        onDone: async data => {
-          if (!isCurrent()) return
-                       clearStreamingPresentation()
-			setContinuingMessageId(null)
-          await loadHistory(resolvedSessionId, undefined, epoch)
-          completed = true
-          if (data.message) setLocalLeafId(data.message.ID)
-        },
-        onError: setError,
-			isCurrent,
-      })
-    } catch (cause) {
-      if (!controller.signal.aborted) setError(String(cause))
-    } finally {
-      if (streamAbortRef.current === controller) streamAbortRef.current = null
-      if (currentSessionRef.current === resolvedSessionId) {
-        if (!completed) await loadHistory(resolvedSessionId)
-        setStreaming(false)
-        setStreamingText('')
-        setStreamingActivities([])
-        setContinuingMessageId(null)
-      }
-    }
-  }, [clearStreamingPresentation, resolvedSessionId, loadHistory, onSessionUpdated])
+    await runExistingSessionStream(
+      messageId,
+      signal => streamContinue(resolvedSessionId, messageId, generationOptions, signal),
+      setContinuingMessageId,
+    )
+  }, [generationOptions, resolvedSessionId, runExistingSessionStream])
 
   const handleBranchSwitch = useCallback((newLeafId: number) => {
     setLocalLeafId(newLeafId)

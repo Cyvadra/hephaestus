@@ -12,7 +12,7 @@ const router = createBrowserRouter([
   { path: '*', Component: App },
 ])
 
-function AuthenticationGate() {
+export function AuthenticationGate() {
   const [ready, setReady] = useState(false)
   const [authenticated, setAuthenticated] = useState(isAuthenticated())
 

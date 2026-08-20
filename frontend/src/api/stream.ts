@@ -68,8 +68,8 @@ export async function* streamRegenerate(sessionId: number, options: GenerationOp
   yield* streamRun(run.id, signal)
 }
 
-export async function* streamContinue(sessionId: number, messageId: number, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
-  const run = await startChatRun(sessionId, 'continue', '', { reasoningEffort: 'high', webSearch: false }, messageId)
+export async function* streamContinue(sessionId: number, messageId: number, options: GenerationOptions, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
+  const run = await startChatRun(sessionId, 'continue', '', options, messageId)
   if (!isChatRun(run)) return
   yield* streamRun(run.id, signal)
 }

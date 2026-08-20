@@ -5,7 +5,8 @@ export interface TerminalOutputState {
   carriageReturn?: boolean
 }
 
-const ansiSequence = /^\x1b\[[0-?]*[ -/]*[@-~]/
+const escapeCharacter = String.fromCharCode(27)
+const ansiSequence = new RegExp(`^${escapeCharacter}\\[[0-?]*[ -/]*[@-~]`)
 
 export function appendTerminalOutput(
   state: TerminalOutputState,
@@ -26,7 +27,7 @@ export function appendTerminalOutput(
       offset += ansi.length
       continue
     }
-  if (remaining === '\x1b' || (remaining.startsWith('\x1b[') && !/[@-~]/.test(remaining.slice(2)))) {
+  if (remaining === escapeCharacter || (remaining.startsWith(`${escapeCharacter}[`) && !/[@-~]/.test(remaining.slice(2)))) {
     pendingControl = remaining
     break
   }

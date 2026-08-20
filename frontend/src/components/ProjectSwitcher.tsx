@@ -1,5 +1,5 @@
 import { Check, ChevronUp, FolderPlus, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createProject, deleteProject, listProjects } from '../api/client'
 import type { Project } from '../api/types'
@@ -22,11 +22,7 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
   const rootRef = useRef<HTMLDivElement>(null)
   const menu = useHoverMenu(rootRef)
 
-  useEffect(() => {
-    void reload()
-  }, [])
-
-  async function reload() {
+  const reload = useCallback(async () => {
     try {
       const loaded = await listProjects()
       setProjects(loaded)
@@ -35,7 +31,11 @@ export default function ProjectSwitcher({ activeProject, onProjectChange, onProj
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
-  }
+  }, [onProjectsLoaded])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()

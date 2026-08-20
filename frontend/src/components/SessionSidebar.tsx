@@ -38,13 +38,32 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   const [renamingId, setRenamingId] = useState<number | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<Session | null>(null)
   const [archivedExpanded, setArchivedExpanded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const reloadControllerRef = useRef<AbortController | null>(null)
 
   const reload = useCallback(async () => {
-    if (project != null) setSessions(await listSessions(project))
+    reloadControllerRef.current?.abort()
+    if (project == null) {
+      setSessions([])
+      return
+    }
+    const controller = new AbortController()
+    reloadControllerRef.current = controller
+    try {
+      const loaded = await listSessions(project, controller.signal)
+      if (reloadControllerRef.current === controller) {
+        setSessions(loaded)
+        setError(null)
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }, [project])
 
   useEffect(() => {
+    setSessions([])
     void reload()
+    return () => reloadControllerRef.current?.abort()
   }, [reload, refreshKey])
 
   useEffect(() => {
@@ -118,11 +137,16 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
 
   async function handleRenameSubmit(session: Session, title: string) {
     const trimmed = title.trim()
-    if (trimmed && trimmed !== (session.Title || '')) {
-      const updated = await updateSession(session.ID, { title: trimmed })
-      setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
+    try {
+      if (trimmed && trimmed !== (session.Title || '')) {
+        const updated = await updateSession(session.ID, { title: trimmed })
+        setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
+      }
+      setRenamingId(null)
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     }
-    setRenamingId(null)
   }
 
   return (
@@ -149,6 +173,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
       </button>
 
       <div className="sidebar-section">
+        {error && <div className="sidebar-error" role="alert">{error}</div>}
         <div className="session-list">
           {pinnedSessions.length > 0 && (
             <div className="session-group">
@@ -188,20 +213,42 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
           : <ProjectSwitcher activeProject={project} onProjectChange={onProjectChange} onProjectsLoaded={onProjectsLoaded} />}
         <SidebarSettingsMenu mode={mode} onOpenConfigurations={onOpenConfigurations} onCloseConfigurations={onCloseConfigurations} />
       </div>
-      {deleteCandidate && <DeleteDialog session={deleteCandidate} onClose={() => setDeleteCandidate(null)} onConfirm={async () => { await deleteSession(deleteCandidate.ID); setSessions(current => current.filter(session => session.ID !== deleteCandidate.ID)); if (deleteCandidate.ID === activeSessionId) onOpenNewSession(); setDeleteCandidate(null) }} />}
+      {deleteCandidate && <DeleteDialog session={deleteCandidate} onClose={() => setDeleteCandidate(null)} onConfirm={async () => {
+        try {
+          await deleteSession(deleteCandidate.ID)
+          setSessions(current => current.filter(session => session.ID !== deleteCandidate.ID))
+          if (deleteCandidate.ID === activeSessionId) onOpenNewSession()
+          setDeleteCandidate(null)
+          setError(null)
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          setError(message)
+          throw cause
+        }
+      }} />}
     </aside>
   )
 
   async function togglePin(session: Session) {
-    const updated = await updateSession(session.ID, { pinned: !isPinned(session) })
-    setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
-    setMenu(null)
+    try {
+      const updated = await updateSession(session.ID, { pinned: !isPinned(session) })
+      setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
+      setMenu(null)
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   async function handleArchive(session: Session) {
-    const updated = await updateSession(session.ID, { archived: !session.FlagArchived })
-    setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
-    setMenu(null)
+    try {
+      const updated = await updateSession(session.ID, { archived: !session.FlagArchived })
+      setSessions(current => current.map(item => item.ID === updated.ID ? updated : item))
+      setMenu(null)
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 }
 
@@ -287,6 +334,7 @@ function RenameInput({ defaultValue, onSubmit, onCancel }: { defaultValue: strin
 function DeleteDialog({ session, onClose, onConfirm }: { session: Session; onClose: () => void; onConfirm: () => Promise<void> }) {
   const { t } = useTranslation()
   const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const title = session.Title || t('session.unnamed', { id: session.ID })
 
   useEffect(() => {
@@ -297,7 +345,7 @@ function DeleteDialog({ session, onClose, onConfirm }: { session: Session; onClo
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={onClose}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-session-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-session-title">{t('session.deleteTitle')}</h2><p>{t('session.deleteBody', { title })}</p><div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>{t('common.cancel')}</button><button className="danger-button" type="button" disabled={deleting} onClick={async () => { setDeleting(true); try { await onConfirm() } finally { setDeleting(false) } }}>{deleting ? t('session.deleting') : t('common.delete')}</button></div></div></div>
+  return <div className="session-dialog-backdrop" role="presentation" onMouseDown={onClose}><div className="session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-session-title" onMouseDown={event => event.stopPropagation()}><h2 id="delete-session-title">{t('session.deleteTitle')}</h2><p>{t('session.deleteBody', { title })}</p>{error && <p className="sidebar-error" role="alert">{error}</p>}<div className="session-dialog-actions"><button type="button" onClick={onClose} disabled={deleting}>{t('common.cancel')}</button><button className="danger-button" type="button" disabled={deleting} onClick={async () => { setDeleting(true); setError(null); try { await onConfirm() } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setDeleting(false) } }}>{deleting ? t('session.deleting') : t('common.delete')}</button></div></div></div>
 }
 
 interface SessionGroup {

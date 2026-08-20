@@ -1,9 +1,7 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react'
 import { useBlocker, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import SessionSidebar from './components/SessionSidebar'
-import ChatView from './components/ChatView'
-import ConfigurationWorkspace from './components/ConfigurationWorkspace'
 import { Settings } from 'lucide-react'
 import type { ConfigurationKind, ConciergeItem, Session, SessionTarget } from './api/types'
 import type { ConfigurationLists } from './components/ConfigurationSidebar'
@@ -11,6 +9,8 @@ import { parseRoute, routes } from './lib/routes'
 
 const LAST_CONCIERGE_ID_KEY = 'hephaestus.lastConciergeId'
 const ACTIVE_PROJECT_KEY = 'hephaestus.activeProject'
+const ChatView = lazy(() => import('./components/ChatView'))
+const ConfigurationWorkspace = lazy(() => import('./components/ConfigurationWorkspace'))
 
 export default function App() {
   const { t } = useTranslation()
@@ -168,6 +168,7 @@ export default function App() {
       />
       <main className="main-panel">
         {mode === 'chat' && <button className="mobile-configuration-entry" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={handleOpenConfigurations}><Settings size={17} /></button>}
+        <Suspense fallback={<div className="workspace-loading" role="status">{t('common.loading')}</div>}>
         {mode === 'configurations' ? <ConfigurationWorkspace
           kind={configurationKind}
           name={configurationName}
@@ -202,6 +203,7 @@ export default function App() {
           onSessionTarget={handleSessionTarget}
           project={project}
         />}
+        </Suspense>
       </main>
     </div>
   )

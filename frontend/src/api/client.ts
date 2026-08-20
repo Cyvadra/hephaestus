@@ -15,9 +15,9 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export const listSessions = (project?: string) => {
+export const listSessions = (project?: string, signal?: AbortSignal) => {
   const query = project ? `?project=${encodeURIComponent(project)}` : ''
-  return fetchJSON<Session[]>(`${BASE}/sessions${query}`)
+  return fetchJSON<Session[]>(`${BASE}/sessions${query}`, { signal })
 }
 
 export const listProjects = () =>

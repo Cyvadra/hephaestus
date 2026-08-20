@@ -27,9 +27,15 @@ export const resources = {
         cancel: '取消',
         create: '创建配置',
         delete: '删除',
+        loading: '正在加载...',
         reset: '撤销',
         save: '保存',
         saveChanges: '保存更改',
+      },
+      markdown: {
+        copy: '复制',
+        copied: '已复制',
+        copyCode: '复制代码',
       },
       chat: {
         reasoning: {
@@ -285,9 +291,15 @@ export const resources = {
         cancel: 'Cancel',
         create: 'Create configuration',
         delete: 'Delete',
+        loading: 'Loading...',
         reset: 'Reset',
         save: 'Save',
         saveChanges: 'Save changes',
+      },
+      markdown: {
+        copy: 'Copy',
+        copied: 'Copied',
+        copyCode: 'Copy code',
       },
       chat: {
         reasoning: {

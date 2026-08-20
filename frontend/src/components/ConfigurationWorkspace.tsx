@@ -1,5 +1,5 @@
 import { AlertCircle, Check, ChevronLeft, Database, ListTree, LoaderCircle, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, listConfigurations, replaceConfiguration } from '../api/client'
 import type { Configuration, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConstantConfiguration } from '../api/types'
@@ -204,17 +204,19 @@ function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onReturnToOver
   const [notification, setNotification] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const dirty = JSON.stringify(constants) !== JSON.stringify(baseline)
 
+  const reload = useCallback(async () => {
+    const values = await listConfigurations('constants')
+    const drafts = values.map(constant => ({ ...constant, id: nextDraftID.current++ }))
+    setConstants(drafts)
+    setBaseline(drafts)
+  }, [])
+
   useEffect(() => {
     let active = true
     setLoading(true)
-    void listConfigurations('constants').then(values => {
-      if (!active) return
-      const drafts = values.map(createDraft)
-      setConstants(drafts)
-      setBaseline(drafts)
-    }).catch(reason => { if (active) setNotification({ type: 'error', message: reason instanceof Error ? reason.message : t('configuration.loadFailed') }) }).finally(() => { if (active) setLoading(false) })
+    void reload().catch(reason => { if (active) setNotification({ type: 'error', message: reason instanceof Error ? reason.message : t('configuration.loadFailed') }) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [refreshKey, t])
+  }, [refreshKey, reload, t])
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
@@ -228,8 +230,17 @@ function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onReturnToOver
       const current = new Map(constants.map(item => [item.name, item]))
       const deleted = baseline.filter(item => !current.has(item.name))
       const changed = constants.filter(item => initial.get(item.name)?.value !== item.value)
-      await Promise.all([...deleted.map(item => deleteConfiguration('constants', item.name)), ...changed.map(({ id: _, ...item }) => initial.has(item.name) ? replaceConfiguration('constants', item.name, item) : createConfiguration('constants', item))])
-      setBaseline(constants)
+      const results = await Promise.allSettled([
+        ...deleted.map(item => deleteConfiguration('constants', item.name)),
+        ...changed.map(({ id: _, ...item }) => initial.has(item.name) ? replaceConfiguration('constants', item.name, item) : createConfiguration('constants', item)),
+      ])
+      const failed = results.filter(result => result.status === 'rejected')
+      await reload()
+      if (failed.length > 0) {
+        const firstReason = failed[0].reason
+        const detail = firstReason instanceof Error ? firstReason.message : t('configuration.saveFailed')
+        throw new Error(`${failed.length}/${results.length}: ${detail}`)
+      }
       setNotification({ type: 'success', message: t('configuration.saved') })
       onSaved()
     } catch (reason) {

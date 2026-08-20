@@ -5012,6 +5012,7 @@ body {
 .login-form button:disabled { cursor: wait; opacity: .65 }
 .login-error { color: var(--dsw-alias-state-error-primary); font-size: 13px }
 .login-loading { color: var(--dsw-alias-label-secondary); font-size: 14px }
+.workspace-loading { display: grid; min-height: 100%; place-items: center; color: var(--dsw-alias-label-secondary); font-size: 14px }
 
 .sidebar {
     box-sizing: border-box;
@@ -5174,6 +5175,7 @@ body {
 .project-create-form input:focus { border-color: var(--dsw-alias-button-primary-fill); outline: none }
 .project-create-form button { display: flex; align-items: center; justify-content: center; gap: 5px; height: 30px; color: var(--dsw-alias-label-primary-foreground); background: var(--dsw-alias-button-primary-fill); border: 0; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer }
 .project-switcher-error { margin: 5px 4px 2px; color: var(--dsw-alias-state-error-primary); font-size: 11px; line-height: 15px }
+.sidebar-error { margin: 8px 12px; color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 17px }
 .project-delete-directory { display: flex; align-items: center; gap: 7px; margin: -6px 0 20px; color: var(--dsw-alias-label-secondary); font-size: 13px; cursor: pointer }
 .session-dialog .project-delete-directory input { box-sizing: border-box; width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--dsw-alias-button-primary-fill) }
 

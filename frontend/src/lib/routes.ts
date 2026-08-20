@@ -30,19 +30,29 @@ export type RouteState =
   | { type: 'configuration-edit'; kind: ConfigurationKind; name: string }
   | { type: 'invalid' }
 
+function decodeRouteParameter(value: string | undefined): string | null {
+  if (!value) return null
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
 export function parseRoute(pathname: string): RouteState {
   if (pathname === '/') return { type: 'root' }
 
   const chatNewMatch = matchPath('/projects/:project/chats/new', pathname)
   if (chatNewMatch) {
-    const { project } = chatNewMatch.params
+    const project = decodeRouteParameter(chatNewMatch.params.project)
     if (!project) return { type: 'invalid' }
     return { type: 'chat-new', project }
   }
 
   const chatMatch = matchPath('/projects/:project/chats/:sessionId', pathname)
   if (chatMatch) {
-    const { project, sessionId } = chatMatch.params
+    const project = decodeRouteParameter(chatMatch.params.project)
+    const { sessionId } = chatMatch.params
     const parsedSessionId = Number(sessionId)
     if (!project || !Number.isSafeInteger(parsedSessionId) || parsedSessionId <= 0) return { type: 'invalid' }
     return { type: 'chat', project, sessionId: parsedSessionId }
@@ -60,7 +70,8 @@ export function parseRoute(pathname: string): RouteState {
 
   const configurationEditMatch = matchPath('/configurations/:kind/edit/:name', pathname)
   if (configurationEditMatch) {
-    const { kind, name } = configurationEditMatch.params
+    const { kind } = configurationEditMatch.params
+    const name = decodeRouteParameter(configurationEditMatch.params.name)
     if (!kind || !name || !configurationKinds.has(kind as ConfigurationKind)) return { type: 'invalid' }
     return { type: 'configuration-edit', kind: kind as ConfigurationKind, name }
   }
