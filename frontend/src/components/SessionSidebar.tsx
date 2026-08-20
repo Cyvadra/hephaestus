@@ -168,7 +168,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
         className="sidebar-new-btn"
         onClick={onOpenNewSession}
       >
-        <Plus aria-hidden="true" size={16} strokeWidth={1.7} />
+        <span className="sidebar-new-icon"><Plus aria-hidden="true" size={11} strokeWidth={2} /></span>
         <span>{t('session.newChat')}</span>
       </button>
 

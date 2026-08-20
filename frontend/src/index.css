@@ -5047,7 +5047,7 @@ body {
 .sidebar {
     box-sizing: border-box;
     background: var(--dsw-specific-sidebar-fill);
-    border-right: 0;
+    border-right: 1px solid color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent);
     flex: 0 0 var(--sider-width);
     flex-direction: column;
     width: var(--sider-width);
@@ -5234,15 +5234,17 @@ body {
     background: var(--dsw-alias-button-elevated-fill);
     box-shadow: 0 -2px 2px rgba(72,104,178,.04),0 2px 2px rgba(106,111,117,.09),0 1px 2px rgba(72,104,178,.08);
     border: 1px solid transparent;
-    border-radius: 8px;
-    justify-content: flex-start;
-    gap: 6px;
+    border-radius: 100px;
+    justify-content: center;
+    gap: 7px;
     width: 100%;
     height: 40px;
     margin: 8px 0 12px;
     padding: 0 16px;
     font-size: 14px
 }
+
+.sidebar-new-icon { box-sizing: border-box; display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 16px; border: 1px solid currentColor; border-radius: 50% }
 
 .composer-send-btn:hover,.composer-stop-btn:hover {
     background: var(--dsw-alias-button-primary-hover)
@@ -7019,6 +7021,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
     .sidebar-drawer { transition: none }
     .sidebar-scrim { animation: none }
+}
+
+@media not all and (min-width: 1280px) {
+    .chat-shell .chat-header { display: none }
+}
+
+@media (min-width: 1280px) {
+    .chat-shell .chat-header { display: flex }
 }
 
 @media not all and (min-width: 560px) {

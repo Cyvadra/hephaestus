@@ -27,6 +27,7 @@ export default function App() {
   const [configurationLists, setConfigurationLists] = useState<ConfigurationLists>({})
   const [configurationSidebarOpen, setConfigurationSidebarOpen] = useState(false)
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false)
+  const [chatHeaderTitle, setChatHeaderTitle] = useState<string | null>(null)
   const configurationDirtyRef = useRef(false)
 
   const chatRoute = route.type === 'chat' || route.type === 'chat-new' ? route : null
@@ -38,6 +39,7 @@ export default function App() {
   const configurationName = route.type === 'configuration-edit' ? route.name : null
   const configurationIsNew = route.type === 'configuration-new'
   const isChoosingConcierge = route.type === 'chat-new' && draftConcierge == null
+  const topbarTitle = sessionId == null ? project : chatHeaderTitle ?? project
   const navigationBlocker = useBlocker(() => configurationDirtyRef.current)
 
   const handleConfigurationDirtyChange = useCallback((dirty: boolean) => {
@@ -71,6 +73,10 @@ export default function App() {
   useEffect(() => {
     if (route.type === 'chat-new') setDraftConcierge(null)
   }, [location.pathname, route.type])
+
+  useEffect(() => {
+    setChatHeaderTitle(null)
+  }, [sessionId])
 
   const handleOpenConfigurations = useCallback(() => {
     navigate(routes.configurations())
@@ -170,7 +176,7 @@ export default function App() {
             {sessionSidebarOpen ? <PanelLeftClose size={20} /> : <Menu size={20} />}
           </button>
         </div>
-        <div className="app-topbar-title" title={project ?? 'Hephaestus'}>{project ?? 'Hephaestus'}</div>
+        <div className="app-topbar-title" title={topbarTitle ?? 'Hephaestus'}>{topbarTitle ?? 'Hephaestus'}</div>
         <div className="app-topbar-actions">
           <button className="app-icon-button" type="button" aria-label={t('session.newChat')} title={t('session.newChat')} onClick={handleOpenNewSession}>
             <Plus size={20} />
@@ -239,6 +245,7 @@ export default function App() {
           onSessionCreated={handleSessionCreated}
           onSessionUpdated={handleSessionUpdated}
           onSessionTarget={handleSessionTarget}
+          onHeaderTitleChange={setChatHeaderTitle}
           project={project}
         />}
         </Suspense>

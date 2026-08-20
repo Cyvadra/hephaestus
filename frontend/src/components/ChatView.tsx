@@ -65,6 +65,7 @@ interface Props {
   onSessionCreated?: (id: number) => void
   onSessionUpdated?: (session: Session) => void
   onSessionTarget?: (target: SessionTarget) => void
+  onHeaderTitleChange?: (title: string) => void
 }
 
 // notifyPermissionRequest surfaces a desktop notification for an
@@ -125,7 +126,7 @@ async function consumeStream(
   }
 }
 
-export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, configurationRefreshKey, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated, onSessionTarget }: Props) {
+export default function ChatView({ sessionId, project, draftConcierge, isChoosingConcierge = false, defaultConciergeId, configurationRefreshKey, onChooseConcierge, onDefaultConciergeResolved, onSessionCreated, onSessionUpdated, onSessionTarget, onHeaderTitleChange }: Props) {
   const { t } = useTranslation()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [localLeafId, setLocalLeafId] = useState<number | null>(null)
@@ -815,6 +816,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   useEffect(() => {
     setHeaderTitleDraft(headerTitle)
   }, [headerTitle])
+
+  useEffect(() => {
+    onHeaderTitleChange?.(headerTitle)
+  }, [headerTitle, onHeaderTitleChange])
 
   return (
     <div
