@@ -28,6 +28,7 @@ export const resources = {
       },
       common: {
         cancel: '取消',
+        close: '关闭',
         create: '创建配置',
         delete: '删除',
         loading: '正在加载...',
@@ -243,6 +244,7 @@ export const resources = {
         deleting: '删除中...',
       },
       session: {
+        history: '会话列表',
         newChat: '新对话',
         pinned: '置顶',
         archived: '已归档',
@@ -295,6 +297,7 @@ export const resources = {
       },
       common: {
         cancel: 'Cancel',
+        close: 'Close',
         create: 'Create configuration',
         delete: 'Delete',
         loading: 'Loading...',
@@ -494,6 +497,7 @@ export const resources = {
         deleting: 'Deleting...',
       },
       session: {
+        history: 'Chat history',
         newChat: 'New chat',
         pinned: 'Pinned',
         archived: 'Archived',

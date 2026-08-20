@@ -2,7 +2,7 @@ import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react'
 import { useBlocker, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import SessionSidebar from './components/SessionSidebar'
-import { Settings } from 'lucide-react'
+import { Menu, PanelLeftClose, Plus, Settings } from 'lucide-react'
 import type { ConfigurationKind, ConciergeItem, Session, SessionTarget } from './api/types'
 import type { ConfigurationLists } from './components/ConfigurationSidebar'
 import { parseRoute, routes } from './lib/routes'
@@ -26,6 +26,7 @@ export default function App() {
   const [configurationRefreshKey, setConfigurationRefreshKey] = useState(0)
   const [configurationLists, setConfigurationLists] = useState<ConfigurationLists>({})
   const [configurationSidebarOpen, setConfigurationSidebarOpen] = useState(false)
+  const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false)
   const configurationDirtyRef = useRef(false)
 
   const chatRoute = route.type === 'chat' || route.type === 'chat-new' ? route : null
@@ -94,6 +95,7 @@ export default function App() {
 
   const handleSessionSelect = useCallback((id: number) => {
     if (project) navigate(routes.chat(project, id))
+    setSessionSidebarOpen(false)
   }, [navigate, project])
 
   const handleConciergeResolved = useCallback((conciergeId: string) => {
@@ -109,7 +111,17 @@ export default function App() {
   const handleOpenNewSession = useCallback(() => {
     setDraftConcierge(null)
     if (project) navigate(routes.chatNew(project))
+    setSessionSidebarOpen(false)
   }, [navigate, project])
+
+  useEffect(() => {
+    if (!sessionSidebarOpen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSessionSidebarOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [sessionSidebarOpen])
 
   const handleProjectChange = useCallback((nextProject: string) => {
     localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject)
@@ -144,28 +156,54 @@ export default function App() {
   }, [navigate])
 
   return (
-    <div className="app-shell">
-      <SessionSidebar
-        mode={mode}
-        configurationSidebarOpen={configurationSidebarOpen}
-        activeSessionId={sessionId}
-        refreshKey={sidebarRefreshKey}
-        sessionUpdate={sidebarSessionUpdate}
-        project={project}
-        onProjectChange={handleProjectChange}
-        onProjectsLoaded={handleProjectsLoaded}
-        onSelect={handleSessionSelect}
-        onOpenNewSession={handleOpenNewSession}
-        onOpenConfigurations={handleOpenConfigurations}
-        onCloseConfigurations={handleCloseConfigurations}
-        configurationKind={configurationKind}
-        configurationName={configurationName}
-        configurationRefreshKey={configurationRefreshKey}
-        onConfigurationSelect={handleConfigurationSelect}
-        onConfigurationCreate={handleConfigurationCreate}
-        onConfigurationOpenConstants={handleOpenConstants}
-        onConfigurationListsChange={setConfigurationLists}
-      />
+    <div className={`app-shell ${mode}-shell${sessionSidebarOpen ? ' session-sidebar-open' : ''}`}>
+      {mode === 'chat' && <header className="app-topbar">
+        <div className="app-topbar-leading">
+          <button
+            className="app-icon-button"
+            type="button"
+            aria-label={t('session.history')}
+            aria-controls="session-sidebar"
+            aria-expanded={sessionSidebarOpen}
+            onClick={() => setSessionSidebarOpen(open => !open)}
+          >
+            {sessionSidebarOpen ? <PanelLeftClose size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
+        <div className="app-topbar-title" title={project ?? 'Hephaestus'}>{project ?? 'Hephaestus'}</div>
+        <div className="app-topbar-actions">
+          <button className="app-icon-button" type="button" aria-label={t('session.newChat')} title={t('session.newChat')} onClick={handleOpenNewSession}>
+            <Plus size={20} />
+          </button>
+          <button className="app-icon-button app-configuration-button" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={handleOpenConfigurations}>
+            <Settings size={19} />
+          </button>
+        </div>
+      </header>}
+      {mode === 'chat' && sessionSidebarOpen && <button className="sidebar-scrim" type="button" aria-label={t('common.close')} onClick={() => setSessionSidebarOpen(false)} />}
+      <div id="session-sidebar" className={`sidebar-drawer${mode === 'configurations' ? ` configuration-drawer${configurationSidebarOpen ? ' configuration-drawer-open' : ''}` : ''}`}>
+        <SessionSidebar
+          mode={mode}
+          configurationSidebarOpen={configurationSidebarOpen}
+          activeSessionId={sessionId}
+          refreshKey={sidebarRefreshKey}
+          sessionUpdate={sidebarSessionUpdate}
+          project={project}
+          onProjectChange={handleProjectChange}
+          onProjectsLoaded={handleProjectsLoaded}
+          onSelect={handleSessionSelect}
+          onOpenNewSession={handleOpenNewSession}
+          onOpenConfigurations={handleOpenConfigurations}
+          onCloseConfigurations={handleCloseConfigurations}
+          configurationKind={configurationKind}
+          configurationName={configurationName}
+          configurationRefreshKey={configurationRefreshKey}
+          onConfigurationSelect={handleConfigurationSelect}
+          onConfigurationCreate={handleConfigurationCreate}
+          onConfigurationOpenConstants={handleOpenConstants}
+          onConfigurationListsChange={setConfigurationLists}
+        />
+      </div>
       <main className="main-panel">
         {mode === 'chat' && <button className="mobile-configuration-entry" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={handleOpenConfigurations}><Settings size={17} /></button>}
         <Suspense fallback={<div className="workspace-loading" role="status">{t('common.loading')}</div>}>

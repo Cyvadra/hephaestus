@@ -153,7 +153,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
     <aside className={`sidebar${mode === 'configurations' ? ` configuration-mode${configurationSidebarOpen ? ' mobile-open' : ''}` : ''}`}>
       <div className="sidebar-brand">
         <img className="sidebar-brand-icon" src="/deepseek-logo.svg" alt="" />
-        <img className="sidebar-brand-wordmark" src="/deepseek-wordmark.svg" alt="DeepSeek" />
+        <strong>Hephaestus</strong>
       </div>
       {mode === 'configurations' ? <ConfigurationSidebar
         activeKind={configurationKind}

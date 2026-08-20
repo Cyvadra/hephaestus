@@ -4973,11 +4973,41 @@ body {
 }
 
 .app-shell {
+    position: relative;
     height: 100%;
     color: var(--dsw-alias-label-primary);
     background: var(--dsw-alias-bg-base);
-    display: flex
+    overflow: hidden
 }
+
+.app-topbar {
+    z-index: 21;
+    box-sizing: border-box;
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: 1fr minmax(0,auto) 1fr;
+    align-items: center;
+    height: 56px;
+    padding: 0 16px;
+    background: color-mix(in srgb,var(--dsw-alias-bg-base) 94%,transparent);
+    backdrop-filter: blur(12px)
+}
+
+.app-topbar-leading { display: flex; align-items: center; gap: 4px }
+.app-topbar-actions { display: flex; align-items: center; justify-self: end; gap: 4px }
+.app-topbar-title { overflow: hidden; color: var(--dsw-alias-label-secondary); font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap }
+.app-icon-button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; color: var(--dsw-alias-label-secondary); background: transparent; border: 0; border-radius: 8px; cursor: pointer }
+.app-icon-button:hover,.app-icon-button:focus-visible { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); outline: none }
+.app-icon-button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 25%,transparent) }
+
+.sidebar-drawer { z-index: 24; position: absolute; inset: 0 auto 0 0; height: 100%; transform: translateX(-100%); transition: transform .22s var(--ds-ease-in-out) }
+.session-sidebar-open .sidebar-drawer { transform: translateX(0) }
+.configuration-drawer { transform: translateX(0) }
+.sidebar-scrim { z-index: 23; position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; background: rgba(0,0,0,.2); border: 0; cursor: default; animation: sidebar-scrim-in .18s ease-out }
+@keyframes sidebar-scrim-in { from { opacity: 0 } }
 
 .login-page {
     box-sizing: border-box;
@@ -5017,7 +5047,7 @@ body {
 .sidebar {
     box-sizing: border-box;
     background: var(--dsw-specific-sidebar-fill);
-    border-right: 1px solid var(--dsw-alias-border-l1);
+    border-right: 0;
     flex: 0 0 var(--sider-width);
     flex-direction: column;
     width: var(--sider-width);
@@ -5037,6 +5067,8 @@ body {
     height: 40px;
     padding: 0 8px;
 }
+
+.sidebar-brand strong { overflow: hidden; font-size: 16px; font-weight: 600; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap }
 
 .sidebar-brand-icon {
     width: 24px;
@@ -5202,12 +5234,12 @@ body {
     background: var(--dsw-alias-button-elevated-fill);
     box-shadow: 0 -2px 2px rgba(72,104,178,.04),0 2px 2px rgba(106,111,117,.09),0 1px 2px rgba(72,104,178,.08);
     border: 1px solid transparent;
-    border-radius: 100px;
-    justify-content: center;
+    border-radius: 8px;
+    justify-content: flex-start;
     gap: 6px;
     width: 100%;
     height: 40px;
-    margin: 8px 0 18px;
+    margin: 8px 0 12px;
     padding: 0 16px;
     font-size: 14px
 }
@@ -5630,7 +5662,20 @@ body {
     position: relative;
     min-width: 0;
     min-height: 0;
-    flex: 1
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding-top: 56px
+}
+
+.configurations-shell .main-panel { width: calc(100% - var(--sider-width)); margin-left: var(--sider-width); padding-top: 0 }
+
+@media (min-width: 1280px) {
+    .chat-shell .sidebar-drawer { transform: translateX(0); transition: none }
+    .chat-shell .main-panel { width: calc(100% - var(--sider-width)); margin-left: var(--sider-width); padding-top: 0 }
+    .chat-shell .app-topbar { display: none }
+    .chat-shell .sidebar-scrim { display: none }
+    .chat-shell .chat-header { min-height: 60px; padding: 20px 28px 0 }
 }
 
 .mobile-configuration-entry { display: none }
@@ -5651,8 +5696,8 @@ body {
     justify-content: space-between;
     gap: 16px;
     background: var(--dsw-alias-bg-base);
-    min-height: 60px;
-    padding: 12px 18px 0;
+    min-height: 48px;
+    padding: 6px 18px 0;
     display: flex
 }
 
@@ -6452,6 +6497,7 @@ body {
 }
 
 .composer-card {
+    box-sizing: border-box;
     position: relative;
     width: 100%;
     max-width: var(--chat-content-max-width);
@@ -6924,17 +6970,24 @@ body {
         --chat-content-max-width: 100%
     }
 
-    .mobile-configuration-entry { z-index: 12; position: absolute; top: 11px; left: 12px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--dsw-alias-label-secondary); background: color-mix(in srgb,var(--dsw-alias-bg-base) 92%,transparent); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; backdrop-filter: blur(8px) }
-    .sidebar {
-        display: none
-    }
+    .mobile-configuration-entry { display: none }
+    .app-topbar { padding: 0 10px }
+    .app-topbar-title { max-width: 38vw }
+    .chat-shell .app-configuration-button { display: none }
+    .sidebar-drawer { width: min(86vw,300px) }
+    .sidebar { width: 100%; flex-basis: 100% }
+    .configuration-drawer { transform: translateX(-100%) }
+    .configuration-drawer.configuration-drawer-open { transform: translateX(0) }
+    .configurations-shell .main-panel { width: 100%; margin-left: 0 }
 
     .messages-pane {
         padding-top: 18px
     }
 
     .chat-header {
-        gap: 8px
+        gap: 8px;
+        padding-right: 12px;
+        padding-left: 12px
     }
 
     .chat-header-content {
@@ -6961,6 +7014,11 @@ body {
     .message-actions,.message-editor-actions,.session-dialog-actions {
         flex-wrap: wrap
     }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-drawer { transition: none }
+    .sidebar-scrim { animation: none }
 }
 
 @media not all and (min-width: 560px) {
