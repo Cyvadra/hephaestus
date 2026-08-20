@@ -24,7 +24,7 @@ interface Props {
 }
 
 export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, onFork, onRegenerate, onContinue }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
   const [editText, setEditText] = useState(msg.Content)
@@ -36,6 +36,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   const isUser = msg.Role === 'user'
   const isAssistant = msg.Role === 'assistant'
 	const attachments = msg.Attachments ?? []
+  const messageTimestamp = formatMessageTimestamp(msg.Timestamp, i18n.language)
   const parsedUserContent = isUser ? parseAttachmentPrefix(msg.Content) : null
   const attachmentPrefix = parsedUserContent ? msg.Content.slice(0, msg.Content.length - parsedUserContent.body.length) : ''
 
@@ -132,6 +133,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 <div className="message-body">{parsedUserContent?.body ?? msg.Content}</div>
               </div>
               <div className="message-actions user-message-actions">
+                {messageTimestamp && <time className="message-timestamp" dateTime={msg.Timestamp}>{messageTimestamp}</time>}
                 {sibs.length > 1 && (
                   <BranchSwitcher current={currentSibIdx} total={sibs.length} onPrev={handlePrevBranch} onNext={handleNextBranch} />
                 )}
@@ -261,10 +263,12 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                     <GitFork />
                   </button>
                 )}
+                {messageTimestamp && <time className="message-timestamp" dateTime={msg.Timestamp}>{messageTimestamp}</time>}
               </div>
             </>
           )}
         </div>
+
       </div>
     )
   }
@@ -305,6 +309,17 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
       <div className="message-card system">[{msg.Role}] {msg.Content}</div>
     </div>
   )
+}
+
+function formatMessageTimestamp(timestamp: string, locale: string) {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const isToday = date.toDateString() === new Date().toDateString()
+  return new Intl.DateTimeFormat(locale, isToday
+    ? { hour: '2-digit', minute: '2-digit', hour12: false }
+    : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false },
+  ).format(date)
 }
 
 function formatAttachmentSize(size: number) {

@@ -6312,6 +6312,20 @@ body {
     padding-left: 8px
 }
 
+.message-timestamp {
+    color: var(--dsw-alias-label-tertiary);
+    font-size: 12px;
+    line-height: 28px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s var(--ds-ease-in-out)
+}
+
+.message-row:hover .message-timestamp,
+.message-row:focus-within .message-timestamp {
+    opacity: 1
+}
+
 .message-fork-btn {
     visibility: hidden;
     opacity: 0;
