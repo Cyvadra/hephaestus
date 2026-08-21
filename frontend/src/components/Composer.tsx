@@ -33,6 +33,7 @@ interface Props {
 const reasoningChoices: ReasoningEffort[] = [
   'max',
   'high',
+  'low',
   'none',
 ]
 

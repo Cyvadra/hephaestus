@@ -288,14 +288,12 @@ func (r sendMessageRequest) turnOptions(onDelta func(chat.StreamEvent)) chat.Tur
 	}
 }
 
-// validateGenerationOptions rejects per-turn reasoning_effort values the
-// composer UI does not expose. "low" is deliberately absent (identities may
-// still declare it) so the per-turn override stays aligned with the UI.
+// validateGenerationOptions rejects unsupported per-turn generation options.
 func validateGenerationOptions(req *sendMessageRequest) error {
 	switch req.ReasoningEffort {
-	case "", registry.ReasoningNone, registry.ReasoningHigh, registry.ReasoningMax:
+	case "", registry.ReasoningNone, registry.ReasoningLow, registry.ReasoningHigh, registry.ReasoningMax:
 	default:
-		return errValidation("reasoning_effort must be none, high, or max")
+		return errValidation("reasoning_effort must be none, low, high, or max")
 	}
 	seen := make(map[string]struct{}, len(req.DisabledTools))
 	tools := req.DisabledTools[:0]

@@ -43,8 +43,8 @@ func TestValidateGenerationOptions(t *testing.T) {
 	}
 
 	req.ReasoningEffort = "low"
-	if err := validateGenerationOptions(&req); err == nil {
-		t.Fatal("expected low request override to be rejected")
+	if err := validateGenerationOptions(&req); err != nil {
+		t.Fatalf("expected low request override to be accepted: %v", err)
 	}
 }
 

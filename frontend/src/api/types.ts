@@ -152,7 +152,7 @@ export interface HistoryResponse {
   auto_approve: boolean
 }
 
-export type ReasoningEffort = 'none' | 'high' | 'max'
+export type ReasoningEffort = 'none' | 'low' | 'high' | 'max'
 
 export interface GenerationOptions {
   reasoningEffort: ReasoningEffort

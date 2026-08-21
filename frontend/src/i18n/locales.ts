@@ -45,6 +45,7 @@ export const resources = {
         reasoning: {
           max: '极度',
           high: '深度',
+          low: '适度',
           none: '即答',
           unavailable: '无',
           select: '选择思考强度',
@@ -319,6 +320,7 @@ export const resources = {
         reasoning: {
           max: 'Deep',
           high: 'Fast',
+          low: 'Moderate',
           none: 'Direct',
           unavailable: 'None',
           select: 'Select reasoning effort',
