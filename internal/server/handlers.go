@@ -327,6 +327,8 @@ func validateBranchSelection(req sendMessageRequest) error {
 type sendMessageResponse struct {
 	// CommandResponse is set (and never persisted) when Text was a slash command.
 	CommandResponse string `json:"command_response,omitempty"`
+	// ReplayedMessages are transient history copies produced by /last and /replay.
+	ReplayedMessages []command.ReplayedMessage `json:"replayed_messages,omitempty"`
 	// SessionTarget asks the client to navigate to another existing session.
 	// It is set only by slash commands and does not represent a session write.
 	SessionTarget *command.SessionTarget `json:"session_target,omitempty"`
@@ -508,7 +510,7 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 		if err != nil {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		} else {
-			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget})
+			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget, ReplayedMessages: result.ReplayedMessages})
 		}
 		return 0, sendMessageRequest{}, nil, false
 	}
@@ -694,12 +696,17 @@ func parseUintParam(c *gin.Context, param, label string) (uint, error) {
 // listSessions godoc
 //
 //	@Summary		List all sessions
-//	@Description	Returns every session ordered by last_message_time descending.
+//	@Description	Returns every session ordered by last_message_time descending, including direct background subagent summaries.
 //	@Tags			sessions
 //	@Produce		json
-//	@Success		200	{array}		store.Session
+//	@Success		200	{array}		sessionListResponse
 //	@Failure		500	{object}	errorResponse
 //	@Router			/sessions [get]
+type sessionListResponse struct {
+	store.Session
+	SubagentRuns []subagentRunSummary `json:"subagent_runs"`
+}
+
 func (s *Server) listSessions(c *gin.Context) {
 	projectName := strings.TrimSpace(c.Query("project"))
 	if projectName == "" {
@@ -719,7 +726,38 @@ func (s *Server) listSessions(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sessions)
+	responses, err := s.sessionListResponses(sessions)
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, responses)
+}
+
+func (s *Server) sessionListResponses(sessions []store.Session) ([]sessionListResponse, error) {
+	responses := make([]sessionListResponse, len(sessions))
+	ids := make([]uint, len(sessions))
+	for index := range sessions {
+		responses[index] = sessionListResponse{Session: sessions[index], SubagentRuns: []subagentRunSummary{}}
+		ids[index] = sessions[index].ID
+	}
+	if len(ids) == 0 {
+		return responses, nil
+	}
+	runs, err := s.subagents.ListBackgroundByParentSessions(ids)
+	if err != nil {
+		return nil, err
+	}
+	bySession := make(map[uint][]subagentRunSummary)
+	for _, run := range runs {
+		bySession[run.ParentSessionID] = append(bySession[run.ParentSessionID], publicSubagentRunSummary(run))
+	}
+	for index := range responses {
+		if summaries := bySession[responses[index].ID]; summaries != nil {
+			responses[index].SubagentRuns = summaries
+		}
+	}
+	return responses, nil
 }
 
 type projectResponse struct {

@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/subagent"
@@ -24,8 +25,22 @@ type subagentRunResponse struct {
 	Error           string                  `json:"error,omitempty"`
 }
 
+type subagentRunSummary struct {
+	ID             uint                    `json:"id"`
+	ChildSessionID *uint                   `json:"child_session_id,omitempty"`
+	Status         store.SubagentRunStatus `json:"status"`
+	Label          string                  `json:"label"`
+	StartedAt      *time.Time              `json:"started_at,omitempty"`
+	FinishedAt     *time.Time              `json:"finished_at,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+}
+
 func publicSubagentRun(run store.SubagentRun) subagentRunResponse {
 	return subagentRunResponse{ID: run.ID, ParentSessionID: run.ParentSessionID, ParentRunID: run.ParentRunID, ChildSessionID: run.ChildSessionID, Mode: run.Mode, Schedule: run.Schedule, Status: run.Status, Depth: run.Depth, Label: run.Label, Result: run.Result, Error: run.Error}
+}
+
+func publicSubagentRunSummary(run store.SubagentRun) subagentRunSummary {
+	return subagentRunSummary{ID: run.ID, ChildSessionID: run.ChildSessionID, Status: run.Status, Label: run.Label, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, CreatedAt: run.CreatedAt}
 }
 
 // listSubagentRuns godoc

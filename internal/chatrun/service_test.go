@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -166,6 +167,132 @@ func TestCancelledRunInvokesRunEnded(t *testing.T) {
 	}
 	if callbackCount.Load() != 1 {
 		t.Fatalf("cancelled run invoked onRunEnded %d times, want 1", callbackCount.Load())
+	}
+}
+
+func TestExecutePersistsCancellationWhenExecutorReturnsSuccess(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+	started := make(chan struct{})
+	proceed := make(chan struct{})
+	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
+		close(started)
+		<-proceed
+		return &Result{}, nil
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	<-started
+	if err := svc.Cancel(run.ID); err != nil {
+		t.Fatalf("cancel run: %v", err)
+	}
+	close(proceed)
+	if final := waitForTerminalRun(t, svc, run.ID); final.Status != store.ChatRunCancelled {
+		t.Fatalf("run status = %s, want cancelled", final.Status)
+	}
+}
+
+func TestReconcileRestoresInterruptedSnapshotToHistory(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+	project := store.Project{ID: projectID, Name: fmt.Sprintf("chatrun-reconcile-%d", projectID)}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	session := store.Session{ProjectID: projectID, SourceConcierge: "test"}
+	if err := db.Create(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	prompt := store.ChatMessage{SessionID: session.ID, Role: "user", Content: "question", Status: store.MessageStatusComplete, Timestamp: time.Now()}
+	if err := db.Create(&prompt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&session).Update("active_leaf_message_id", prompt.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	subagentRunID := uint(77)
+	run := store.ChatRun{SessionID: session.ID, ProjectID: projectID, SubagentRunID: &subagentRunID, Kind: store.ChatRunMessage, Status: store.ChatRunRunning}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(chat.StreamEvent{Type: "delta", Text: "partial answer"})
+	if err := db.Create(&store.ChatRunEvent{RunID: run.ID, Sequence: 1, Type: "delta", Payload: payload}).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		db.Where("session_id = ?", session.ID).Delete(&store.ChatMessage{})
+		db.Delete(&store.Session{}, session.ID)
+		db.Delete(&store.Project{}, projectID)
+	})
+
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	var restored store.ChatMessage
+	if err := db.Where("session_id = ? AND role = ?", session.ID, "assistant").First(&restored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if restored.Content != "partial answer" || restored.Status != store.MessageStatusIncomplete || restored.ParentMessageID == nil || *restored.ParentMessageID != prompt.ID {
+		t.Fatalf("restored message = %+v", restored)
+	}
+	terminal, err := svc.Get(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Status != store.ChatRunInterrupted {
+		t.Fatalf("run status = %s, want interrupted", terminal.Status)
+	}
+	childID, result, recovered, err := svc.InterruptedSubagentResult(subagentRunID)
+	if err != nil || !recovered || childID != session.ID || result != "partial answer" {
+		t.Fatalf("recovered child=%d result=%q recovered=%v err=%v", childID, result, recovered, err)
+	}
+}
+
+func TestReconcileDoesNotRestoreOrdinaryRunSnapshotToHistory(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+	project := store.Project{ID: projectID, Name: fmt.Sprintf("chatrun-ordinary-reconcile-%d", projectID)}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	session := store.Session{ProjectID: projectID, SourceConcierge: "test"}
+	if err := db.Create(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	run := store.ChatRun{SessionID: session.ID, ProjectID: projectID, Kind: store.ChatRunMessage, Status: store.ChatRunRunning}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(chat.StreamEvent{Type: "delta", Text: "partial ordinary answer"})
+	if err := db.Create(&store.ChatRunEvent{RunID: run.ID, Sequence: 1, Type: "delta", Payload: payload}).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		db.Where("session_id = ?", session.ID).Delete(&store.ChatMessage{})
+		db.Delete(&store.Session{}, session.ID)
+		db.Delete(&store.Project{}, projectID)
+	})
+
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Model(&store.ChatMessage{}).Where("session_id = ?", session.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("ordinary run restored %d messages, want none", count)
+	}
+	terminal, err := svc.Get(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Status != store.ChatRunInterrupted {
+		t.Fatalf("run status = %s, want interrupted", terminal.Status)
 	}
 }
 

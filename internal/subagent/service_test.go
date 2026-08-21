@@ -129,11 +129,71 @@ func TestReconcileCreatesMissingTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestBackfillChildSessionIDsLinksExistingChild(t *testing.T) {
+	db := openTestDB(t)
+	service := New(db, 2)
+	run := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunFailed)
+	child := store.Session{ProjectID: run.ProjectID, ParentSubagentRunID: &run.ID, SourceConcierge: "child", Settings: datatypes.NewJSONType(store.SessionSettings{Identity: "test"})}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Delete(&store.Session{}, child.ID) })
+
+	if err := service.backfillChildSessionIDs(); err != nil {
+		t.Fatal(err)
+	}
+	linked, err := service.Get(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linked.ChildSessionID == nil || *linked.ChildSessionID != child.ID {
+		t.Fatalf("child session id = %v, want %d", linked.ChildSessionID, child.ID)
+	}
+}
+
 func TestCreateRejectsMaximumDepth(t *testing.T) {
 	service := New(nil, 2)
 	_, err := service.create(Request{Depth: 2}, store.SubagentModeSpawn, store.SubagentScheduleBackground)
 	if !errors.Is(err, ErrMaxDepth) {
 		t.Fatalf("create error = %v, want ErrMaxDepth", err)
+	}
+}
+
+func TestListBackgroundByParentSessionsFiltersAndOrders(t *testing.T) {
+	db := openTestDB(t)
+	service := New(db, 2)
+	older := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunSucceeded)
+	newer := &store.SubagentRun{
+		ParentSessionID: older.ParentSessionID, ProjectID: older.ProjectID, Mode: store.SubagentModeSpawn,
+		Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Depth: 1, Label: "newer", Prompt: "test",
+	}
+	if err := db.Create(newer).Error; err != nil {
+		t.Fatal(err)
+	}
+	foreground := &store.SubagentRun{
+		ParentSessionID: older.ParentSessionID, ProjectID: older.ProjectID, Mode: store.SubagentModeFork,
+		Schedule: store.SubagentScheduleForeground, Status: store.SubagentRunSucceeded, Depth: 1, Label: "fork", Prompt: "test",
+	}
+	if err := db.Create(foreground).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunRunning)
+	t.Cleanup(func() {
+		db.Delete(&store.SubagentRun{}, foreground.ID)
+		db.Delete(&store.SubagentRun{}, newer.ID)
+	})
+
+	runs, err := service.ListBackgroundByParentSessions([]uint{older.ParentSessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].ID != newer.ID || runs[1].ID != older.ID {
+		t.Fatalf("runs = %+v, want background runs newest first", runs)
+	}
+	for _, run := range runs {
+		if run.Schedule != store.SubagentScheduleBackground || run.ParentSessionID == other.ParentSessionID {
+			t.Fatalf("unexpected run: %+v", run)
+		}
 	}
 }
 

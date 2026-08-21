@@ -67,11 +67,12 @@ type ChatRunEvent struct {
 // ChatRun represents one durable, background chat generation. A partial
 // unique index permits at most one pending/running run for each session.
 type ChatRun struct {
-	ID        uint          `gorm:"primaryKey;autoIncrement"`
-	SessionID uint          `gorm:"not null;index:idx_chat_runs_active_session,unique,where:status = 'pending' OR status = 'running';index"`
-	ProjectID uint          `gorm:"not null;index"`
-	Kind      ChatRunKind   `gorm:"size:32;not null"`
-	Status    ChatRunStatus `gorm:"size:32;not null;index"`
+	ID            uint          `gorm:"primaryKey;autoIncrement"`
+	SessionID     uint          `gorm:"not null;index:idx_chat_runs_active_session,unique,where:status = 'pending' OR status = 'running';index"`
+	ProjectID     uint          `gorm:"not null;index"`
+	SubagentRunID *uint         `gorm:"uniqueIndex"`
+	Kind          ChatRunKind   `gorm:"size:32;not null"`
+	Status        ChatRunStatus `gorm:"size:32;not null;index"`
 
 	// Request stores immutable normalized turn input/options for diagnosis.
 	Request  datatypes.JSONType[map[string]any]  `gorm:"type:jsonb"`

@@ -51,6 +51,12 @@ type Executor interface {
 	ExecuteSubagent(context.Context, *store.SubagentRun) (childSessionID uint, result string, err error)
 }
 
+// InterruptedResultSource exposes recovered output from child turns that were
+// interrupted by a previous process.
+type InterruptedResultSource interface {
+	InterruptedSubagentResult(subagentRunID uint) (childSessionID uint, result string, recovered bool, err error)
+}
+
 type completionPayload struct {
 	RunID   uint                    `json:"run_id"`
 	Label   string                  `json:"label"`
@@ -309,6 +315,16 @@ func (s *Service) ListByParentSession(sessionID uint) ([]store.SubagentRun, erro
 	return runs, err
 }
 
+func (s *Service) ListBackgroundByParentSessions(sessionIDs []uint) ([]store.SubagentRun, error) {
+	if len(sessionIDs) == 0 {
+		return []store.SubagentRun{}, nil
+	}
+	var runs []store.SubagentRun
+	err := s.db.Where("parent_session_id IN ? AND schedule = ?", sessionIDs, store.SubagentScheduleBackground).
+		Order("parent_session_id, id desc").Find(&runs).Error
+	return runs, err
+}
+
 func (s *Service) Cancel(runID uint) error {
 	return s.ctrl.CancelRun(s.db, &store.SubagentRun{}, runID, ErrRunNotFound, ErrRunFinished)
 }
@@ -355,14 +371,33 @@ func (s *Service) AwaitActiveDirect(ctx context.Context, parentSessionID uint, p
 	return runs, nil
 }
 
-func (s *Service) Reconcile() error {
+func (s *Service) Reconcile(recovery ...InterruptedResultSource) error {
+	if err := s.backfillChildSessionIDs(); err != nil {
+		return err
+	}
 	var runs []store.SubagentRun
 	if err := s.db.Where("status IN ?", []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning}).Find(&runs).Error; err != nil {
 		return err
 	}
+	var source InterruptedResultSource
+	if len(recovery) > 0 {
+		source = recovery[0]
+	}
 	for index := range runs {
 		run := &runs[index]
-		if err := s.finish(run, store.SubagentRunInterrupted, 0, "", errors.New("server restarted before subagent finished")); err != nil {
+		childID, result := uint(0), ""
+		if source != nil {
+			var recovered bool
+			var err error
+			childID, result, recovered, err = source.InterruptedSubagentResult(run.ID)
+			if err != nil {
+				return fmt.Errorf("reconcile child run %d: %w", run.ID, err)
+			}
+			if !recovered {
+				childID, result = 0, ""
+			}
+		}
+		if err := s.finish(run, store.SubagentRunInterrupted, childID, result, errors.New("server restarted before subagent finished")); err != nil {
 			return fmt.Errorf("reconcile run %d: %w", run.ID, err)
 		}
 	}
@@ -378,6 +413,21 @@ func (s *Service) Reconcile() error {
 		run := &missingEvents[index]
 		if _, err := createCompletionEvent(s.db, run, run.Status, run.Result, run.Error); err != nil {
 			return fmt.Errorf("reconcile completion event for run %d: %w", run.ID, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) backfillChildSessionIDs() error {
+	var children []store.Session
+	if err := s.db.Where("parent_subagent_run_id IS NOT NULL").Find(&children).Error; err != nil {
+		return fmt.Errorf("subagent: load child sessions: %w", err)
+	}
+	for _, child := range children {
+		if err := s.db.Model(&store.SubagentRun{}).
+			Where("id = ? AND child_session_id IS NULL", *child.ParentSubagentRunID).
+			Update("child_session_id", child.ID).Error; err != nil {
+			return fmt.Errorf("subagent: link run %d to child session %d: %w", *child.ParentSubagentRunID, child.ID, err)
 		}
 	}
 	return nil

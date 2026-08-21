@@ -210,7 +210,14 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		if executeErr != nil {
 			response = executeErr.Error()
 		}
-		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
+		if response != "" {
+			_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
+		}
+		if executeErr == nil {
+			for _, replayed := range result.ReplayedMessages {
+				_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: formatReplayedMessage(replayed)})
+			}
+		}
 		return
 	}
 
@@ -252,6 +259,13 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		return
 	}
 	<-done
+}
+
+func formatReplayedMessage(message command.ReplayedMessage) string {
+	if message.Role == "user" {
+		return "User: " + message.Content
+	}
+	return message.Content
 }
 
 func channelTurnOptions(expectedLeaf *uint, onDelta func(chat.StreamEvent)) chat.TurnOptions {

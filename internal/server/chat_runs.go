@@ -330,7 +330,7 @@ func (s *Server) prepareMessageRunFromRequest(c *gin.Context, text string, req s
 		if err != nil {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 		} else {
-			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget})
+			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget, ReplayedMessages: result.ReplayedMessages})
 		}
 		return 0, sendMessageRequest{}, nil, nil, nil
 	}

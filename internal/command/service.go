@@ -33,6 +33,7 @@ type Kind string
 
 const (
 	maxSessionListItems = 20
+	maxHistoryRounds    = 20
 
 	interactionApprove           = "approve"
 	interactionDeny              = "deny"
@@ -93,8 +94,15 @@ type SessionTarget struct {
 // Result is the outcome of a slash command. SessionTarget is set for commands
 // that require a transport-specific session switch, such as /switch session.
 type Result struct {
-	Response      string
-	SessionTarget *SessionTarget
+	Response         string
+	SessionTarget    *SessionTarget
+	ReplayedMessages []ReplayedMessage
+}
+
+// ReplayedMessage is transient command output and is never persisted.
+type ReplayedMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // NewService wires the command dispatcher to its dependencies.
@@ -147,7 +155,9 @@ var commandDefinitions = []commandDefinition{
 	{name: "activate", help: "enable session capabilities"},
 	{name: "deactivate", help: "disable session capabilities"},
 	{name: "clear", help: "start a fresh session with the same settings"},
-	{name: "new", help: "start a fresh session from its source concierge"},
+	{name: "new", help: "alias of /clear"},
+	{name: "last", help: "resend recent assistant messages"},
+	{name: "replay", help: "resend recent conversation rounds"},
 	{name: "interact", help: "respond to a pending request or change session automatic approval"},
 }
 
@@ -199,6 +209,7 @@ func (s *Service) ExecuteResult(sessionID uint, text string) (Result, error) {
 	args := fields[1:]
 	var response string
 	var target *SessionTarget
+	var replayed []ReplayedMessage
 	var err error
 
 	switch name {
@@ -224,12 +235,16 @@ func (s *Service) ExecuteResult(sessionID uint, text string) (Result, error) {
 		response, target, err = s.clear(sessionID, args)
 	case "/new":
 		response, target, err = s.new(sessionID, args)
+	case "/last":
+		replayed, err = s.last(sessionID, args)
+	case "/replay":
+		replayed, err = s.replay(sessionID, args)
 	case "/interact":
 		response, err = s.interact(sessionID, args)
 	default:
 		err = fmt.Errorf("command: unknown command %q", name)
 	}
-	return Result{Response: response, SessionTarget: target}, err
+	return Result{Response: response, SessionTarget: target, ReplayedMessages: replayed}, err
 }
 
 func (s *Service) interact(sessionID uint, args []string) (string, error) {
@@ -284,6 +299,8 @@ func formatHelp(definitions []commandDefinition) string {
 			fmt.Fprintf(&b, "/interact <approve|deny|auto-approve|cancel-auto-approve> - %s\n", definition.help)
 		case "clear", "new":
 			fmt.Fprintf(&b, "/%s [archive] - %s; archive defaults to false\n", definition.name, definition.help)
+		case "last", "replay":
+			fmt.Fprintf(&b, "/%s [count] - %s; count defaults to 1\n", definition.name, definition.help)
 		default:
 			fmt.Fprintf(&b, "/%s - %s\n", definition.name, definition.help)
 		}
@@ -435,8 +452,12 @@ func (s *Service) status(sessionID uint) (string, error) {
 	fmt.Fprintf(&b, "session: %d (concierge: %s, archived: %v)\n", sess.ID, sess.SourceConcierge, sess.FlagArchived)
 	fmt.Fprintf(&b, "identity: %s\n", settings.Identity)
 	fmt.Fprintf(&b, "impressions: %s\n", strings.Join(settings.Impressions, ", "))
-	fmt.Fprintf(&b, "tool_groups: %s\n", strings.Join(settings.ToolGroups, ", "))
-	fmt.Fprintf(&b, "plugins: %s\n", strings.Join(settings.Plugins, ", "))
+	if concierge, ok := s.currentRegistry().Concierges[sess.SourceConcierge]; ok {
+		fmt.Fprintf(&b, "available tool_groups: %s\n", strings.Join(concierge.ToolGroups, ", "))
+		fmt.Fprintf(&b, "available plugins: %s\n", strings.Join(concierge.Plugins, ", "))
+	}
+	fmt.Fprintf(&b, "enabled tool_groups: %s\n", strings.Join(settings.ToolGroups, ", "))
+	fmt.Fprintf(&b, "enabled plugins: %s\n", strings.Join(settings.Plugins, ", "))
 	boundProject, err := s.projects.Get(sess.ProjectID)
 	if err != nil {
 		return "", err
@@ -770,43 +791,100 @@ func (s *Service) clear(sessionID uint, args []string) (string, *SessionTarget, 
 	if err != nil {
 		return "", nil, err
 	}
-	return newSessionResponse(sess.ID, newSess.ID, archive, ""), target, nil
+	return s.replacementResponse(sess.ID, newSess.ID, archive), target, nil
 }
 
 func (s *Service) new(sessionID uint, args []string) (string, *SessionTarget, error) {
-	archive, err := parseArchiveArgument("new", args)
-	if err != nil {
-		return "", nil, err
-	}
-	sess, err := s.loadSession(sessionID)
-	if err != nil {
-		return "", nil, err
-	}
-	c, ok := s.currentRegistry().Concierges[sess.SourceConcierge]
-	if !ok {
-		return "", nil, fmt.Errorf("command: source concierge %q no longer exists", sess.SourceConcierge)
-	}
-	newSess, err := s.sessions.Replace(sess.ID, c.Name, session.SettingsFromConcierge(c), archive)
-	if err != nil {
-		return "", nil, err
-	}
-	s.forgetSession(sess.ID)
-	target, err := s.sessionTarget(newSess)
-	if err != nil {
-		return "", nil, err
-	}
-	return newSessionResponse(sess.ID, newSess.ID, archive, fmt.Sprintf("from concierge %q", c.Name)), target, nil
+	return s.clear(sessionID, args)
 }
 
-func newSessionResponse(previousID, nextID uint, archived bool, source string) string {
-	prefix := fmt.Sprintf("New session: %d", nextID)
-	if source != "" {
-		prefix += " (" + source + ")"
+func parseHistoryCount(commandName string, args []string) (int, error) {
+	if len(args) == 0 {
+		return 1, nil
 	}
+	if len(args) != 1 {
+		return 0, fmt.Errorf("command: usage: /%s [count]", commandName)
+	}
+	count, err := strconv.Atoi(args[0])
+	if err != nil || count < 1 || count > maxHistoryRounds {
+		return 0, fmt.Errorf("command: %s count must be a positive integer", commandName)
+	}
+	return count, nil
+}
+
+func (s *Service) replacementResponse(previousID, nextID uint, archived bool) string {
+	response, err := s.status(nextID)
+	if err == nil {
+		return response
+	}
+	prefix := fmt.Sprintf("New session: %d", nextID)
 	if !archived {
 		return prefix + "."
 	}
 	return fmt.Sprintf("Archived session %d. %s.", previousID, prefix)
+}
+
+func (s *Service) last(sessionID uint, args []string) ([]ReplayedMessage, error) {
+	count, err := parseHistoryCount("last", args)
+	if err != nil {
+		return nil, err
+	}
+	path, err := s.activePath(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]ReplayedMessage, 0, count)
+	for index := len(path) - 1; index >= 0 && len(messages) < count; index-- {
+		if path[index].Role == "assistant" && path[index].Content != "" {
+			messages = append(messages, ReplayedMessage{Role: "assistant", Content: path[index].Content})
+		}
+	}
+	reverseReplayed(messages)
+	return messages, nil
+}
+
+func (s *Service) replay(sessionID uint, args []string) ([]ReplayedMessage, error) {
+	count, err := parseHistoryCount("replay", args)
+	if err != nil {
+		return nil, err
+	}
+	path, err := s.activePath(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	start := len(path)
+	users := 0
+	for start > 0 {
+		start--
+		if path[start].Role == "user" {
+			users++
+			if users == count {
+				break
+			}
+		}
+	}
+	messages := make([]ReplayedMessage, 0, len(path)-start)
+	for _, message := range path[start:] {
+		if message.Content == "" || (message.Role != "user" && message.Role != "assistant") {
+			continue
+		}
+		messages = append(messages, ReplayedMessage{Role: message.Role, Content: message.Content})
+	}
+	return messages, nil
+}
+
+func (s *Service) activePath(sessionID uint) ([]store.ChatMessage, error) {
+	sess, err := s.loadSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.sessions.ActivePath(*sess)
+}
+
+func reverseReplayed(messages []ReplayedMessage) {
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
 }
 
 func (s *Service) loadSession(id uint) (*store.Session, error) {

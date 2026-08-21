@@ -35,3 +35,14 @@ func TestForkSeedLeavesBalancedHistoryAlone(t *testing.T) {
 		t.Fatalf("seed = %+v", seed)
 	}
 }
+
+func TestChildPromptParentIDUsesLastPersistedSeed(t *testing.T) {
+	seed := []store.ChatMessage{{ID: 10}, {ID: 11}}
+	parentID := childPromptParentID(seed)
+	if parentID == nil || *parentID != 11 {
+		t.Fatalf("prompt parent id = %v, want 11", parentID)
+	}
+	if parentID := childPromptParentID(nil); parentID != nil {
+		t.Fatalf("empty seed parent id = %v, want nil", parentID)
+	}
+}

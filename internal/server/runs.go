@@ -41,6 +41,7 @@ type jobRunner interface {
 type subagentRunner interface {
 	Get(uint) (*store.SubagentRun, error)
 	ListByParentSession(uint) ([]store.SubagentRun, error)
+	ListBackgroundByParentSessions([]uint) ([]store.SubagentRun, error)
 	Cancel(uint) error
 }
 

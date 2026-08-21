@@ -184,15 +184,15 @@ func main() {
 	}
 
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
-	subagentSvc.SetExecutor(subagentexec.NewPipelineExecutor(db, sessions, pipeline))
 	pipeline.SetNotificationSource(subagentSvc)
-	if err := subagentSvc.Reconcile(); err != nil {
-		log.Fatalf("subagents: reconcile stale runs: %v", err)
-	}
 	chatRunSvc := chatrun.New(db)
 	if err := chatRunSvc.Reconcile(); err != nil {
 		log.Fatalf("chat runs: reconcile stale runs: %v", err)
 	}
+	if err := subagentSvc.Reconcile(chatRunSvc); err != nil {
+		log.Fatalf("subagents: reconcile stale runs: %v", err)
+	}
+	subagentSvc.SetExecutor(subagentexec.NewPipelineExecutor(db, sessions, pipeline, chatRunSvc))
 	// Deliver any completions that finished while their parent session was
 	// idle (or that were rebuilt by subagent Reconcile above).
 	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)

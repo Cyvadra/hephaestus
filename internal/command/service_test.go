@@ -185,6 +185,34 @@ func TestParseArchiveArgumentDefaultsToFalse(t *testing.T) {
 	}
 }
 
+func TestParseHistoryCount(t *testing.T) {
+	for _, test := range []struct {
+		args    []string
+		want    int
+		wantErr bool
+	}{
+		{args: nil, want: 1},
+		{args: []string{"3"}, want: 3},
+		{args: []string{"0"}, wantErr: true},
+		{args: []string{"nope"}, wantErr: true},
+		{args: []string{"1", "2"}, wantErr: true},
+		{args: []string{"21"}, wantErr: true},
+	} {
+		got, err := parseHistoryCount("last", test.args)
+		if (err != nil) != test.wantErr || (err == nil && got != test.want) {
+			t.Fatalf("parseHistoryCount(%v) = %d, %v; want %d, wantErr %v", test.args, got, err, test.want, test.wantErr)
+		}
+	}
+}
+
+func TestReverseReplayedPreservesChronologicalOrder(t *testing.T) {
+	messages := []ReplayedMessage{{Content: "newest"}, {Content: "older"}}
+	reverseReplayed(messages)
+	if messages[0].Content != "older" || messages[1].Content != "newest" {
+		t.Fatalf("unexpected replay order: %#v", messages)
+	}
+}
+
 func TestInteractAutomaticApprovalCommands(t *testing.T) {
 	service := testService()
 	service.interactions = interaction.NewManager()

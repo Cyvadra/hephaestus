@@ -77,13 +77,23 @@ func New(db *gorm.DB) *Service {
 // Start creates one pending run and executes it in a background goroutine.
 // PostgreSQL's partial unique index enforces one active run per session.
 func (s *Service) Start(sessionID, projectID uint, kind store.ChatRunKind, request map[string]any, execute Execute) (*store.ChatRun, error) {
+	return s.start(sessionID, projectID, nil, kind, request, execute)
+}
+
+// StartSubagent creates the durable child turn for one delegated run.
+func (s *Service) StartSubagent(sessionID, projectID, subagentRunID uint, request map[string]any, execute Execute) (*store.ChatRun, error) {
+	return s.start(sessionID, projectID, &subagentRunID, store.ChatRunMessage, request, execute)
+}
+
+func (s *Service) start(sessionID, projectID uint, subagentRunID *uint, kind store.ChatRunKind, request map[string]any, execute Execute) (*store.ChatRun, error) {
 	run := &store.ChatRun{
-		SessionID: sessionID,
-		ProjectID: projectID,
-		Kind:      kind,
-		Status:    store.ChatRunPending,
-		Request:   datatypes.NewJSONType(request),
-		Snapshot:  datatypes.NewJSONType(store.ChatRunSnapshot{}),
+		SessionID:     sessionID,
+		ProjectID:     projectID,
+		SubagentRunID: subagentRunID,
+		Kind:          kind,
+		Status:        store.ChatRunPending,
+		Request:       datatypes.NewJSONType(request),
+		Snapshot:      datatypes.NewJSONType(store.ChatRunSnapshot{}),
 	}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		session, err := store.LockSession(tx, sessionID)
@@ -128,7 +138,7 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(map[string]any{
 		"status": store.ChatRunRunning, "started_at": &now,
 	}).Error; err != nil {
-		if finishErr := s.finish(runID, store.ChatRunInterrupted, nil, err); finishErr != nil {
+		if _, finishErr := s.finish(runID, store.ChatRunInterrupted, nil, err); finishErr != nil {
 			log.Printf("chatrun: finalize run %d after start failure: %v", runID, finishErr)
 		}
 		return
@@ -143,21 +153,23 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 		runErr = progressErr
 	}
 	status := store.ChatRunSucceeded
-	if runErr != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			s.progressMu.Lock()
-			interrupted := s.shuttingDown
-			s.progressMu.Unlock()
-			if interrupted {
-				status = store.ChatRunInterrupted
-			} else {
-				status = store.ChatRunCancelled
-			}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		s.progressMu.Lock()
+		interrupted := s.shuttingDown
+		s.progressMu.Unlock()
+		if interrupted {
+			status = store.ChatRunInterrupted
 		} else {
-			status = store.ChatRunFailed
+			status = store.ChatRunCancelled
 		}
+		if runErr == nil {
+			runErr = ctx.Err()
+		}
+	} else if runErr != nil {
+		status = store.ChatRunFailed
 	}
-	if err := s.finish(runID, status, result, runErr); err != nil {
+	status, err := s.finish(runID, status, result, runErr)
+	if err != nil {
 		log.Printf("chatrun: finalize run %d: %v", runID, err)
 		return
 	}
@@ -183,15 +195,12 @@ func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) error {
 	return nil
 }
 
-func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) error {
+func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) (store.ChatRunStatus, error) {
 	finished := time.Now()
 	update := map[string]any{"status": status, "finished_at": &finished}
 	snapshot, snapshotErr := s.snapshot(runID)
 	if snapshotErr == nil {
 		update["snapshot"] = datatypes.NewJSONType(snapshot)
-	}
-	if runErr != nil {
-		update["error"] = runErr.Error()
 	}
 	if result != nil {
 		if result.FinalMessageID != nil {
@@ -199,16 +208,23 @@ func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result,
 		}
 		if result.Response != nil {
 			encoded, err := json.Marshal(result.Response)
-			if err == nil {
+			if err != nil {
+				runErr = fmt.Errorf("chatrun: encode terminal result: %w", err)
+				status = store.ChatRunFailed
+				update["status"] = status
+			} else {
 				update["result"] = datatypes.JSON(encoded)
 			}
 		}
 	}
+	if runErr != nil {
+		update["error"] = runErr.Error()
+	}
 	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(update).Error; err != nil {
-		return fmt.Errorf("chatrun: persist terminal state: %w", err)
+		return status, fmt.Errorf("chatrun: persist terminal state: %w", err)
 	}
 	s.publish(runID, ProgressEvent{Type: "done"})
-	return nil
+	return status, nil
 }
 
 func (s *Service) snapshot(runID uint) (store.ChatRunSnapshot, error) {
@@ -280,6 +296,48 @@ func (s *Service) ActiveForSession(sessionID uint) (*store.ChatRun, error) {
 	return &run, nil
 }
 
+// Wait blocks until runID reaches a terminal state or ctx is cancelled.
+func (s *Service) Wait(ctx context.Context, runID uint) (*store.ChatRun, error) {
+	run, _, subscription, err := s.Subscribe(runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.Status.IsTerminal() {
+		return run, nil
+	}
+	defer subscription.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case event, ok := <-subscription.Events:
+			if !ok {
+				return s.Get(runID)
+			}
+			if event.Type == "done" {
+				return s.Get(runID)
+			}
+		}
+	}
+}
+
+// InterruptedSubagentResult returns a recovered child snapshot for a run
+// interrupted by the previous process.
+func (s *Service) InterruptedSubagentResult(subagentRunID uint) (uint, string, bool, error) {
+	var run store.ChatRun
+	result := s.db.Where("subagent_run_id = ?", subagentRunID).First(&run)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return 0, "", false, nil
+	}
+	if result.Error != nil {
+		return 0, "", false, fmt.Errorf("chatrun: load subagent run %d: %w", subagentRunID, result.Error)
+	}
+	if run.Status != store.ChatRunInterrupted {
+		return 0, "", false, nil
+	}
+	return run.SessionID, run.Snapshot.Data().Content, true, nil
+}
+
 // Cancel cancels a live run after rejecting nonexistent and terminal rows.
 func (s *Service) Cancel(runID uint) error {
 	return s.ctrl.CancelRun(s.db, &store.ChatRun{}, runID, ErrRunNotFound, ErrRunFinished)
@@ -304,12 +362,49 @@ func (s *Service) Shutdown() {
 	s.wg.Wait()
 }
 
-// Reconcile marks runs left active by a previous process as interrupted.
+// Reconcile marks runs left active by a previous process as interrupted and
+// retains partial output only for delegated child turns.
 func (s *Service) Reconcile() error {
 	finished := time.Now()
-	return s.db.Model(&store.ChatRun{}).
-		Where("status IN ?", []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).
-		Updates(map[string]any{"status": store.ChatRunInterrupted, "finished_at": &finished, "error": "server restarted before chat generation finished"}).Error
+	var runs []store.ChatRun
+	if err := s.db.Where("status IN ?", []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).Find(&runs).Error; err != nil {
+		return err
+	}
+	for index := range runs {
+		run := &runs[index]
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			snapshot, err := (&Service{db: tx}).snapshot(run.ID)
+			if err != nil {
+				return err
+			}
+			if run.SubagentRunID != nil && (snapshot.Content != "" || snapshot.ReasoningContent != "") {
+				var session store.Session
+				if err := tx.First(&session, run.SessionID).Error; err != nil {
+					return err
+				}
+				message := store.ChatMessage{
+					SessionID: run.SessionID, ParentMessageID: session.ActiveLeafMessageID, Timestamp: finished,
+					Role: "assistant", Content: snapshot.Content, ReasoningContent: snapshot.ReasoningContent,
+					Status: store.MessageStatusIncomplete,
+				}
+				if err := tx.Create(&message).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&store.Session{}).Where("id = ?", run.SessionID).Updates(map[string]any{
+					"active_leaf_message_id": message.ID, "last_message_time": finished,
+				}).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Model(run).Updates(map[string]any{
+				"status": store.ChatRunInterrupted, "snapshot": datatypes.NewJSONType(snapshot),
+				"finished_at": &finished, "error": "server restarted before chat generation finished",
+			}).Error
+		}); err != nil {
+			return fmt.Errorf("chatrun: reconcile run %d: %w", run.ID, err)
+		}
+	}
+	return nil
 }
 
 // Subscribe registers before returning a snapshot. Consumers must use the

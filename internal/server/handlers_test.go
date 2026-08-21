@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
 )
+
+type fakeSubagentRunner struct {
+	runs []store.SubagentRun
+	err  error
+}
+
+func (f *fakeSubagentRunner) Get(uint) (*store.SubagentRun, error) { return nil, nil }
+func (f *fakeSubagentRunner) ListByParentSession(uint) ([]store.SubagentRun, error) {
+	return nil, nil
+}
+func (f *fakeSubagentRunner) ListBackgroundByParentSessions([]uint) ([]store.SubagentRun, error) {
+	return f.runs, f.err
+}
+func (f *fakeSubagentRunner) Cancel(uint) error { return nil }
 
 func TestValidateGenerationOptions(t *testing.T) {
 	req := sendMessageRequest{
@@ -80,6 +95,39 @@ func TestListConciergesUsesPublishedRegistry(t *testing.T) {
 
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"name":"updated"`) || strings.Contains(recorder.Body.String(), `"name":"first"`) {
 		t.Fatalf("unexpected concierge response: status %d, body %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSessionListResponsesGroupsCompactSubagentSummaries(t *testing.T) {
+	childID := uint(9)
+	server := &Server{subagents: &fakeSubagentRunner{runs: []store.SubagentRun{
+		{ID: 12, ParentSessionID: 2, ChildSessionID: &childID, Status: store.SubagentRunSucceeded, Label: "finished", Prompt: "secret prompt", Result: "large result", Error: "private error"},
+		{ID: 11, ParentSessionID: 2, Status: store.SubagentRunRunning, Label: "working"},
+	}}}
+	responses, err := server.sessionListResponses([]store.Session{{ID: 1}, {ID: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(responses) != 2 || len(responses[0].SubagentRuns) != 0 || len(responses[1].SubagentRuns) != 2 {
+		t.Fatalf("unexpected responses: %+v", responses)
+	}
+	encoded, err := json.Marshal(responses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(encoded)
+	if strings.Contains(body, "secret prompt") || strings.Contains(body, "large result") || strings.Contains(body, "private error") {
+		t.Fatalf("session list leaked private subagent fields: %s", body)
+	}
+	if !strings.Contains(body, `"subagent_runs":[]`) || !strings.Contains(body, `"child_session_id":9`) {
+		t.Fatalf("unexpected JSON: %s", body)
+	}
+}
+
+func TestSessionListResponsesAllowsEmptySessionList(t *testing.T) {
+	responses, err := (&Server{}).sessionListResponses(nil)
+	if err != nil || len(responses) != 0 {
+		t.Fatalf("responses = %+v, err = %v", responses, err)
 	}
 }
 
