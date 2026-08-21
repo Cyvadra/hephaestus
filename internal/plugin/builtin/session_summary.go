@@ -88,7 +88,7 @@ func (p *SessionSummaryPlugin) Handle(ctx context.Context, hook plugin.Hook, pha
 	return turn, nil
 }
 
-const sessionSummaryInstruction = `请为当前会话的正文（不包含背景设定）生成标题和内容简述。标题不超过 15 个字，简述不超过 200 个字，简洁即可。只返回合法 JSON： {"session":{"title":"xxx","summary":"xxx"}}`
+const sessionSummaryInstruction = `请为当前会话的正文（不包含背景设定）生成标题和内容简述。标题不超过 20 个字，简述不超过 200 个字，简洁即可。只返回合法 JSON： {"session":{"title":"xxx","summary":"xxx"}}`
 
 type sessionSummaryResponse struct {
 	Session struct {
@@ -108,8 +108,8 @@ func parseSessionSummary(result string) (string, string, error) {
 	if err := json.Unmarshal([]byte(result[start:end+1]), &response); err != nil {
 		return "", "", err
 	}
-	title := clampRunes(strings.TrimSpace(response.Session.Title), 15)
-	summary := clampRunes(strings.TrimSpace(response.Session.Summary), 200)
+	title := clampRunes(strings.TrimSpace(response.Session.Title), 28)
+	summary := clampRunes(strings.TrimSpace(response.Session.Summary), 300)
 	if title == "" || summary == "" {
 		return "", "", fmt.Errorf("title or summary is empty")
 	}

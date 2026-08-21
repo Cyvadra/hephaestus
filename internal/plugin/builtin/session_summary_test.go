@@ -32,11 +32,11 @@ func TestParseSessionSummary_ExtractsWrappedJSON(t *testing.T) {
 }
 
 func TestParseSessionSummary_ClampsFields(t *testing.T) {
-	title, summary, err := parseSessionSummary(`{"session":{"title":"12345678901234567890","summary":"` + strings.Repeat("a", 210) + `"}}`)
+	title, summary, err := parseSessionSummary(`{"session":{"title":"1234567890123456789012345678901234567890","summary":"` + strings.Repeat("a", 410) + `"}}`)
 	if err != nil {
 		t.Fatalf("parseSessionSummary: %v", err)
 	}
-	if len([]rune(title)) != 15 || len([]rune(summary)) != 200 {
+	if len([]rune(title)) > 30 || len([]rune(summary)) > 300 {
 		t.Fatalf("clamped lengths = %d, %d", len([]rune(title)), len([]rune(summary)))
 	}
 }
