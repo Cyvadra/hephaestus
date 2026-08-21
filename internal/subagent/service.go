@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	ErrRunNotFound = errors.New("subagent: run not found")
-	ErrRunFinished = errors.New("subagent: run already finished")
-	ErrMaxDepth    = errors.New("subagent: maximum delegation depth reached")
+	ErrRunNotFound     = errors.New("subagent: run not found")
+	ErrRunFinished     = errors.New("subagent: run already finished")
+	ErrMaxDepth        = errors.New("subagent: maximum delegation depth reached")
+	ErrInvalidCategory = errors.New("subagent: invalid category")
 )
 
 const (
@@ -40,6 +41,7 @@ type Request struct {
 	ParentRunID     *uint
 	ProjectID       uint
 	Depth           int
+	Category        store.SubagentCategory
 	Label           string
 	Prompt          string
 	Seed            []store.ChatMessage
@@ -125,6 +127,9 @@ func (s *Service) create(req Request, mode store.SubagentMode, schedule store.Su
 	if req.Depth >= s.maxDepth {
 		return nil, fmt.Errorf("%w: depth %d, limit %d", ErrMaxDepth, req.Depth, s.maxDepth)
 	}
+	if !req.Category.Valid() {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidCategory, req.Category)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
@@ -133,7 +138,7 @@ func (s *Service) create(req Request, mode store.SubagentMode, schedule store.Su
 	run := &store.SubagentRun{
 		ParentSessionID: req.ParentSessionID, ParentRunID: req.ParentRunID, ProjectID: req.ProjectID,
 		Mode: mode, Schedule: schedule, Status: store.SubagentRunPending, Depth: req.Depth + 1,
-		Label: req.Label, Prompt: req.Prompt,
+		Category: req.Category, Label: req.Label, Prompt: req.Prompt,
 	}
 	if len(req.Seed) > 0 {
 		seed, err := marshalSeed(req.Seed)

@@ -38,24 +38,30 @@ func (t SubagentTool) Name() string { return string(t.mode) }
 
 func (t SubagentTool) Description() string {
 	if t.mode == store.SubagentModeSpawn {
-		return "Starts an independent subagent in the background and immediately returns its run id. Use await when the current response depends on active spawned tasks."
+		return "MANDATORY DELEGATION: use a subagent for code development, multi-step operations, independent research, and long-running background work to keep the main conversation focused. Starts an independent background subagent and immediately returns its run id. Use spawn when the task can proceed in parallel or its result can be consumed later; use await only when this response needs active spawned-task results."
 	}
-	return "Forks the current conversation into an independent subagent, waits for it to finish, and returns its result."
+	return "MANDATORY DELEGATION: use a subagent for code development, multi-step operations, independent research, and long-running background work to keep the main conversation focused. Forks the current conversation into an independent subagent, waits for it to finish, and returns its result. Use fork when the current response depends on the delegated task's result."
 }
 
 func (SubagentTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{
 		"description": map[string]any{"type": "string", "description": "Short 3-5 word task label."},
+		"category":    map[string]any{"type": "string", "enum": subagentCategoryValues(), "description": "Task type: coding (implementation, debugging, tests), operations (system or deployment work), research (investigation), background (long-running independent work), or general."},
 		"prompt":      map[string]any{"type": "string", "description": "Complete task instructions for the subagent."},
-	}, "required": []string{"description", "prompt"}}
+	}, "required": []string{"description", "category", "prompt"}}
 }
 
 func (t SubagentTool) Execute(ctx context.Context, args map[string]any) *toolkit.ToolResult {
 	label, _ := args["description"].(string)
+	categoryText, _ := args["category"].(string)
 	prompt, _ := args["prompt"].(string)
-	label, prompt = strings.TrimSpace(label), strings.TrimSpace(prompt)
-	if label == "" || prompt == "" {
-		return toolkit.ErrorResult(t.Name() + ": description and prompt are required")
+	label, categoryText, prompt = strings.TrimSpace(label), strings.TrimSpace(categoryText), strings.TrimSpace(prompt)
+	category := store.SubagentCategory(categoryText)
+	if label == "" || categoryText == "" || prompt == "" {
+		return toolkit.ErrorResult(t.Name() + ": description, category, and prompt are required")
+	}
+	if !category.Valid() {
+		return toolkit.ErrorResult(fmt.Sprintf("%s: invalid category %q", t.Name(), categoryText))
 	}
 	sessionID, ok := toolkit.SessionIDFromContext(ctx)
 	if !ok || sessionID == 0 {
@@ -66,7 +72,7 @@ func (t SubagentTool) Execute(ctx context.Context, args map[string]any) *toolkit
 		return toolkit.ErrorResult(fmt.Sprintf("%s: load parent session: %v", t.Name(), err))
 	}
 	owner := toolkit.SubagentContextFromContext(ctx)
-	request := subagent.Request{ParentSessionID: sessionID, ProjectID: parent.ProjectID, Depth: owner.Depth, Label: label, Prompt: prompt}
+	request := subagent.Request{ParentSessionID: sessionID, ProjectID: parent.ProjectID, Depth: owner.Depth, Category: category, Label: label, Prompt: prompt}
 	if owner.RunID != 0 {
 		request.ParentRunID = &owner.RunID
 	}
@@ -94,6 +100,15 @@ func (t SubagentTool) Execute(ctx context.Context, args map[string]any) *toolkit
 		return toolkit.ErrorResult("spawn: " + err.Error())
 	}
 	return toolkit.NewToolResult(fmt.Sprintf("spawned background subagent run %d", run.ID))
+}
+
+func subagentCategoryValues() []string {
+	categories := store.SubagentCategories()
+	values := make([]string, len(categories))
+	for index := range categories {
+		values[index] = string(categories[index])
+	}
+	return values
 }
 
 type SubagentAwaitTool struct{ service subagentStarter }

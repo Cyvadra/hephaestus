@@ -101,8 +101,8 @@ func TestListConciergesUsesPublishedRegistry(t *testing.T) {
 func TestSessionListResponsesGroupsCompactSubagentSummaries(t *testing.T) {
 	childID := uint(9)
 	server := &Server{subagents: &fakeSubagentRunner{runs: []store.SubagentRun{
-		{ID: 12, ParentSessionID: 2, ChildSessionID: &childID, Status: store.SubagentRunSucceeded, Label: "finished", Prompt: "secret prompt", Result: "large result", Error: "private error"},
-		{ID: 11, ParentSessionID: 2, Status: store.SubagentRunRunning, Label: "working"},
+		{ID: 12, ParentSessionID: 2, ChildSessionID: &childID, Status: store.SubagentRunSucceeded, Category: store.SubagentCategoryCoding, Label: "finished", Prompt: "secret prompt", Result: "large result", Error: "private error"},
+		{ID: 11, ParentSessionID: 2, Status: store.SubagentRunRunning, Category: store.SubagentCategoryOperations, Label: "working"},
 	}}}
 	responses, err := server.sessionListResponses([]store.Session{{ID: 1}, {ID: 2}})
 	if err != nil {
@@ -119,7 +119,7 @@ func TestSessionListResponsesGroupsCompactSubagentSummaries(t *testing.T) {
 	if strings.Contains(body, "secret prompt") || strings.Contains(body, "large result") || strings.Contains(body, "private error") {
 		t.Fatalf("session list leaked private subagent fields: %s", body)
 	}
-	if !strings.Contains(body, `"subagent_runs":[]`) || !strings.Contains(body, `"child_session_id":9`) {
+	if !strings.Contains(body, `"subagent_runs":[]`) || !strings.Contains(body, `"child_session_id":9`) || !strings.Contains(body, `"category":"coding"`) || !strings.Contains(body, `"category":"operations"`) {
 		t.Fatalf("unexpected JSON: %s", body)
 	}
 }

@@ -43,7 +43,7 @@ func newTestRun(t *testing.T, db *gorm.DB, schedule store.SubagentSchedule, stat
 	}
 	run := &store.SubagentRun{
 		ParentSessionID: session.ID, ProjectID: project.ID, Mode: store.SubagentModeSpawn,
-		Schedule: schedule, Status: status, Depth: 1, Label: marker, Prompt: "test",
+		Schedule: schedule, Status: status, Depth: 1, Category: store.SubagentCategoryGeneral, Label: marker, Prompt: "test",
 	}
 	if err := db.Create(run).Error; err != nil {
 		t.Fatalf("create run: %v", err)
@@ -159,20 +159,28 @@ func TestCreateRejectsMaximumDepth(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidCategory(t *testing.T) {
+	service := New(nil, 2)
+	_, err := service.create(Request{Category: "unknown"}, store.SubagentModeSpawn, store.SubagentScheduleBackground)
+	if !errors.Is(err, ErrInvalidCategory) {
+		t.Fatalf("create error = %v, want ErrInvalidCategory", err)
+	}
+}
+
 func TestListBackgroundByParentSessionsFiltersAndOrders(t *testing.T) {
 	db := openTestDB(t)
 	service := New(db, 2)
 	older := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunSucceeded)
 	newer := &store.SubagentRun{
 		ParentSessionID: older.ParentSessionID, ProjectID: older.ProjectID, Mode: store.SubagentModeSpawn,
-		Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Depth: 1, Label: "newer", Prompt: "test",
+		Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Depth: 1, Category: store.SubagentCategoryBackground, Label: "newer", Prompt: "test",
 	}
 	if err := db.Create(newer).Error; err != nil {
 		t.Fatal(err)
 	}
 	foreground := &store.SubagentRun{
 		ParentSessionID: older.ParentSessionID, ProjectID: older.ProjectID, Mode: store.SubagentModeFork,
-		Schedule: store.SubagentScheduleForeground, Status: store.SubagentRunSucceeded, Depth: 1, Label: "fork", Prompt: "test",
+		Schedule: store.SubagentScheduleForeground, Status: store.SubagentRunSucceeded, Depth: 1, Category: store.SubagentCategoryResearch, Label: "fork", Prompt: "test",
 	}
 	if err := db.Create(foreground).Error; err != nil {
 		t.Fatal(err)

@@ -106,6 +106,36 @@ const (
 	SubagentScheduleForeground SubagentSchedule = "foreground"
 )
 
+// SubagentCategory describes the nature of work delegated to a child agent.
+type SubagentCategory string
+
+const (
+	SubagentCategoryCoding     SubagentCategory = "coding"
+	SubagentCategoryOperations SubagentCategory = "operations"
+	SubagentCategoryResearch   SubagentCategory = "research"
+	SubagentCategoryBackground SubagentCategory = "background"
+	SubagentCategoryGeneral    SubagentCategory = "general"
+)
+
+func (c SubagentCategory) Valid() bool {
+	switch c {
+	case SubagentCategoryCoding, SubagentCategoryOperations, SubagentCategoryResearch, SubagentCategoryBackground, SubagentCategoryGeneral:
+		return true
+	default:
+		return false
+	}
+}
+
+func SubagentCategories() []SubagentCategory {
+	return []SubagentCategory{
+		SubagentCategoryCoding,
+		SubagentCategoryOperations,
+		SubagentCategoryResearch,
+		SubagentCategoryBackground,
+		SubagentCategoryGeneral,
+	}
+}
+
 // SubagentRunStatus is the durable lifecycle state of a delegated agent run.
 type SubagentRunStatus string
 
@@ -134,6 +164,7 @@ type SubagentRun struct {
 	Schedule        SubagentSchedule  `gorm:"size:16;not null"`
 	Status          SubagentRunStatus `gorm:"size:32;not null;index:idx_subagent_parent_status,priority:2;index"`
 	Depth           int               `gorm:"not null"`
+	Category        SubagentCategory  `gorm:"size:32;not null;default:general"`
 	Label           string            `gorm:"size:255;not null"`
 	Prompt          string            `gorm:"type:text;not null"`
 	Seed            datatypes.JSON    `gorm:"type:jsonb"`
