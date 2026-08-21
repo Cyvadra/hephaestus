@@ -8620,6 +8620,10 @@ body[data-ds-dark-theme] {
 @keyframes configuration-spin { to { transform: rotate(360deg) } }
 @keyframes configuration-pulse { 50% { opacity: .45 } }
 
+@media (min-width: 560px) {
+    .configuration-return-chat { display: none!important }
+    .configuration-registry-label { display: block!important }
+}
 @media not all and (min-width: 900px) {
     .configuration-workspace-header { align-items: flex-start; flex-direction: column; gap: 12px }
     .configuration-restart-note { max-width: none }
@@ -8639,7 +8643,7 @@ body[data-ds-dark-theme] {
     .sidebar.configuration-mode { display: none; position: fixed; z-index: 40; inset: 0 auto 0 0; width: min(86vw,300px); box-shadow: 18px 0 40px rgba(0,0,0,.18) }
     .sidebar.configuration-mode.mobile-open { display: flex }
     .configuration-registry-label { display: none!important }
-    .configuration-return-chat { display: flex }
+    .configuration-return-chat { display: flex!important }
     .configuration-workspace-header { padding: 28px var(--app-page-padding) }
     .configuration-workspace-header h1,.configuration-overview-heading h1 { font-size: 24px; line-height: 32px }
     .configuration-action-bar { align-items: center; flex-wrap: wrap; min-height: 60px; padding-top: 8px; padding-bottom: 8px }
