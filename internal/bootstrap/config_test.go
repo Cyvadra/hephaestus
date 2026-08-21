@@ -4,6 +4,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -266,12 +267,13 @@ func TestLoadQQNotificationConfig(t *testing.T) {
 	t.Setenv("HEPHAESTUS_QQ_APP_ID", " app ")
 	t.Setenv("HEPHAESTUS_QQ_APP_SECRET", " secret ")
 	t.Setenv("HEPHAESTUS_QQ_USER_OPENID", " user-openid ")
+	t.Setenv("HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS", "45")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.QQAppID != "app" || cfg.QQAppSecret != "secret" || cfg.QQUserOpenID != "user-openid" {
+	if cfg.QQAppID != "app" || cfg.QQAppSecret != "secret" || cfg.QQUserOpenID != "user-openid" || cfg.ChannelImageTextWait != 45*time.Second {
 		t.Fatalf("unexpected QQ configuration: %+v", cfg)
 	}
 }

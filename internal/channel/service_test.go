@@ -3,7 +3,9 @@ package channel
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/pkg/channels"
 )
 
@@ -45,9 +47,51 @@ func TestAutomaticApprovalCommand(t *testing.T) {
 
 func TestChannelTurnOptionsPreservesExpectedLeaf(t *testing.T) {
 	leaf := uint(42)
-	options := channelTurnOptions(&leaf, nil)
+	options := channelTurnOptions(&leaf, nil, nil)
 	if options.ExpectedLeaf == nil || *options.ExpectedLeaf != leaf {
 		t.Fatalf("ExpectedLeaf = %v, want %d", options.ExpectedLeaf, leaf)
+	}
+}
+
+func TestCollectInboundCombinesTextThenImage(t *testing.T) {
+	queue := make(chan channels.InboundMessage, 1)
+	queue <- channels.InboundMessage{Attachments: []channels.Attachment{{Name: "image.png", MIME: "image/png"}}}
+	message, deferred, ok := collectInbound(queue, channels.InboundMessage{Content: "describe this"}, time.Second, false)
+	if !ok || deferred != nil || message.Content != "describe this" || len(message.Attachments) != 1 {
+		t.Fatalf("message = %+v, deferred = %+v, ok = %v", message, deferred, ok)
+	}
+}
+
+func TestCollectInboundCombinesImageThenText(t *testing.T) {
+	queue := make(chan channels.InboundMessage, 1)
+	queue <- channels.InboundMessage{Content: "describe this"}
+	message, deferred, ok := collectInbound(queue, channels.InboundMessage{Attachments: []channels.Attachment{{Name: "image.png"}}}, time.Second, true)
+	if !ok || deferred != nil || message.Content != "describe this" || len(message.Attachments) != 1 {
+		t.Fatalf("message = %+v, deferred = %+v, ok = %v", message, deferred, ok)
+	}
+}
+
+func TestCollectInboundAddsImageHintAfterTimeout(t *testing.T) {
+	queue := make(chan channels.InboundMessage)
+	message, deferred, ok := collectInbound(queue, channels.InboundMessage{Attachments: []channels.Attachment{{Name: "image.png"}}}, time.Millisecond, true)
+	if !ok || deferred != nil || message.Content != "[hint: user just sent this image]" {
+		t.Fatalf("message = %+v, deferred = %+v, ok = %v", message, deferred, ok)
+	}
+}
+
+func TestChannelTurnOptionsClassifiesVisualInputs(t *testing.T) {
+	options := channelTurnOptions(nil, []channels.Attachment{{Path: "uploads/a.png", Name: "a.png", MIME: "image/png; charset=binary"}, {Path: "uploads/a.bmp", Name: "a.bmp", MIME: ""}}, nil)
+	if len(options.UploadAttachments) != 2 || options.UploadAttachments[0].Kind != store.MessageAttachmentVisualInput || options.UploadAttachments[1].Kind != store.MessageAttachmentUserUpload {
+		t.Fatalf("upload attachments = %+v", options.UploadAttachments)
+	}
+}
+
+func TestCollectInboundDefersFollowingText(t *testing.T) {
+	queue := make(chan channels.InboundMessage, 1)
+	queue <- channels.InboundMessage{Content: "second"}
+	message, deferred, ok := collectInbound(queue, channels.InboundMessage{Content: "first"}, time.Second, false)
+	if !ok || message.Content != "first" || deferred == nil || deferred.Content != "second" {
+		t.Fatalf("message = %+v, deferred = %+v, ok = %v", message, deferred, ok)
 	}
 }
 

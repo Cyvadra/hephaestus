@@ -38,6 +38,7 @@ type bot interface {
 	Start() error
 	Stop() error
 	OnCommand(string, message.EventId, goqqrobot.Handler)
+	OnEvent(message.EventId, goqqrobot.Handler)
 }
 
 type apiClient interface {
@@ -96,6 +97,7 @@ func New(config Config) (*Channel, error) {
 		return nil, fmt.Errorf("qq channel: initialize bot: %w", err)
 	}
 	registerCommands(created, channel.receive)
+	registerEvents(created, channel.receive)
 	channel.bot = created
 	return channel, nil
 }
@@ -105,6 +107,15 @@ func registerCommands(bot bot, handler goqqrobot.Handler) {
 		for _, commandName := range command.Names() {
 			bot.OnCommand(commandName, eventID, handler)
 		}
+	}
+}
+
+// registerEvents receives image-only C2C messages. QQ represents some of
+// these as content "/", which GoQQBot otherwise treats as an unknown command
+// and drops before the default handler sees it.
+func registerEvents(bot bot, handler goqqrobot.Handler) {
+	for _, eventID := range []message.EventId{message.C2C_MSG_RECEIVE, message.C2C_MESSAGE_CREATE} {
+		bot.OnEvent(eventID, handler)
 	}
 }
 
@@ -216,6 +227,10 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 		return nil
 	}
 	if c.duplicate(inbound.Id) {
+		return nil
+	}
+	if strings.TrimSpace(inbound.Content) == "/" && len(inbound.Attachments) == 0 {
+		log.Printf("qq channel: C2C image marker received without attachments (event=%s message=%s payload=%s)", ctx.Payload.T, inbound.Id, string(ctx.Payload.D))
 		return nil
 	}
 	attachments := make([]channels.Attachment, 0, len(inbound.Attachments))

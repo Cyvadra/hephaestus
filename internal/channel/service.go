@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"mime"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +31,7 @@ import (
 
 const (
 	defaultApprovalTimeout = 30 * time.Second
+	defaultTextImageWait   = 900 * time.Millisecond
 
 	approvalConfirmedChinese              = "确认"
 	automaticApprovalEnableChinese        = "全部同意"
@@ -48,16 +51,18 @@ const (
 // message stack. Approval responses bypass the stack because the active turn
 // is blocked waiting for them.
 type Service struct {
-	db           *gorm.DB
-	registries   *registry.Store
-	sessions     *session.Service
-	pipeline     *chat.Pipeline
-	chatRuns     *chatrun.Service
-	commands     *command.Service
-	projects     *project.Service
-	interactions *interaction.Manager
-	channels     []channels.Channel
-	timeout      time.Duration
+	db            *gorm.DB
+	registries    *registry.Store
+	sessions      *session.Service
+	pipeline      *chat.Pipeline
+	chatRuns      *chatrun.Service
+	commands      *command.Service
+	projects      *project.Service
+	interactions  *interaction.Manager
+	channels      []channels.Channel
+	timeout       time.Duration
+	textImageWait time.Duration
+	imageTextWait time.Duration
 
 	mu       sync.Mutex
 	queues   map[string]chan channels.InboundMessage
@@ -79,7 +84,16 @@ func New(db *gorm.DB, registries *registry.Store, sessions *session.Service, pip
 		chatRuns: chatRuns,
 		commands: commands, projects: projects, interactions: interactions,
 		channels: configured, timeout: defaultApprovalTimeout,
+		textImageWait: defaultTextImageWait, imageTextWait: 30 * time.Second,
 		queues: map[string]chan channels.InboundMessage{}, pending: map[string]pendingApproval{},
+	}
+}
+
+// SetImageTextWait configures how long an image-only event waits for a
+// following text event before the image hint is sent to the model.
+func (s *Service) SetImageTextWait(wait time.Duration) {
+	if wait > 0 {
+		s.imageTextWait = wait
 	}
 }
 
@@ -180,8 +194,69 @@ func (s *Service) processStop(ctx context.Context, message channels.InboundMessa
 
 func (s *Service) runStack(ctx context.Context, queue <-chan channels.InboundMessage) {
 	defer s.workers.Done()
-	for message := range queue {
+	var pending *channels.InboundMessage
+	for {
+		var message channels.InboundMessage
+		var open bool
+		if pending != nil {
+			message = *pending
+			pending = nil
+		} else {
+			message, open = <-queue
+			if !open {
+				return
+			}
+		}
+		message, pending, open = s.collectMessage(queue, message)
+		if !open {
+			return
+		}
 		s.process(ctx, message)
+	}
+}
+
+func (s *Service) collectMessage(queue <-chan channels.InboundMessage, first channels.InboundMessage) (channels.InboundMessage, *channels.InboundMessage, bool) {
+	if strings.TrimSpace(first.Content) == "" && len(first.Attachments) > 0 {
+		return collectInbound(queue, first, s.imageTextWait, true)
+	}
+	if strings.TrimSpace(first.Content) != "" {
+		return collectInbound(queue, first, s.textImageWait, false)
+	}
+	return first, nil, true
+}
+
+// collectInbound combines attachments arriving adjacent to a text event. For
+// image-first traffic, text is required until timeout; for text-first traffic,
+// only attachment-only events within the short grace period are combined.
+func collectInbound(queue <-chan channels.InboundMessage, first channels.InboundMessage, wait time.Duration, imageFirst bool) (channels.InboundMessage, *channels.InboundMessage, bool) {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	message := first
+	for {
+		select {
+		case next, ok := <-queue:
+			if !ok {
+				return channels.InboundMessage{}, nil, false
+			}
+			if imageFirst {
+				message.Attachments = append(message.Attachments, next.Attachments...)
+				if strings.TrimSpace(next.Content) != "" {
+					message.Content = next.Content
+					return message, nil, true
+				}
+				continue
+			}
+			if strings.TrimSpace(next.Content) == "" && len(next.Attachments) > 0 {
+				message.Attachments = append(message.Attachments, next.Attachments...)
+				continue
+			}
+			return message, &next, true
+		case <-timer.C:
+			if imageFirst {
+				message.Content = "[hint: user just sent this image]"
+			}
+			return message, nil, true
+		}
 	}
 }
 
@@ -196,6 +271,15 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		return
 	}
 	message.Attachments = s.persistInboundAttachments(sessionID, message.Attachments)
+	if len(message.Attachments) > 0 {
+		visualCount := 0
+		for _, attachment := range message.Attachments {
+			if supportedVisualMIME(normalizedMIME(attachment.MIME, attachment.Name)) {
+				visualCount++
+			}
+		}
+		log.Printf("channel: received %d attachment(s) for %s/%s (%d visual input(s))", len(message.Attachments), message.Channel, message.ChatID, visualCount)
+	}
 
 	text := message.Content
 	for _, attachment := range message.Attachments {
@@ -229,7 +313,7 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 	done := make(chan struct{})
 	_, err = s.chatRuns.Start(sessionID, sessionRow.ProjectID, store.ChatRunMessage, map[string]any{"text": text, "channel": message.Channel}, func(turnCtx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
 		defer close(done)
-		result, runErr := s.pipeline.Run(turnCtx, sessionID, text, channelTurnOptions(sessionRow.ActiveLeafMessageID, func(event chat.StreamEvent) {
+		result, runErr := s.pipeline.Run(turnCtx, sessionID, text, channelTurnOptions(sessionRow.ActiveLeafMessageID, message.Attachments, func(event chat.StreamEvent) {
 			onDelta(event)
 			if event.Type == interaction.EventAskPermission && event.Interaction != nil {
 				s.beginApproval(ctx, external, message, *event.Interaction)
@@ -268,8 +352,39 @@ func formatReplayedMessage(message command.ReplayedMessage) string {
 	return message.Content
 }
 
-func channelTurnOptions(expectedLeaf *uint, onDelta func(chat.StreamEvent)) chat.TurnOptions {
-	return chat.TurnOptions{ExpectedLeaf: expectedLeaf, OnDelta: onDelta}
+func channelTurnOptions(expectedLeaf *uint, attachments []channels.Attachment, onDelta func(chat.StreamEvent)) chat.TurnOptions {
+	options := chat.TurnOptions{ExpectedLeaf: expectedLeaf, OnDelta: onDelta}
+	for _, attachment := range attachments {
+		attachment.MIME = normalizedMIME(attachment.MIME, attachment.Name)
+		kind := store.MessageAttachmentUserUpload
+		if supportedVisualMIME(attachment.MIME) {
+			kind = store.MessageAttachmentVisualInput
+		}
+		options.UploadAttachments = append(options.UploadAttachments, store.MessageAttachment{
+			Path: attachment.Path, Name: attachment.Name, MIME: attachment.MIME, Kind: kind,
+		})
+	}
+	return options
+}
+
+func supportedVisualMIME(mediaType string) bool {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedMIME(mediaType, name string) string {
+	if parsed, _, err := mime.ParseMediaType(mediaType); err == nil && parsed != "" {
+		return strings.ToLower(parsed)
+	}
+	if extensionMIME := mime.TypeByExtension(filepath.Ext(name)); extensionMIME != "" {
+		parsed, _, _ := mime.ParseMediaType(extensionMIME)
+		return strings.ToLower(parsed)
+	}
+	return "application/octet-stream"
 }
 
 func (s *Service) persistInboundAttachments(sessionID uint, attachments []channels.Attachment) []channels.Attachment {
@@ -278,14 +393,17 @@ func (s *Service) persistInboundAttachments(sessionID uint, attachments []channe
 	}
 	sessionRow, err := s.sessions.Get(sessionID)
 	if err != nil {
+		log.Printf("channel: load session %d for inbound attachments: %v", sessionID, err)
 		return nil
 	}
 	projectRow, err := s.projects.Get(sessionRow.ProjectID)
 	if err != nil {
+		log.Printf("channel: load project %d for inbound attachments: %v", sessionRow.ProjectID, err)
 		return nil
 	}
 	directory := filepath.Join(s.projects.Path(*projectRow), "uploads", time.Now().Format("2006-01-02"))
-	if os.MkdirAll(directory, 0o755) != nil {
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		log.Printf("channel: create inbound attachment directory %q: %v", directory, err)
 		return nil
 	}
 	persisted := make([]channels.Attachment, 0, len(attachments))
@@ -296,6 +414,7 @@ func (s *Service) persistInboundAttachments(sessionID uint, attachments []channe
 		}
 		target := availablePath(directory, name)
 		if err := copyFile(attachment.Path, target); err != nil {
+			log.Printf("channel: persist inbound attachment %q: %v", name, err)
 			continue
 		}
 		_ = os.Remove(attachment.Path)

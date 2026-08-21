@@ -60,9 +60,11 @@ func (b *retryBot) Start() error {
 func (*retryBot) Stop() error { return nil }
 
 func (*retryBot) OnCommand(string, message.EventId, goqqrobot.Handler) {}
+func (*retryBot) OnEvent(message.EventId, goqqrobot.Handler)           {}
 
 type commandBot struct {
 	commands map[message.EventId][]string
+	events   []message.EventId
 }
 
 func (*commandBot) Start() error { return nil }
@@ -71,6 +73,10 @@ func (*commandBot) Stop() error { return nil }
 
 func (b *commandBot) OnCommand(command string, eventID message.EventId, _ goqqrobot.Handler) {
 	b.commands[eventID] = append(b.commands[eventID], command)
+}
+
+func (b *commandBot) OnEvent(eventID message.EventId, _ goqqrobot.Handler) {
+	b.events = append(b.events, eventID)
 }
 
 type retryHTTPClient struct {
@@ -111,6 +117,15 @@ func TestRegisterCommandsSupportsBothPrivateMessageEvents(t *testing.T) {
 		if !slices.Equal(bot.commands[eventID], command.Names()) {
 			t.Errorf("commands for %s = %v, want %v", eventID, bot.commands[eventID], command.Names())
 		}
+	}
+}
+
+func TestRegisterEventsSupportsBothPrivateMessageEvents(t *testing.T) {
+	bot := &commandBot{commands: make(map[message.EventId][]string)}
+	registerEvents(bot, nil)
+	want := []message.EventId{message.C2C_MSG_RECEIVE, message.C2C_MESSAGE_CREATE}
+	if !slices.Equal(bot.events, want) {
+		t.Fatalf("registered events = %v, want %v", bot.events, want)
 	}
 }
 

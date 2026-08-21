@@ -40,6 +40,9 @@ type Config struct {
 	QQAppID      string
 	QQAppSecret  string
 	QQUserOpenID string
+	// ChannelImageTextWait bounds how long an image-only channel message waits
+	// for the user's accompanying text before it is sent with an image hint.
+	ChannelImageTextWait time.Duration
 	// WeComWebhookURL receives Warn/Error notifications; empty disables delivery.
 	WeComWebhookURL string
 	// ListenAddr is the address the Gin HTTP server binds to.
@@ -109,6 +112,7 @@ func Load() (*Config, error) {
 		QQAppID:                  strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_ID")),
 		QQAppSecret:              strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_SECRET")),
 		QQUserOpenID:             strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_USER_OPENID")),
+		ChannelImageTextWait:     time.Duration(env.int("HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS", 30)) * time.Second,
 		WeComWebhookURL:          os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
 		ListenAddr:               getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
 		ProjectsRoot:             projectsRoot,
@@ -194,6 +198,9 @@ func Load() (*Config, error) {
 	qqConfigured := cfg.QQAppID != "" || cfg.QQAppSecret != "" || cfg.QQUserOpenID != ""
 	if qqConfigured && (cfg.QQAppID == "" || cfg.QQAppSecret == "") {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_QQ_APP_ID and HEPHAESTUS_QQ_APP_SECRET must be set together")
+	}
+	if cfg.ChannelImageTextWait <= 0 {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS must be positive")
 	}
 	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl or local")
