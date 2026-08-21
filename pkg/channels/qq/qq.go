@@ -51,6 +51,7 @@ type httpClient interface {
 const (
 	defaultRetryCount = 3
 	defaultRetryDelay = 5 * time.Second
+	messageCacheLimit = 1024
 )
 
 // Channel is a QQ C2C channel.
@@ -64,6 +65,8 @@ type Channel struct {
 	retries int
 	delay   time.Duration
 	mu      sync.RWMutex
+	seenMu  sync.Mutex
+	seen    map[string]time.Time
 }
 
 func init() {
@@ -86,17 +89,23 @@ func New(config Config) (*Channel, error) {
 	}
 	channel := &Channel{
 		config: config, client: api.NewClient(config.AppID, config.AppSecret),
-		http: &http.Client{Timeout: 30 * time.Second}, retries: defaultRetryCount, delay: defaultRetryDelay,
+		http: &http.Client{Timeout: 30 * time.Second}, retries: defaultRetryCount, delay: defaultRetryDelay, seen: make(map[string]time.Time),
 	}
 	created, err := goqqrobot.Init(config.AppID, config.AppSecret, channel.receive)
 	if err != nil {
 		return nil, fmt.Errorf("qq channel: initialize bot: %w", err)
 	}
-	for _, commandName := range command.Names() {
-		created.OnCommand(commandName, message.C2C_MESSAGE_CREATE, channel.receive)
-	}
+	registerCommands(created, channel.receive)
 	channel.bot = created
 	return channel, nil
+}
+
+func registerCommands(bot bot, handler goqqrobot.Handler) {
+	for _, eventID := range []message.EventId{message.C2C_MSG_RECEIVE, message.C2C_MESSAGE_CREATE} {
+		for _, commandName := range command.Names() {
+			bot.OnCommand(commandName, eventID, handler)
+		}
+	}
 }
 
 func (*Channel) Name() string { return "qq" }
@@ -206,6 +215,9 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 	if inbound.Author.UserOpenid != c.config.UserOpenID {
 		return nil
 	}
+	if c.duplicate(inbound.Id) {
+		return nil
+	}
 	attachments := make([]channels.Attachment, 0, len(inbound.Attachments))
 	for _, source := range inbound.Attachments {
 		path, err := c.downloadAttachment(context.Background(), source.Url, source.Filename)
@@ -228,6 +240,28 @@ func (c *Channel) receive(ctx *sharedtypes.Context) error {
 		})
 	}
 	return nil
+}
+
+func (c *Channel) duplicate(id string) bool {
+	if id == "" {
+		return false
+	}
+	now := time.Now()
+	c.seenMu.Lock()
+	defer c.seenMu.Unlock()
+	for seenID, seenAt := range c.seen {
+		if now.Sub(seenAt) > time.Minute {
+			delete(c.seen, seenID)
+		}
+	}
+	if len(c.seen) >= messageCacheLimit {
+		clear(c.seen)
+	}
+	if _, ok := c.seen[id]; ok {
+		return true
+	}
+	c.seen[id] = now
+	return false
 }
 
 func (c *Channel) sendOpenID(ctx context.Context, userOpenID string) error {

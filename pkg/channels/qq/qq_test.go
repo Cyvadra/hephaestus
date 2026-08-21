@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/pkg/channels"
@@ -60,6 +61,18 @@ func (*retryBot) Stop() error { return nil }
 
 func (*retryBot) OnCommand(string, message.EventId, goqqrobot.Handler) {}
 
+type commandBot struct {
+	commands map[message.EventId][]string
+}
+
+func (*commandBot) Start() error { return nil }
+
+func (*commandBot) Stop() error { return nil }
+
+func (b *commandBot) OnCommand(command string, eventID message.EventId, _ goqqrobot.Handler) {
+	b.commands[eventID] = append(b.commands[eventID], command)
+}
+
 type retryHTTPClient struct {
 	mu       sync.Mutex
 	attempts int
@@ -83,10 +96,34 @@ func (c *retryHTTPClient) Do(*http.Request) (*http.Response, error) {
 func TestSupportedCommands(t *testing.T) {
 	want := []string{
 		"help", "ping", "stop", "status", "list", "detail",
-		"switch", "activate", "deactivate", "clear", "new", "interact",
+		"switch", "activate", "deactivate", "clear", "new", "last", "replay", "interact",
 	}
 	if !slices.Equal(command.Names(), want) {
 		t.Fatalf("command.Names() = %v, want %v", command.Names(), want)
+	}
+}
+
+func TestRegisterCommandsSupportsBothPrivateMessageEvents(t *testing.T) {
+	bot := &commandBot{commands: make(map[message.EventId][]string)}
+	registerCommands(bot, nil)
+
+	for _, eventID := range []message.EventId{message.C2C_MSG_RECEIVE, message.C2C_MESSAGE_CREATE} {
+		if !slices.Equal(bot.commands[eventID], command.Names()) {
+			t.Errorf("commands for %s = %v, want %v", eventID, bot.commands[eventID], command.Names())
+		}
+	}
+}
+
+func TestDuplicateMessageIDIsIgnored(t *testing.T) {
+	channel := &Channel{seen: make(map[string]time.Time)}
+	if channel.duplicate("message-1") {
+		t.Fatal("first message was treated as a duplicate")
+	}
+	if !channel.duplicate("message-1") {
+		t.Fatal("duplicate message was not ignored")
+	}
+	if channel.duplicate("") {
+		t.Fatal("empty message id was treated as a duplicate")
 	}
 }
 
