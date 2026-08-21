@@ -145,6 +145,7 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 			"web_fetch":  {},
 		})
 	}
+	toolset = filterChildSessionTools(prep.sess, toolset)
 	prep.toolset = toolset
 
 	proj, err := p.projects.Get(prep.sess.ProjectID)
@@ -176,6 +177,17 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	prep.compRow = compRow
 
 	return prep, nil
+}
+
+func filterChildSessionTools(sess store.Session, toolset []toolkit.Tool) []toolkit.Tool {
+	if sess.ParentSubagentRunID == nil {
+		return toolset
+	}
+	return filterTools(toolset, map[string]struct{}{
+		"spawn": {},
+		"fork":  {},
+		"await": {},
+	})
 }
 
 func renderSessionIdentity(reg *registry.Registry, settings store.SessionSettings, vars ...registry.PromptVars) (registry.Identity, error) {

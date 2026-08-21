@@ -110,6 +110,24 @@ func TestApplyTurnOptionsWithoutOverridesPreservesDefaults(t *testing.T) {
 	}
 }
 
+func TestChildSessionToolsetExcludesSubagentTools(t *testing.T) {
+	tools := []toolkit.Tool{
+		namedTool{name: "shell"},
+		namedTool{name: "spawn"},
+		namedTool{name: "fork"},
+		namedTool{name: "await"},
+	}
+
+	if got := filterChildSessionTools(store.Session{}, tools); len(got) != len(tools) {
+		t.Fatalf("root session tools = %+v, want all tools", got)
+	}
+	parentRunID := uint(1)
+	got := filterChildSessionTools(store.Session{ParentSubagentRunID: &parentRunID}, tools)
+	if len(got) != 1 || got[0].Name() != "shell" {
+		t.Fatalf("child session tools = %+v, want shell only", got)
+	}
+}
+
 func TestRenderSessionIdentityRendersSwitchedIdentity(t *testing.T) {
 	reg := &registry.Registry{
 		Identities: map[string]registry.Identity{
