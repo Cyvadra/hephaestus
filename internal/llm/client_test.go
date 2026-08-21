@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -109,6 +111,78 @@ func TestCallRoutesLocalModelAlias(t *testing.T) {
 	}
 	if localRequest.Model != "local-model" {
 		t.Fatalf("local request model = %q, want local-model", localRequest.Model)
+	}
+}
+
+func TestCallAttachesOnlyFinalUserVisualUploads(t *testing.T) {
+	var request struct {
+		Model    string            `json:"model"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"},{"id":"deepseek-v4-flash-vision-exp"}]}`))
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	directory := filepath.Join(workspace, "uploads", "2026-08-22")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	image := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	if err := os.WriteFile(filepath.Join(directory, "scan.png"), image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	visual := store.MessageAttachment{Path: "uploads/2026-08-22/scan.png", Name: "scan.png", MIME: "image/png", Kind: store.MessageAttachmentVisualInput}
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+
+	ctx := toolkit.WithWorkspace(context.Background(), workspace)
+	if _, err := client.Call(ctx, registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "describe", Attachments: []store.MessageAttachment{visual}}}, nil); err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+	if request.Model != ds4.ModelDeepSeekV4FlashVisionExp {
+		t.Fatalf("model = %q, want %q", request.Model, ds4.ModelDeepSeekV4FlashVisionExp)
+	}
+	var final []struct {
+		Type     string `json:"type"`
+		ImageURL struct {
+			URL    string `json:"url"`
+			Detail string `json:"detail"`
+		} `json:"image_url"`
+	}
+	if err := json.Unmarshal(request.Messages[len(request.Messages)-1], &struct {
+		Content *[]struct {
+			Type     string `json:"type"`
+			ImageURL struct {
+				URL    string `json:"url"`
+				Detail string `json:"detail"`
+			} `json:"image_url"`
+		} `json:"content"`
+	}{Content: &final}); err != nil {
+		t.Fatalf("decode final user content: %v", err)
+	}
+	if len(final) != 2 || final[1].Type != "image_url" || !strings.HasPrefix(final[1].ImageURL.URL, "data:image/png;base64,") || final[1].ImageURL.Detail != ds4.ImageDetailOriginal {
+		t.Fatalf("final user content = %+v", final)
+	}
+
+	if _, err := client.Call(ctx, registry.Identity{}, []store.ChatMessage{
+		{Role: ds4.RoleUser, Content: "describe", Attachments: []store.MessageAttachment{visual}},
+		{Role: ds4.RoleAssistant, Content: "image description"},
+		{Role: ds4.RoleUser, Content: "follow-up"},
+	}, nil); err != nil {
+		t.Fatalf("follow-up Call() error = %v", err)
+	}
+	if request.Model != ds4.ModelDeepSeekV4Flash {
+		t.Fatalf("follow-up model = %q, want %q", request.Model, ds4.ModelDeepSeekV4Flash)
 	}
 }
 

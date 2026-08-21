@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,28 +23,24 @@ var (
 	ErrTotalTooLarge = errors.New("upload: total file size exceeds limit")
 )
 
-// Recognizer extracts text from an image.
-type Recognizer interface {
-	Recognize(context.Context, []byte) (string, error)
-}
-
 // Config controls attachment limits and eligible extensions.
 type Config struct {
 	TextExtensions     []string
 	ImageExtensions    []string
 	InlineTextMaxBytes int64
-	OCRImageMaxBytes   int64
 	FileMaxBytes       int64
 	TotalMaxBytes      int64
 	MaxFiles           int
-	Recognizer         Recognizer
 	Now                func() time.Time
 }
 
 // Attachment is the persisted representation returned to the API client.
 type Attachment struct {
 	Path            string `json:"path"`
+	Name            string `json:"name"`
 	Size            int64  `json:"size"`
+	MIME            string `json:"mime"`
+	VisualInput     bool   `json:"visual_input"`
 	ContentIncluded bool   `json:"content_included"`
 }
 
@@ -51,7 +48,6 @@ type Attachment struct {
 type Result struct {
 	Prefix      string       `json:"-"`
 	Attachments []Attachment `json:"attachments"`
-	Warnings    []string     `json:"warnings,omitempty"`
 	created     []string
 }
 
@@ -82,10 +78,10 @@ type Processor struct {
 }
 
 func New(config Config) (*Processor, error) {
-	if config.InlineTextMaxBytes <= 0 || config.OCRImageMaxBytes <= 0 || config.FileMaxBytes <= 0 || config.TotalMaxBytes <= 0 || config.MaxFiles <= 0 {
+	if config.InlineTextMaxBytes <= 0 || config.FileMaxBytes <= 0 || config.TotalMaxBytes <= 0 || config.MaxFiles <= 0 {
 		return nil, errors.New("upload: limits must be positive")
 	}
-	if config.OCRImageMaxBytes > config.FileMaxBytes || config.FileMaxBytes > config.TotalMaxBytes {
+	if config.FileMaxBytes > config.TotalMaxBytes {
 		return nil, errors.New("upload: incompatible size limits")
 	}
 	if config.Now == nil {
@@ -105,7 +101,7 @@ func (p *Processor) MaxRequestBytes() int64 {
 }
 
 // Process saves files and creates prompt blocks in upload order.
-func (p *Processor) Process(ctx context.Context, projectDir string, files []*multipart.FileHeader) (Result, error) {
+func (p *Processor) Process(_ context.Context, projectDir string, files []*multipart.FileHeader) (Result, error) {
 	if len(files) > p.config.MaxFiles {
 		return Result{}, ErrTooManyFiles
 	}
@@ -141,11 +137,11 @@ func (p *Processor) Process(ctx context.Context, projectDir string, files []*mul
 			result.created = append(result.created, path)
 		}
 		relativePath := filepath.ToSlash(filepath.Join("uploads", filepath.Base(directory), filepath.Base(path)))
-		attachment := Attachment{Path: relativePath, Size: file.Size}
-		content, warning := p.extract(ctx, path, extension(name), file.Size)
-		if warning != "" {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", relativePath, warning))
-		}
+		attachment := Attachment{Path: relativePath, Name: filepath.Base(path), Size: file.Size}
+		content := p.extractText(path, extension(name), file.Size)
+		attachment.MIME = detectMIME(path)
+		_, imageExtension := p.imageExtensions[extension(name)]
+		attachment.VisualInput = imageExtension && supportedVisualMIME(attachment.MIME)
 		if content != "" {
 			attachment.ContentIncluded = true
 		}
@@ -195,35 +191,41 @@ func (p *Processor) persist(directory, name string, file *multipart.FileHeader) 
 	}
 }
 
-func (p *Processor) extract(ctx context.Context, path, ext string, size int64) (string, string) {
+func (p *Processor) extractText(path, ext string, size int64) string {
 	if _, ok := p.textExtensions[ext]; ok && size <= p.config.InlineTextMaxBytes {
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return "", "could not read text content"
+			return ""
 		}
 		if !utf8.Valid(content) {
-			return "", "text content is not valid UTF-8"
+			return ""
 		}
-		return string(content), ""
+		return string(content)
 	}
-	if _, ok := p.imageExtensions[ext]; ok {
-		if size > p.config.OCRImageMaxBytes {
-			return "", "image exceeds OCR size limit"
-		}
-		if p.config.Recognizer == nil {
-			return "", "OCR is not configured"
-		}
-		image, err := os.ReadFile(path)
-		if err != nil {
-			return "", "could not read image content"
-		}
-		content, err := p.config.Recognizer.Recognize(ctx, image)
-		if err != nil || strings.TrimSpace(content) == "" {
-			return "", "OCR could not extract text"
-		}
-		return content, ""
+	return ""
+}
+
+func detectMIME(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
 	}
-	return "", ""
+	defer file.Close()
+	var header [512]byte
+	count, err := file.Read(header[:])
+	if err != nil {
+		return ""
+	}
+	return http.DetectContentType(header[:count])
+}
+
+func supportedVisualMIME(mediaType string) bool {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func promptBlock(path string, size int64, content string) string {

@@ -21,8 +21,8 @@ which is licensed under the MIT License.
 - Supports local OpenAI-compatible model servers alongside DeepSeek. Model
 	routing uses an identity's `preferred_model`; a local model takes precedence
 	when it has the same advertised ID as DeepSeek.
-- Stores small, approved text attachments in the conversation context and can
-	extract text from supported images using Baidu OCR.
+- Stores small, approved text attachments in the conversation context and sends
+	supported images directly to vision-capable LLMs.
 - Provides slash commands for session control and runtime selection, including
 	`/help`, `/status`, `/list`, `/switch`, `/activate`, `/deactivate`, `/clear`,
 	`/new`, `/stop`, and `/interact`.
@@ -146,15 +146,15 @@ redirect, and subresource requests pass through a loopback filtering proxy
 that blocks private and local network destinations. Firecrawl sends the target
 URL and fetched content through Firecrawl's infrastructure.
 
-### Files and OCR
+### Files and Images
 
 Each chat message accepts up to five attachments. Hephaestus stores them in
 the session project's `uploads/YYYY-MM-DD` directory. Text files with allowed
 extensions and within the configured size limit are included directly in the
-prompt. Supported images are sent to Baidu OCR when both OCR credentials are
-available. Other files, and files whose OCR fails, remain available by their
-project-relative path and size; the chat response reports an extraction
-warning when applicable.
+prompt. JPEG, PNG, GIF, and WebP uploads are sent directly to the vision model
+for the current turn and when regenerating that turn's reply. Later text-only
+turns retain the file metadata but do not resend earlier images. Other files,
+including BMP images, remain available by their project-relative path and size.
 
 ### Registry API
 
@@ -237,21 +237,19 @@ automatically when seven or fewer days remain. The JWT is also stored in an
 | `HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE` | `google_light` | SerpAPI search engine identifier. |
 | `HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL` | none | Base URL for an optional SearXNG provider. |
 | `HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS` | `4000` | Maximum size of an LLM-generated search-result digest. |
-| `HEPHAESTUS_BAIDU_OCR_API_KEY` | none | Baidu OCR API key; must be set with the OCR secret. |
-| `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` | none | Baidu OCR secret key; must be set with the OCR API key. |
+| `HEPHAESTUS_BAIDU_OCR_API_KEY` | none | Deprecated and unused Baidu OCR API key; retained for configuration compatibility. |
+| `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` | none | Deprecated and unused Baidu OCR secret key; retained for configuration compatibility. |
 | `HEPHAESTUS_QQ_APP_ID` | none | QQ Bot AppID for the optional QQ chat Channel; set all three QQ variables together. |
 | `HEPHAESTUS_QQ_APP_SECRET` | none | QQ Bot AppSecret used by the Channel WebSocket and message APIs. |
 | `HEPHAESTUS_QQ_USER_OPENID` | none | Bot-scoped QQ user OpenID allowed to chat with this single-user installation. |
 | `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | Comma-separated text extensions eligible for prompt inclusion. |
-| `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,bmp` | Comma-separated image extensions eligible for OCR. |
+| `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,gif,webp` | Comma-separated extensions eligible for direct vision input after MIME validation. |
 | `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | Largest text file included directly in a prompt. |
-| `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES` | `4194304` | Largest image sent to OCR. |
 | `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | Largest individual attachment. |
 | `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | Largest combined attachment payload per message. |
 | `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | Maximum attachments per message. |
 
-The OCR image limit cannot exceed the per-file limit, and the per-file limit
-cannot exceed the total message limit.
+The per-file limit cannot exceed the total message limit. `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES` is deprecated and ignored.
 
 ### Subagents
 

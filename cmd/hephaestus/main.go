@@ -47,7 +47,6 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/Cyvadra/hephaestus/internal/workflow"
-	"github.com/Cyvadra/hephaestus/pkg/baidu/ocr"
 	"github.com/Cyvadra/hephaestus/pkg/channels"
 	channelqq "github.com/Cyvadra/hephaestus/pkg/channels/qq"
 	"github.com/Cyvadra/hephaestus/pkg/weather"
@@ -223,11 +222,9 @@ func main() {
 		TextExtensions:     cfg.UploadTextExtensions,
 		ImageExtensions:    cfg.UploadImageExtensions,
 		InlineTextMaxBytes: cfg.UploadInlineTextMaxBytes,
-		OCRImageMaxBytes:   cfg.UploadOCRImageMaxBytes,
 		FileMaxBytes:       cfg.UploadFileMaxBytes,
 		TotalMaxBytes:      cfg.UploadTotalMaxBytes,
 		MaxFiles:           cfg.UploadMaxFiles,
-		Recognizer:         newOCRRecognizer(cfg.BaiduOCRAPIKey, cfg.BaiduOCRSecretKey),
 	})
 	if err != nil {
 		log.Fatalf("upload: %v", err)
@@ -262,8 +259,6 @@ func main() {
 	schedulerWG.Wait()
 }
 
-type ocrRecognizer struct{}
-
 // warnIfExposed logs a warning when the API binds to a non-loopback
 // address, because exposing a process that can execute local shell commands
 // requires TLS and trusted network boundaries even when login is enabled.
@@ -277,26 +272,4 @@ func warnIfExposed(addr string) {
 		return
 	}
 	log.Printf("warning: HEPHAESTUS_LISTEN_ADDR %q is not loopback; serve the authenticated API through TLS", addr)
-}
-
-func newOCRRecognizer(apiKey, secretKey string) upload.Recognizer {
-	if apiKey == "" {
-		return nil
-	}
-	ocr.Init(apiKey, secretKey)
-	return ocrRecognizer{}
-}
-
-func (ocrRecognizer) Recognize(ctx context.Context, image []byte) (string, error) {
-	result, err := ocr.RecognizeImage(ctx, image, ocr.Options{})
-	if err != nil {
-		return "", err
-	}
-	lines := make([]string, 0, len(result.WordsResult))
-	for _, word := range result.WordsResult {
-		if word.Words != "" {
-			lines = append(lines, word.Words)
-		}
-	}
-	return strings.Join(lines, "\n"), nil
 }

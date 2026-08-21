@@ -340,7 +340,7 @@ func (s *Server) prepareMessageRunFromRequest(c *gin.Context, text string, req s
 
 func messageRunExecute(s *Server, sessionID uint, req sendMessageRequest, uploadResult *upload.Result) chatrun.Execute {
 	return func(ctx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
-		result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(onDelta))
+		result, err := s.pipeline.Run(ctx, sessionID, req.Text, turnOptions(req, uploadResult, onDelta))
 		if result == nil {
 			rollbackUpload(uploadResult)
 			return nil, err

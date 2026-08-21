@@ -597,33 +597,6 @@ const docTemplate = `{
             }
         },
         "/sessions": {
-            "get": {
-                "description": "Returns every session ordered by last_message_time descending.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sessions"
-                ],
-                "summary": "List all sessions",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Session"
-                            }
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/internal_server.errorResponse"
-                        }
-                    }
-                }
-            },
             "post": {
                 "description": "Creates a new Session from the named Concierge's current settings.",
                 "consumes": [
@@ -1403,6 +1376,17 @@ const docTemplate = `{
         "datatypes.JSONType-github_com_Cyvadra_hephaestus_internal_store_SessionSettings": {
             "type": "object"
         },
+        "github_com_Cyvadra_hephaestus_internal_command.ReplayedMessage": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_Cyvadra_hephaestus_internal_command.SessionTarget": {
             "type": "object",
             "properties": {
@@ -1483,7 +1467,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "attachments": {
-                    "description": "Attachments are files explicitly delivered by the assistant. They are\nloaded for API responses and never included in LLM context messages.",
+                    "description": "Attachments are files uploaded with a user message or delivered by an\nassistant. Visual inputs are included only when their user message is\nthe final user message in an LLM request.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.MessageAttachment"
@@ -1598,6 +1582,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
                 },
                 "messageID": {
                     "type": "integer"
@@ -1717,6 +1704,23 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "github_com_Cyvadra_hephaestus_internal_store.SubagentCategory": {
+            "type": "string",
+            "enum": [
+                "coding",
+                "operations",
+                "research",
+                "background",
+                "general"
+            ],
+            "x-enum-varnames": [
+                "SubagentCategoryCoding",
+                "SubagentCategoryOperations",
+                "SubagentCategoryResearch",
+                "SubagentCategoryBackground",
+                "SubagentCategoryGeneral"
+            ]
         },
         "github_com_Cyvadra_hephaestus_internal_store.SubagentMode": {
             "type": "string",
@@ -2025,9 +2029,9 @@ const docTemplate = `{
         "internal_server.historyResponse": {
             "type": "object",
             "properties": {
-				"auto_approve": {
-					"type": "boolean"
-				},
+                "auto_approve": {
+                    "type": "boolean"
+                },
                 "messages": {
                     "type": "array",
                     "items": {
@@ -2066,6 +2070,9 @@ const docTemplate = `{
             ],
             "properties": {
                 "digest": {
+                    "type": "string"
+                },
+                "proof_nonce": {
                     "type": "string"
                 },
                 "salt": {
@@ -2127,6 +2134,13 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "replayed_messages": {
+                    "description": "ReplayedMessages are transient history copies produced by /last and /replay.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_command.ReplayedMessage"
+                    }
+                },
                 "session_target": {
                     "description": "SessionTarget asks the client to navigate to another existing session.\nIt is set only by slash commands and does not represent a session write.",
                     "allOf": [
@@ -2152,6 +2166,9 @@ const docTemplate = `{
         "internal_server.subagentRunResponse": {
             "type": "object",
             "properties": {
+                "category": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.SubagentCategory"
+                },
                 "child_session_id": {
                     "type": "integer"
                 },

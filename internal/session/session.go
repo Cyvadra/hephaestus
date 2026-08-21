@@ -71,8 +71,8 @@ func (s *Service) ListByProject(projectID uint) ([]store.Session, error) {
 	return sessions, nil
 }
 
-// Attachment loads one delivered attachment after validating that it belongs
-// to sessionID and that the attachment's Project matches the Session Project.
+// Attachment loads one message attachment after validating that it belongs to
+// sessionID and that the attachment's Project matches the Session Project.
 func (s *Service) Attachment(sessionID, attachmentID uint) (*store.Session, *store.MessageAttachment, error) {
 	sess, err := s.Get(sessionID)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Service) Attachment(sessionID, attachmentID uint) (*store.Session, *sto
 	return sess, &attachment, nil
 }
 
-// MessageAttachments returns delivered attachments for one message.
+// MessageAttachments returns attachments for one message.
 func (s *Service) MessageAttachments(messageID uint) ([]store.MessageAttachment, error) {
 	var attachments []store.MessageAttachment
 	if err := s.db.Where("message_id = ?", messageID).Find(&attachments).Error; err != nil {
@@ -324,6 +324,9 @@ func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parent
 		if err := insertChain(tx, sessionID, parentID, out); err != nil {
 			return err
 		}
+		if err := attachMessageUploads(tx, sessionID, projectID, out); err != nil {
+			return err
+		}
 		if len(deliveries) > 0 {
 			final := &out[len(out)-1]
 			if final.Role != "assistant" {
@@ -333,7 +336,7 @@ func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parent
 			for _, delivery := range deliveries {
 				attachments = append(attachments, store.MessageAttachment{
 					SessionID: sessionID, MessageID: final.ID, ProjectID: projectID,
-					Path: delivery.Path, Name: delivery.Name, Size: delivery.Size, MIME: delivery.MIME,
+					Path: delivery.Path, Name: delivery.Name, Size: delivery.Size, MIME: delivery.MIME, Kind: store.MessageAttachmentAssistantDelivery,
 				})
 			}
 			if err := tx.Create(&attachments).Error; err != nil {
@@ -370,6 +373,35 @@ func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parent
 		return nil, err
 	}
 	return out, nil
+}
+
+func attachMessageUploads(tx *gorm.DB, sessionID, projectID uint, messages []store.ChatMessage) error {
+	for index := range messages {
+		message := &messages[index]
+		if len(message.Attachments) == 0 {
+			continue
+		}
+		if message.Role != "user" {
+			return fmt.Errorf("session: uploaded attachments require a user message")
+		}
+		attachments := make([]store.MessageAttachment, len(message.Attachments))
+		copy(attachments, message.Attachments)
+		for attachmentIndex := range attachments {
+			attachment := &attachments[attachmentIndex]
+			attachment.ID = 0
+			attachment.SessionID = sessionID
+			attachment.MessageID = message.ID
+			attachment.ProjectID = projectID
+			if attachment.Kind == "" {
+				attachment.Kind = store.MessageAttachmentUserUpload
+			}
+		}
+		if err := tx.Create(&attachments).Error; err != nil {
+			return fmt.Errorf("session: attach uploaded files: %w", err)
+		}
+		message.Attachments = attachments
+	}
+	return nil
 }
 
 // AppendMessagesDetached inserts msgs as a single chain below parentID
@@ -417,9 +449,12 @@ func insertChain(tx *gorm.DB, sessionID uint, parentID *uint, msgs []store.ChatM
 		if msgs[i].Timestamp.IsZero() {
 			msgs[i].Timestamp = time.Now()
 		}
+		attachments := msgs[i].Attachments
+		msgs[i].Attachments = nil
 		if err := tx.Create(&msgs[i]).Error; err != nil {
 			return fmt.Errorf("session: append message %d/%d: %w", i+1, len(msgs), err)
 		}
+		msgs[i].Attachments = attachments
 		parent = &msgs[i].ID
 	}
 	return nil
@@ -630,6 +665,7 @@ func (s *Service) fork(sessionID uint, leafID *uint) (*store.Session, error) {
 						Name:      sourceAttachment.Name,
 						Size:      sourceAttachment.Size,
 						MIME:      sourceAttachment.MIME,
+						Kind:      sourceAttachment.Kind,
 					})
 				}
 				if err := tx.Create(&attachments).Error; err != nil {

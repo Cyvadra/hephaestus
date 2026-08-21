@@ -437,7 +437,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 	registrationID := s.commands.RegisterCancel(sessionID, cancel)
 	defer s.commands.UnregisterCancel(sessionID, registrationID)
 
-	result, err := s.pipeline.Run(ctx, sessionID, req.Text, req.turnOptions(nil))
+	result, err := s.pipeline.Run(ctx, sessionID, req.Text, turnOptions(req, uploadResult, nil))
 	if err != nil && result == nil {
 		rollbackUpload(uploadResult)
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -540,6 +540,24 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 	}
 	req.Text = result.Prefix + req.Text
 	return sessionID, req, &result, true
+}
+
+func turnOptions(req sendMessageRequest, uploadResult *upload.Result, onDelta func(chat.StreamEvent)) chat.TurnOptions {
+	opts := req.turnOptions(onDelta)
+	if uploadResult == nil {
+		return opts
+	}
+	opts.UploadAttachments = make([]store.MessageAttachment, 0, len(uploadResult.Attachments))
+	for _, attachment := range uploadResult.Attachments {
+		kind := store.MessageAttachmentUserUpload
+		if attachment.VisualInput {
+			kind = store.MessageAttachmentVisualInput
+		}
+		opts.UploadAttachments = append(opts.UploadAttachments, store.MessageAttachment{
+			Path: attachment.Path, Name: attachment.Name, Size: attachment.Size, MIME: attachment.MIME, Kind: kind,
+		})
+	}
+	return opts
 }
 
 func (s *Server) bindMessageRequest(c *gin.Context, req *sendMessageRequest) ([]*multipart.FileHeader, error) {

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -59,7 +61,10 @@ func NewWithBaseURL(apiKey, baseURL string) *Client {
 // entry the caller wants in context; Call does not add anything beyond
 // identity's own system prompt and injected messages.
 func (c *Client) Call(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool) (*ds4.ChatResponse, error) {
-	builder := c.buildChat(identity, messages, toolset)
+	builder, err := c.buildChat(ctx, identity, messages, toolset)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := builder.DoWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("llm: chat completion: %w", err)
@@ -71,7 +76,11 @@ func (c *Client) Call(ctx context.Context, identity registry.Identity, messages 
 // context as Call, but disables thinking and tools for a structured side call.
 func (c *Client) CallWithoutThinking(ctx context.Context, identity registry.Identity, messages []store.ChatMessage) (string, error) {
 	identity.ReasoningEffort = registry.ReasoningNone
-	resp, err := c.buildChat(identity, messages, nil).DoWithContext(ctx)
+	builder, err := c.buildChat(ctx, identity, messages, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := builder.DoWithContext(ctx)
 	if err != nil {
 		return "", fmt.Errorf("llm: chat completion without thinking: %w", err)
 	}
@@ -111,7 +120,10 @@ type ToolCallDelta struct {
 // chunk, including tool_calls keyed by their index), so callers such as the
 // tool loop don't need to special-case streaming vs non-streaming responses.
 func (c *Client) CallStream(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
-	builder := c.buildChat(identity, messages, toolset)
+	builder, err := c.buildChat(ctx, identity, messages, toolset)
+	if err != nil {
+		return nil, err
+	}
 	return c.stream(ctx, builder, onDelta)
 }
 
@@ -127,7 +139,10 @@ func (c *Client) ContinueStream(ctx context.Context, identity registry.Identity,
 	if identity.MaxTokens == 0 || identity.MaxTokens > continuationMaxTokens {
 		identity.MaxTokens = continuationMaxTokens
 	}
-	builder := c.buildChat(identity, withoutToolCalls(messages), nil)
+	builder, err := c.buildChat(ctx, identity, withoutToolCalls(messages), nil)
+	if err != nil {
+		return nil, err
+	}
 	builder.AppendResponse(&ds4.ChatResponse{Choices: []ds4.Choice{{Message: store2ds4(prefix)}}}).Continue(0)
 	return c.stream(ctx, builder, onDelta)
 }
@@ -216,7 +231,7 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 
 // buildChat constructs the shared ChatBuilder state for both Call and
 // CallStream from an Identity, its history, and its available tools.
-func (c *Client) buildChat(identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool) *ds4.ChatBuilder {
+func (c *Client) buildChat(ctx context.Context, identity registry.Identity, messages []store.ChatMessage, toolset []toolkit.Tool) (*ds4.ChatBuilder, error) {
 	builder := c.ds4.Chat().Model(modelOrDefault(identity.PreferredModel))
 
 	builder.System(identity.SystemPrompt)
@@ -252,7 +267,78 @@ func (c *Client) buildChat(identity registry.Identity, messages []store.ChatMess
 		builder.Tool(ds4.NewFunction(t.Name(), description, t.Parameters()))
 	}
 
-	return builder
+	if err := addFinalUserImages(ctx, builder, messages); err != nil {
+		return nil, err
+	}
+	return builder, nil
+}
+
+func addFinalUserImages(ctx context.Context, builder *ds4.ChatBuilder, messages []store.ChatMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	final := messages[len(messages)-1]
+	if final.Role != ds4.RoleUser {
+		return nil
+	}
+	workspace, ok := toolkit.WorkspaceFromContext(ctx)
+	for _, attachment := range final.Attachments {
+		if attachment.Kind != store.MessageAttachmentVisualInput {
+			continue
+		}
+		if !ok {
+			return fmt.Errorf("llm: read visual upload %q: workspace is unavailable", attachment.Name)
+		}
+		path, err := resolveVisualUpload(workspace, attachment.Path)
+		if err != nil {
+			return fmt.Errorf("llm: read visual upload %q: %w", attachment.Name, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("llm: read visual upload %q: %w", attachment.Name, err)
+		}
+		if !supportedVisualMIME(attachment.MIME) {
+			return fmt.Errorf("llm: visual upload %q has unsupported MIME type %q", attachment.Name, attachment.MIME)
+		}
+		builder.WithImageBase64(data, attachment.MIME, ds4.ImageDetailOriginal)
+	}
+	return nil
+}
+
+func resolveVisualUpload(workspace, relativePath string) (string, error) {
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	if filepath.IsAbs(relativePath) {
+		return "", fmt.Errorf("attachment path must be relative")
+	}
+	candidate := filepath.Join(root, filepath.FromSlash(relativePath))
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("attachment path escapes workspace")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("attachment path is not a regular file")
+	}
+	return resolved, nil
+}
+
+func supportedVisualMIME(mediaType string) bool {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func modelOrDefault(model string) string {

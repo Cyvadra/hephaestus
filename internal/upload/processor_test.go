@@ -7,39 +7,31 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
 
-type fakeRecognizer struct {
-	text string
-	err  error
-}
-
-func (r fakeRecognizer) Recognize(_ context.Context, _ []byte) (string, error) { return r.text, r.err }
-
-func TestProcessInlinesTextAndOCR(t *testing.T) {
-	processor := newProcessor(t, fakeRecognizer{text: "first line\nsecond line"})
+func TestProcessInlinesTextAndClassifiesVisualImages(t *testing.T) {
+	processor := newProcessor(t)
 	result, err := processor.Process(context.Background(), t.TempDir(), multipartFiles(t,
 		filePart{name: "notes.md", content: "# Notes"},
-		filePart{name: "scan.png", content: "image"},
+		filePart{name: "scan.png", content: string(validPNG)},
 	))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[file name]: uploads/2026-08-10/notes.md\n[file size]: 0.0 KB\n[file content begin]\n# Notes\n[file content end]\n\n[file name]: uploads/2026-08-10/scan.png\n[file size]: 0.0 KB\n[file content begin]\nfirst line\nsecond line\n[file content end]\n\n"
+	want := "[file name]: uploads/2026-08-10/notes.md\n[file size]: 0.0 KB\n[file content begin]\n# Notes\n[file content end]\n\n[file name]: uploads/2026-08-10/scan.png\n[file size]: 0.0 KB\n\n"
 	if result.Prefix != want {
 		t.Fatalf("prefix = %q, want %q", result.Prefix, want)
 	}
-	if len(result.Attachments) != 2 || !result.Attachments[0].ContentIncluded || !result.Attachments[1].ContentIncluded {
+	if len(result.Attachments) != 2 || !result.Attachments[0].ContentIncluded || !result.Attachments[1].VisualInput || result.Attachments[1].MIME != "image/png" {
 		t.Fatalf("unexpected attachments: %+v", result.Attachments)
 	}
 }
 
 func TestProcessReusesDigestAndRenamesConflicts(t *testing.T) {
 	project := t.TempDir()
-	processor := newProcessor(t, nil)
+	processor := newProcessor(t)
 	first, err := processor.Process(context.Background(), project, multipartFiles(t, filePart{name: "report.txt", content: "one"}))
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +58,7 @@ func TestProcessReusesDigestAndRenamesConflicts(t *testing.T) {
 
 func TestResultRollbackRemovesOnlyNewFiles(t *testing.T) {
 	project := t.TempDir()
-	processor := newProcessor(t, nil)
+	processor := newProcessor(t)
 	first, err := processor.Process(context.Background(), project, multipartFiles(t, filePart{name: "report.txt", content: "one"}))
 	if err != nil {
 		t.Fatal(err)
@@ -89,14 +81,14 @@ func TestResultRollbackRemovesOnlyNewFiles(t *testing.T) {
 	}
 }
 
-func TestProcessDegradesOCRAndRejectsLimits(t *testing.T) {
-	processor := newProcessor(t, nil)
-	result, err := processor.Process(context.Background(), t.TempDir(), multipartFiles(t, filePart{name: "scan.jpg", content: "image"}))
+func TestProcessDoesNotTreatUnsupportedImagesAsVisualInput(t *testing.T) {
+	processor := newProcessor(t)
+	result, err := processor.Process(context.Background(), t.TempDir(), multipartFiles(t, filePart{name: "scan.bmp", content: "image"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Attachments[0].ContentIncluded || len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "OCR is not configured") {
-		t.Fatalf("unexpected OCR fallback: %+v", result)
+	if result.Attachments[0].VisualInput || result.Attachments[0].ContentIncluded {
+		t.Fatalf("unexpected non-visual attachment: %+v", result.Attachments[0])
 	}
 
 	processor.config.MaxFiles = 1
@@ -136,17 +128,23 @@ func multipartFiles(t *testing.T, parts ...filePart) []*multipart.FileHeader {
 	return form.File["files"]
 }
 
-func newProcessor(t *testing.T, recognizer Recognizer) *Processor {
+var validPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+	0x89,
+}
+
+func newProcessor(t *testing.T) *Processor {
 	t.Helper()
 	processor, err := New(Config{
 		TextExtensions:     []string{"md", "txt"},
-		ImageExtensions:    []string{"png", "jpg"},
+		ImageExtensions:    []string{"png", "jpg", "jpeg", "gif", "webp"},
 		InlineTextMaxBytes: 10 << 10,
-		OCRImageMaxBytes:   4 << 20,
 		FileMaxBytes:       50 << 20,
 		TotalMaxBytes:      250 << 20,
 		MaxFiles:           5,
-		Recognizer:         recognizer,
 		Now:                func() time.Time { return time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {

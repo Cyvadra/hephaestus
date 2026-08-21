@@ -5,15 +5,17 @@ go 1.26.6
 require (
 	github.com/6tail/lunar-go v1.4.6
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Cyvadra/ds4 v0.1.1-0.20260812185826-cc18b1e153ee
+	github.com/Cyvadra/ds4 v0.2.0
 	github.com/ProgramCX/GoQQBot v0.0.0
 	github.com/chromedp/chromedp v0.16.0
 	github.com/deminzhang/qimen-go v0.0.10-0.20260611034756-4d3f58fa0f40
 	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.12.0
 	github.com/glebarez/sqlite v1.11.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
+	github.com/liuzl/gocc v0.0.0-20231231122217-0372e1059ca5
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/serpapi/serpapi-golang v0.0.0-20260126142127-0e41c7993cda
 	github.com/swaggo/files v1.0.1
@@ -31,6 +33,7 @@ replace github.com/ProgramCX/GoQQBot => github.com/Cyvadra/GoQQBot v0.0.0-202608
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/adamzy/cedar-go v0.0.0-20170805034717-80a9c64b256d // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.2 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
@@ -61,7 +64,6 @@ require (
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -73,9 +75,6 @@ require (
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/liuzl/cedar-go v0.0.0-20170805034717-80a9c64b256d // indirect
 	github.com/liuzl/da v0.0.0-20180704015230-14771aad5b1d // indirect
-	github.com/liuzl/gocc v0.0.0-20231231122217-0372e1059ca5 // indirect
-	github.com/lxn/walk v0.0.0-20210112085537-c389da54e794 // indirect
-	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -97,7 +96,6 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	gopkg.in/Knetic/govaluate.v3 v3.0.0 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

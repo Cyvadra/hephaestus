@@ -276,13 +276,14 @@ func keepKnownPlugins(names []string, reg *plugin.Registry, dirty *bool) []strin
 // continue from, and a caller-provided optimistic concurrency guard. Branch
 // selection is read-only until the turn is committed.
 type TurnOptions struct {
-	ExpectedLeaf    *uint
-	SelectedLeaf    *uint
-	SelectRoot      bool
-	OnDelta         func(StreamEvent)
-	ReasoningEffort string
-	DisabledTools   []string
-	NotificationIDs []uint
+	ExpectedLeaf      *uint
+	SelectedLeaf      *uint
+	SelectRoot        bool
+	UploadAttachments []store.MessageAttachment
+	OnDelta           func(StreamEvent)
+	ReasoningEffort   string
+	DisabledTools     []string
+	NotificationIDs   []uint
 }
 
 func applyTurnOptions(identity registry.Identity, toolset []toolkit.Tool, opts TurnOptions) (registry.Identity, []toolkit.Tool) {
@@ -359,7 +360,7 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 		return nil, err
 	}
 
-	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now()}
+	pendingUser := store.ChatMessage{Role: ds4.RoleUser, Content: userText, Timestamp: time.Now(), Attachments: append([]store.MessageAttachment(nil), opts.UploadAttachments...)}
 	turn := newTurnContext(sessionID, append(llmContext, pendingUser), len(prep.activePath) == 0, userText)
 	turn.Identity = prep.identity
 	turn.History = append(append([]store.ChatMessage(nil), prep.activePath...), pendingUser)

@@ -14,6 +14,10 @@ const DefaultProjectName = "default-workspace"
 const (
 	MessageStatusComplete   = "complete"
 	MessageStatusIncomplete = "incomplete"
+
+	MessageAttachmentAssistantDelivery = "assistant_delivery"
+	MessageAttachmentUserUpload        = "user_upload"
+	MessageAttachmentVisualInput       = "visual_input"
 )
 
 // ChatRunStatus is the durable lifecycle state of a background chat turn.
@@ -289,14 +293,16 @@ type ChatMessage struct {
 	// message's tool_calls entry it answers.
 	ToolCallID string `gorm:"size:255"`
 
-	// Attachments are files explicitly delivered by the assistant. They are
-	// loaded for API responses and never included in LLM context messages.
+	// Attachments are files uploaded with a user message or delivered by an
+	// assistant. Visual inputs are included only when their user message is
+	// the final user message in an LLM request.
 	Attachments []MessageAttachment `gorm:"foreignKey:MessageID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 }
 
-// MessageAttachment is a project-relative reference to a file delivered by
-// an assistant message. The source file is not copied: it is revalidated when
-// downloaded, so its contents may change or become unavailable later.
+// MessageAttachment is a project-relative reference to a file uploaded with a
+// user message or delivered by an assistant. The source file is not copied: it
+// is revalidated when downloaded, so its contents may change or become
+// unavailable later.
 type MessageAttachment struct {
 	ID uint `gorm:"primaryKey;autoIncrement"`
 
@@ -308,6 +314,7 @@ type MessageAttachment struct {
 	Name string `gorm:"size:1024;not null"`
 	Size int64
 	MIME string `gorm:"size:255"`
+	Kind string `gorm:"size:32;not null;default:assistant_delivery"`
 
 	CreatedAt time.Time
 }

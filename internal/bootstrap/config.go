@@ -72,7 +72,6 @@ type Config struct {
 	UploadTextExtensions     []string
 	UploadImageExtensions    []string
 	UploadInlineTextMaxBytes int64
-	UploadOCRImageMaxBytes   int64
 	UploadFileMaxBytes       int64
 	UploadTotalMaxBytes      int64
 	UploadMaxFiles           int
@@ -130,9 +129,8 @@ func Load() (*Config, error) {
 		WebSearchSearXNGBaseURL:  os.Getenv("HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL"),
 		WebSearchSummaryMaxChars: env.int("HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS", 4_000),
 		UploadTextExtensions:     splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS", "md,markdown,txt,csv,json,yaml,yml,toml,xml")),
-		UploadImageExtensions:    splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS", "jpg,jpeg,png,bmp")),
+		UploadImageExtensions:    splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS", "jpg,jpeg,png,gif,webp")),
 		UploadInlineTextMaxBytes: env.int64("HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES", 10<<10),
-		UploadOCRImageMaxBytes:   env.int64("HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES", 4<<20),
 		UploadFileMaxBytes:       env.int64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
 		UploadTotalMaxBytes:      env.int64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
 		UploadMaxFiles:           env.int("HEPHAESTUS_UPLOAD_MAX_FILES", 5),
@@ -193,9 +191,6 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("bootstrap: unsupported weather provider %q", provider)
 		}
 	}
-	if (cfg.BaiduOCRAPIKey == "") != (cfg.BaiduOCRSecretKey == "") {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_BAIDU_OCR_API_KEY and HEPHAESTUS_BAIDU_OCR_SECRET_KEY must be set together")
-	}
 	qqConfigured := cfg.QQAppID != "" || cfg.QQAppSecret != "" || cfg.QQUserOpenID != ""
 	if qqConfigured && (cfg.QQAppID == "" || cfg.QQAppSecret == "") {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_QQ_APP_ID and HEPHAESTUS_QQ_APP_SECRET must be set together")
@@ -217,11 +212,8 @@ func Load() (*Config, error) {
 	if cfg.WebFetchProvider == "firecrawl" && cfg.FirecrawlAPIKey == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_FIRECRAWL_API_KEY is required when web fetch provider is firecrawl")
 	}
-	if cfg.UploadInlineTextMaxBytes <= 0 || cfg.UploadOCRImageMaxBytes <= 0 || cfg.UploadFileMaxBytes <= 0 || cfg.UploadTotalMaxBytes <= 0 || cfg.UploadMaxFiles <= 0 {
+	if cfg.UploadInlineTextMaxBytes <= 0 || cfg.UploadFileMaxBytes <= 0 || cfg.UploadTotalMaxBytes <= 0 || cfg.UploadMaxFiles <= 0 {
 		return nil, fmt.Errorf("bootstrap: upload limits must be positive")
-	}
-	if cfg.UploadOCRImageMaxBytes > cfg.UploadFileMaxBytes {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES cannot exceed HEPHAESTUS_UPLOAD_FILE_MAX_BYTES")
 	}
 	if cfg.UploadFileMaxBytes > cfg.UploadTotalMaxBytes {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_UPLOAD_FILE_MAX_BYTES cannot exceed HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES")

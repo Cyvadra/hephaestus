@@ -81,6 +81,7 @@ export interface MessageAttachment {
   Name: string
   Size: number
   MIME: string
+  Kind: 'assistant_delivery' | 'user_upload' | 'visual_input'
   CreatedAt: string
 }
 
