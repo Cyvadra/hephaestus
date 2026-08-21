@@ -13,6 +13,7 @@ export interface SessionSettings {
 export interface Session {
   ID: number
   ProjectID: number
+  ParentSubagentRunID: number | null
   SourceConcierge: string
   Settings: SessionSettings
   Title: string
@@ -27,6 +28,25 @@ export interface Session {
   LastMessageTime: string
   CreatedAt: string
   UpdatedAt: string
+  subagent_runs: SubagentRunSummary[]
+}
+
+export type SubagentRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+
+export interface SubagentRunSummary {
+  id: number
+  child_session_id?: number
+  status: SubagentRunStatus
+  label: string
+  started_at?: string
+  finished_at?: string
+  created_at: string
+}
+
+export interface SubagentRunDetail extends SubagentRunSummary {
+  parent_session_id: number
+  result?: string
+  error?: string
 }
 
 export interface Project {
@@ -141,9 +161,15 @@ export interface GenerationOptions {
 
 export interface SendMessageResponse {
   command_response?: string
+  replayed_messages?: ReplayedMessage[]
   session_target?: SessionTarget
   message?: ChatMessage
   metadata?: Record<string, unknown>
+}
+
+export interface ReplayedMessage {
+  role: 'user' | 'assistant'
+  content: string
 }
 
 export interface SessionTarget {

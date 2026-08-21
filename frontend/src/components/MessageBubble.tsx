@@ -18,12 +18,13 @@ interface Props {
   editSaving?: boolean
   editDisabled?: boolean
   forkDisabled?: boolean
+  readOnly?: boolean
   onFork?: () => void
   onRegenerate?: () => void
   onContinue?: () => void
 }
 
-export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, onFork, onRegenerate, onContinue }: Props) {
+export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, readOnly = false, onFork, onRegenerate, onContinue }: Props) {
   const { t, i18n } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
@@ -140,14 +141,14 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 <IconButton label={copied ? t('chat.message.copied') : t('chat.message.copy')} onClick={handleCopy}>
                   {copied ? <Check /> : <Copy />}
                 </IconButton>
-                <button
+                {!readOnly && <button
                   onClick={startUserEdit}
                   className="message-action-btn message-icon-btn"
                   aria-label={t('chat.message.edit')}
                   title={t('chat.message.edit')}
                 >
                   <Pencil />
-                </button>
+                </button>}
               </div>
             </>
           )}
@@ -221,7 +222,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
                 <IconButton label={copied ? t('chat.message.copied') : t('chat.message.copy')} onClick={handleCopy}>
                   {copied ? <Check /> : <Copy />}
                 </IconButton>
-                {canEdit && (
+                {canEdit && !readOnly && (
                   <button
                     onClick={() => { setEditText(msg.Content); setEditing(true) }}
                     className="message-action-btn message-icon-btn"

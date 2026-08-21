@@ -1,14 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, listConcierges, respondToInteraction, setAutomaticApproval, updateSession } from '../api/client'
+import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSubagentRun, listConcierges, respondToInteraction, setAutomaticApproval, updateSession } from '../api/client'
 import { authFetch } from '../api/auth'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, SendMessageResponse, Session, SessionTarget, StreamToolCall, UploadResult } from '../api/types'
+import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer, { type AuthorizationMode } from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
+import Markdown from './Markdown'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
 import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
 import i18n from '../i18n'
@@ -139,6 +140,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [forking, setForking] = useState(false)
   const [commandResponse, setCommandResponse] = useState<string | null>(null)
+  const [replayedMessages, setReplayedMessages] = useState<ReplayedMessage[]>([])
   const [commandHelp, setCommandHelp] = useState<string | null>(null)
   const [commandHelpLoading, setCommandHelpLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -149,6 +151,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [pluginDescriptions, setPluginDescriptions] = useState<Record<string, string>>({})
   const [resolvedSessionId, setResolvedSessionId] = useState<number | null>(sessionId)
   const [activeSession, setActiveSession] = useState<Session | null>(null)
+  const [activeSubagentRun, setActiveSubagentRun] = useState<SubagentRunDetail | null>(null)
   const [headerTitleDraft, setHeaderTitleDraft] = useState('')
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'high', webSearch: false })
   const [authorizationMode, setAuthorizationMode] = useState<AuthorizationMode>(() => authorizationPreference(project))
@@ -193,6 +196,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
     setResolvedSessionId(sessionId)
     setActiveSession(null)
+    setActiveSubagentRun(null)
     setStreaming(false)
     setStreamingText('')
     setStreamingActivities([])
@@ -211,6 +215,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const h = await getHistory(targetSessionId, signal)
     if (signal?.aborted || epoch !== viewEpochRef.current) return
     setActiveSession(h.session)
+    if (h.session.ParentSubagentRunID != null) {
+      const run = await getSubagentRun(h.session.ParentSubagentRunID, signal)
+      if (signal?.aborted || epoch !== viewEpochRef.current) return
+      setActiveSubagentRun(run)
+    } else {
+      setActiveSubagentRun(null)
+    }
     setMessages(h.messages)
     setLocalLeafId(h.session.ActiveLeafMessageID)
     setAuthorizationMode(h.auto_approve ? 'allowAll' : authorizationPreference(project))
@@ -239,6 +250,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
     setRegeneratingMessageId(null)
     setCommandResponse(null)
+    setReplayedMessages([])
     setError(null)
     setUploadWarnings([])
     return () => controller.abort()
@@ -554,6 +566,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const previousLeafId = localLeafId
     if (leafOverride !== undefined) setLocalLeafId(leafId ?? null)
     setCommandResponse(null)
+    setReplayedMessages([])
     setError(null)
     setStreaming(true)
     setStreamingText('')
@@ -609,6 +622,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onSessionUpdated,
         onDone: async data => {
           if (data.command_response) setCommandResponse(data.command_response)
+          setReplayedMessages(data.replayed_messages ?? [])
           if (data.session_target) {
 			switchedSession = true
             onSessionTarget?.(data.session_target)
@@ -801,6 +815,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
   const headerTitle = activeSession?.Title || (resolvedSessionId == null ? t('chat.session.new') : t('chat.session.unnamed', { id: resolvedSessionId }))
+  const isSubagentSession = activeSession?.ParentSubagentRunID != null
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
   const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || t('chat.concierge.notSelected')
   const sessionConcierge = concierges.find(concierge => concierge.name === activeSession?.SourceConcierge)
@@ -946,9 +961,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               editSaving={editingMessageId === item.message.ID}
               editDisabled={streaming || editingMessageId != null}
               forkDisabled={streaming || forking}
-              onFork={idx === lastAssistantIdx ? undefined : () => void handleForkAtMessage(item.message.ID)}
-              onRegenerate={idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
-              onContinue={item.message.ID === localLeafId && idx === lastAssistantIdx && !streaming && item.message.Content.trim() && (!item.message.ToolCalls || item.message.ToolCalls.length === 0)
+              readOnly={isSubagentSession}
+              onFork={isSubagentSession || idx === lastAssistantIdx ? undefined : () => void handleForkAtMessage(item.message.ID)}
+              onRegenerate={!isSubagentSession && idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
+              onContinue={!isSubagentSession && item.message.ID === localLeafId && idx === lastAssistantIdx && !streaming && item.message.Content.trim() && (!item.message.ToolCalls || item.message.ToolCalls.length === 0)
                 ? () => handleContinue(item.message.ID)
                 : undefined}
             />
@@ -973,11 +989,24 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         {commandResponse && (
           <div className="command-block">{commandResponse}</div>
         )}
+        {replayedMessages.map((message, index) => (
+          <div className={`message-row ${message.role} replayed-message`} key={`${message.role}-${index}`}>
+            <div className={`message-card ${message.role}`}>{message.content}</div>
+          </div>
+        ))}
         {error && (
           <div className="error-block">{error}</div>
         )}
         {uploadWarnings.length > 0 && (
           <div className="upload-warning-block">{uploadWarnings.map(warning => <div key={warning}>{warning}</div>)}</div>
+        )}
+        {isSubagentSession && activeSubagentRun && (activeSubagentRun.status === 'failed' || activeSubagentRun.status === 'cancelled' || activeSubagentRun.status === 'interrupted') && (
+          <div className="subagent-terminal-detail">
+            <strong>{t('session.subagentOutcome')}</strong>
+            {activeSubagentRun.error && <p>{activeSubagentRun.error}</p>}
+            {activeSubagentRun.result && <div className="subagent-terminal-result"><Markdown>{activeSubagentRun.result}</Markdown></div>}
+            {!activeSubagentRun.result && <small>{t('session.subagentNoResult')}</small>}
+          </div>
         )}
           <div ref={bottomRef} />
         </div>
@@ -993,7 +1022,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           </button>
         )}
       </div>
-      <Composer
+      {!isSubagentSession && <Composer
         focusKey={resolvedSessionId == null ? `new:${isChoosingConcierge}` : String(resolvedSessionId)}
         onSend={(text, files) => handleSend(text, files)}
         commandHelp={commandHelp}
@@ -1027,7 +1056,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           }
           void handlePluginToggle(plugin, active)
         }}
-      />
+      />}
     </div>
   )
 }

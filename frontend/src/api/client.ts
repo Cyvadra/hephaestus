@@ -1,4 +1,4 @@
-import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, WorkflowRun, WorkflowRunDetail } from './types'
+import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
 import { authFetch } from './auth'
 
 const BASE = '/api/v1'
@@ -80,6 +80,9 @@ export const deleteSession = async (sessionId: number) => {
 
 export const getHistory = (sessionId: number, signal?: AbortSignal) =>
   fetchJSON<HistoryResponse>(`${BASE}/sessions/${sessionId}/history`, { signal })
+
+export const getSubagentRun = (runId: number, signal?: AbortSignal) =>
+  fetchJSON<SubagentRunDetail>(`${BASE}/subagent-runs/${runId}`, { signal })
 
 export const getActiveChatRun = (sessionId: number) =>
   fetchJSON<ChatRun>(`${BASE}/sessions/${sessionId}/chat-run`)

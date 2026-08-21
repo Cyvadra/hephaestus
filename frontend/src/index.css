@@ -5330,6 +5330,46 @@ body {
     margin-bottom: 2px
 }
 
+.session-subagent-toggle {
+    position: absolute;
+    z-index: 1;
+    top: 8px;
+    left: 5px;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    color: var(--dsw-alias-label-tertiary);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    cursor: pointer
+}
+
+.session-subagent-toggle:hover,.session-subagent-toggle:focus-visible { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); outline: none }
+.session-subagent-toggle svg { transition: transform .15s ease }
+.session-subagent-toggle[aria-expanded="true"] svg { transform: rotate(90deg) }
+
+.session-subagent-list { margin: 0 8px 4px 22px; padding-left: 8px; border-left: 1px solid var(--dsw-alias-border-l1) }
+.session-subagent-item { box-sizing: border-box; display: grid; grid-template-columns: 8px minmax(0,1fr) auto; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 5px 7px; color: var(--dsw-alias-label-secondary); background: transparent; border: 0; border-radius: 7px; font: inherit; font-size: 12px; text-align: left }
+.session-subagent-item.navigable { cursor: pointer }
+.session-subagent-item.navigable:hover,.session-subagent-item.navigable:focus-visible { color: var(--dsw-alias-label-primary); background: var(--dsw-specific-sidebar-nav-item-hover); outline: none }
+.session-subagent-status { width: 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-label-tertiary) }
+.session-subagent-status.pending { background: #b7791f }
+.session-subagent-status.running { background: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-button-primary-fill) 18%, transparent) }
+.session-subagent-status.succeeded { background: #238636 }
+.session-subagent-status.failed,.session-subagent-status.interrupted { background: rgba(125, 133, 144, 0.8) }
+.session-subagent-status.cancelled { background: #7d8590 }
+.session-subagent-label { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap }
+.session-subagent-status-label { color: var(--dsw-alias-label-tertiary); white-space: nowrap }
+
+.subagent-terminal-detail { box-sizing: border-box; width: min(760px, calc(100% - 32px)); margin: 8px auto 20px; padding: 14px 16px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); border-left: 3px solid var(--dsw-alias-state-error-primary); border-radius: 8px; font-size: 13px; line-height: 20px }
+.subagent-terminal-detail strong { color: var(--dsw-alias-label-primary) }
+.subagent-terminal-detail p { margin: 6px 0; color: var(--dsw-alias-state-error-primary) }
+.subagent-terminal-detail small { color: var(--dsw-alias-label-tertiary) }
+.subagent-terminal-result { margin-top: 10px; color: var(--dsw-alias-label-primary) }
+
 .session-item-wrap:hover {
     background: var(--dsw-specific-sidebar-nav-item-hover)
 }

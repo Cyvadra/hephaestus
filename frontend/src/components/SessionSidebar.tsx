@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronRight, Pencil, Pin, Plus, Trash2, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { deleteSession, listSessions, updateSession } from '../api/client'
-import type { Session } from '../api/types'
+import type { Session, SubagentRunSummary } from '../api/types'
 import type { ConfigurationKind } from '../api/types'
+import { sessionSubagentRuns, subagentSessionTarget, subagentStatusKey } from '../lib/subagentRuns'
 import ProjectSwitcher from './ProjectSwitcher'
 import ConfigurationSidebar, { type ConfigurationLists } from './ConfigurationSidebar'
 import SidebarSettingsMenu from './SidebarSettingsMenu'
@@ -38,6 +39,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   const [renamingId, setRenamingId] = useState<number | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<Session | null>(null)
   const [archivedExpanded, setArchivedExpanded] = useState(false)
+  const [expandedSessions, setExpandedSessions] = useState<Set<number>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const reloadControllerRef = useRef<AbortController | null>(null)
 
@@ -114,6 +116,13 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
         pinned={isPinned(s)}
         renaming={s.ID === renamingId}
         onSelect={onSelect}
+        expanded={expandedSessions.has(s.ID)}
+        onExpandedChange={() => setExpandedSessions(current => {
+          const next = new Set(current)
+          if (next.has(s.ID)) next.delete(s.ID)
+          else next.add(s.ID)
+          return next
+        })}
         onMenuOpen={(target) => {
           const rect = target.getBoundingClientRect()
           const width = 132
@@ -252,9 +261,11 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   }
 }
 
-function SessionItem({ session, active, menu, pinned, renaming, onSelect, onMenuOpen, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menu: { left: number; top: number } | null; pinned: boolean; renaming: boolean; onSelect: (id: number) => void; onMenuOpen: (target: HTMLElement) => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
+function SessionItem({ session, active, menu, pinned, renaming, expanded, onSelect, onExpandedChange, onMenuOpen, onRenameStart, onRenameSubmit, onRenameCancel, onPin, onArchive, onDelete }: { session: Session; active: boolean; menu: { left: number; top: number } | null; pinned: boolean; renaming: boolean; expanded: boolean; onSelect: (id: number) => void; onExpandedChange: () => void; onMenuOpen: (target: HTMLElement) => void; onRenameStart: () => void; onRenameSubmit: (title: string) => void; onRenameCancel: () => void; onPin: () => void; onArchive: () => void; onDelete: () => void }) {
   const { t } = useTranslation()
   const label = session.Title || t('session.unnamed', { id: session.ID })
+  const runs = sessionSubagentRuns(session)
+  const runListID = `session-${session.ID}-subagent-runs`
   const titleRef = useRef<HTMLSpanElement>(null)
   const [titleScroll, setTitleScroll] = useState({ distance: 0, duration: 0 })
 
@@ -281,11 +292,15 @@ function SessionItem({ session, active, menu, pinned, renaming, onSelect, onMenu
   } as CSSProperties
 
   return (
+    <div className="session-entry">
     <div className={'session-item-wrap' + (active ? ' active' : '') + (menu ? ' menu-open' : '')} onContextMenu={event => { event.preventDefault(); onMenuOpen(event.currentTarget) }}>
       {renaming ? (
         <RenameInput defaultValue={label} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
       ) : (
         <>
+          {runs.length > 0 && <button className="session-subagent-toggle" type="button" aria-label={t(expanded ? 'session.collapseSubagents' : 'session.expandSubagents', { title: label })} aria-expanded={expanded} aria-controls={runListID} onClick={event => { event.stopPropagation(); onExpandedChange() }}>
+            <ChevronRight aria-hidden="true" size={14} />
+          </button>}
           <button onClick={() => onSelect(session.ID)} className="session-item">
             <span ref={titleRef} className={'session-item-title' + (titleScroll.distance > 0 ? ' overflowing' : '')} style={titleStyle}>
               <span className="session-item-title-text">{label}</span>
@@ -302,7 +317,25 @@ function SessionItem({ session, active, menu, pinned, renaming, onSelect, onMenu
         <button className="danger" type="button" role="menuitem" onClick={onDelete}><Trash2 aria-hidden="true" size={16} />{t('common.delete')}</button>
       </div>, document.body)}
     </div>
+    {expanded && runs.length > 0 && <div className="session-subagent-list" id={runListID}>
+      {runs.map(run => <SubagentItem key={run.id} run={run} onSelect={onSelect} />)}
+    </div>}
+    </div>
   )
+}
+
+function SubagentItem({ run, onSelect }: { run: SubagentRunSummary; onSelect: (id: number) => void }) {
+  const { t } = useTranslation()
+  const target = subagentSessionTarget(run)
+  const status = t(subagentStatusKey(run.status))
+  const content = <>
+    <span className={`session-subagent-status ${run.status}`} aria-hidden="true" />
+    <span className="session-subagent-label">{run.label}</span>
+    <span className="session-subagent-status-label">{status}</span>
+  </>
+  return target == null
+    ? <div className="session-subagent-item" aria-label={`${run.label}: ${status}`}>{content}</div>
+    : <button className="session-subagent-item navigable" type="button" aria-label={t('session.openSubagent', { title: run.label, status })} onClick={() => onSelect(target)}>{content}</button>
 }
 
 function RenameInput({ defaultValue, onSubmit, onCancel }: { defaultValue: string; onSubmit: (value: string) => void; onCancel: () => void }) {
