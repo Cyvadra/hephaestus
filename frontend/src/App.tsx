@@ -80,9 +80,11 @@ export default function App() {
 
   const handleOpenConfigurations = useCallback(() => {
     navigate(routes.configurations())
+    setSessionSidebarOpen(false)
     setConfigurationSidebarOpen(true)
   }, [navigate])
   const handleCloseConfigurations = useCallback(() => {
+    setConfigurationSidebarOpen(false)
     if (project) navigate(routes.chatNew(project))
     else navigate('/')
   }, [navigate, project])
@@ -132,17 +134,20 @@ export default function App() {
   }, [navigate, project])
 
   useEffect(() => {
-    if (!sessionSidebarOpen) return
+    if (!sessionSidebarOpen && !configurationSidebarOpen) return
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSessionSidebarOpen(false)
+      if (event.key !== 'Escape') return
+      setSessionSidebarOpen(false)
+      setConfigurationSidebarOpen(false)
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [sessionSidebarOpen])
+  }, [configurationSidebarOpen, sessionSidebarOpen])
 
   const handleProjectChange = useCallback((nextProject: string) => {
     setActiveProject(nextProject)
     setDraftConcierge(null)
+    setSessionSidebarOpen(false)
     navigate(routes.chatNew(nextProject))
   }, [navigate, setActiveProject])
 
@@ -195,6 +200,7 @@ export default function App() {
         </div>
       </header>}
       {mode === 'chat' && sessionSidebarOpen && <button className="sidebar-scrim" type="button" aria-label={t('common.close')} onClick={() => setSessionSidebarOpen(false)} />}
+      {mode === 'configurations' && configurationSidebarOpen && <button className="sidebar-scrim configuration-sidebar-scrim" type="button" aria-label={t('common.close')} onClick={() => setConfigurationSidebarOpen(false)} />}
       <div id="session-sidebar" className={`sidebar-drawer${mode === 'configurations' ? ` configuration-drawer${configurationSidebarOpen ? ' configuration-drawer-open' : ''}` : ''}`}>
         <SessionSidebar
           mode={mode}

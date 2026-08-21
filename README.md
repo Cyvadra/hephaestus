@@ -90,7 +90,16 @@ refreshing or directly opening a nested frontend URL returns 404.
 
 Preview:
 
-![Screenshot](./docs/screenshots/chat.jpeg)
+<table>
+	<tr>
+		<td><img src="./docs/screenshots/session.jpg" alt="Session sidebar" /></td>
+		<td><img src="./docs/screenshots/new.jpg" alt="New conversation" /></td>
+		<td><img src="./docs/screenshots/chat.jpg" alt="Chat with tools" /></td>
+	</tr>
+	<tr>
+		<td colspan="3"><img src="./docs/screenshots/tablet.jpg" alt="Tablet layout" /></td>
+	</tr>
+</table>
 
 ## Use It
 

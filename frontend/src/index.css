@@ -5006,7 +5006,8 @@ body {
 .sidebar-drawer { z-index: 24; position: absolute; inset: 0 auto 0 0; height: 100%; transform: translateX(-100%); transition: transform .22s var(--ds-ease-in-out) }
 .session-sidebar-open .sidebar-drawer { transform: translateX(0) }
 .configuration-drawer { transform: translateX(0) }
-.sidebar-scrim { z-index: 23; position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; background: rgba(0,0,0,.2); border: 0; cursor: default; animation: sidebar-scrim-in .18s ease-out }
+.sidebar-scrim { z-index: 23; position: absolute; top: 0; right: 0; bottom: 0; left: var(--sider-width); width: auto; height: auto; padding: 0; background: rgba(0,0,0,.2); border: 0; cursor: default; animation: sidebar-scrim-in .18s ease-out }
+.configuration-sidebar-scrim { display: none }
 @keyframes sidebar-scrim-in { from { opacity: 0 } }
 
 .login-page {
@@ -6966,6 +6967,8 @@ body {
         padding: 10px
     }
 
+    .sidebar-scrim { left: clamp(12rem,27vw,13rem) }
+
     .chat-header {
         padding: 10px 16px
     }
@@ -6992,8 +6995,10 @@ body {
     .chat-shell .app-configuration-button { display: none }
     .sidebar-drawer { width: min(86vw,300px) }
     .sidebar { width: 100%; flex-basis: 100% }
+    .sidebar-scrim { left: min(86vw,300px) }
     .configuration-drawer { transform: translateX(-100%) }
     .configuration-drawer.configuration-drawer-open { transform: translateX(0) }
+    .configuration-sidebar-scrim { display: block }
     .configurations-shell .main-panel { width: 100%; margin-left: 0 }
 
     .messages-pane {
