@@ -1000,7 +1000,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         {uploadWarnings.length > 0 && (
           <div className="upload-warning-block">{uploadWarnings.map(warning => <div key={warning}>{warning}</div>)}</div>
         )}
-        {isSubagentSession && activeSubagentRun && (activeSubagentRun.status === 'failed' || activeSubagentRun.status === 'cancelled' || activeSubagentRun.status === 'interrupted') && (
+        {isSubagentSession && activeSubagentRun && (activeSubagentRun.status === 'failed' || activeSubagentRun.status === 'interrupted') && (
           <div className="subagent-terminal-detail">
             <strong>{t('session.subagentOutcome')}</strong>
             {activeSubagentRun.error && <p>{activeSubagentRun.error}</p>}
