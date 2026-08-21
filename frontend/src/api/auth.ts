@@ -96,15 +96,59 @@ function digest(password: string, timestamp: number, salt: string) {
   return sha256(`${password}${timestamp}${salt}`)
 }
 
-export async function login(username: string, password: string) {
+type ProofOfWork = {
+  challenge: string
+  difficulty: number
+  expires_at: number
+}
+
+function validProofOfWork(value: unknown): value is ProofOfWork {
+  if (value === null || typeof value !== 'object') return false
+  const proof = value as Partial<ProofOfWork>
+  return typeof proof.challenge === 'string'
+    && /^[0-9a-f]{64}$/.test(proof.challenge)
+    && Number.isInteger(proof.difficulty)
+    && proof.difficulty! >= 1
+    && proof.difficulty! <= 24
+    && typeof proof.expires_at === 'number'
+    && proof.expires_at > Date.now()
+}
+
+function hasLeadingZeroBits(hexDigest: string, difficulty: number) {
+  const completeDigits = Math.floor(difficulty / 4)
+  if (!hexDigest.startsWith('0'.repeat(completeDigits))) return false
+  const remainingBits = difficulty % 4
+  if (remainingBits === 0) return true
+  return Number.parseInt(hexDigest[completeDigits], 16) < 2 ** (4 - remainingBits)
+}
+
+async function solveProofOfWork(proof: ProofOfWork) {
+  for (let nonce = 0; Date.now() < proof.expires_at; nonce++) {
+    const value = nonce.toString(16)
+    if (hasLeadingZeroBits(sha256(`${proof.challenge}:${value}`), proof.difficulty)) return value
+    if (nonce > 0 && nonce % 4096 === 0) await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  throw new Error('Proof of work expired')
+}
+
+async function requestLogin(username: string, password: string, proofNonce?: string) {
   const timestamp = Date.now()
   const salt = randomSalt()
-  const response = await fetch('/api/v1/auth/login', {
+  return fetch('/api/v1/auth/login', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, timestamp, salt, digest: digest(password, timestamp, salt) }),
+    body: JSON.stringify({ username, timestamp, salt, digest: digest(password, timestamp, salt), proof_nonce: proofNonce }),
   })
+}
+
+export async function login(username: string, password: string) {
+	let response = await requestLogin(username, password)
+	if (response.status === 429) {
+		const payload = await response.json().catch(() => null)
+		if (payload?.error !== 'proof_of_work_required' || !validProofOfWork(payload.proof_of_work)) throw new Error('Invalid proof of work challenge')
+		response = await requestLogin(username, password, await solveProofOfWork(payload.proof_of_work))
+	}
   if (!response.ok) throw new Error('Invalid username or password')
   const issuedToken = response.headers.get(TOKEN_HEADER)
   if (!issuedToken) throw new Error('Login response did not include a session token')

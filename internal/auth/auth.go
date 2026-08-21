@@ -3,6 +3,7 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -24,11 +25,16 @@ const (
 	TokenLifetime    = 14 * 24 * time.Hour
 	RefreshThreshold = 7 * 24 * time.Hour
 	LoginWindow      = 5 * time.Minute
+	FailureWindow    = 10 * time.Minute
+	FailureThreshold = 5
+	ProofLifetime    = 2 * time.Minute
+	ProofDifficulty  = 18
 )
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidToken       = errors.New("invalid token")
+	ErrProofRequired      = errors.New("proof of work required")
 )
 
 type Config struct {
@@ -45,6 +51,17 @@ type Claims struct {
 	ExpiresAt int64  `json:"exp"`
 }
 
+type ProofOfWork struct {
+	Challenge  string `json:"challenge"`
+	Difficulty int    `json:"difficulty"`
+	ExpiresAt  int64  `json:"expires_at"`
+}
+
+type pendingProof struct {
+	ProofOfWork
+	expiresAt time.Time
+}
+
 type Service struct {
 	username string
 	password string
@@ -52,6 +69,8 @@ type Service struct {
 	now      func() time.Time
 	mu       sync.Mutex
 	replays  map[string]time.Time
+	failures []time.Time
+	proof    *pendingProof
 }
 
 func New(config Config) (*Service, error) {
@@ -65,20 +84,40 @@ func New(config Config) (*Service, error) {
 }
 
 func (s *Service) Login(username string, timestamp int64, salt, digest string) (string, error) {
+	token, _, err := s.LoginWithProof(username, timestamp, salt, digest, "")
+	return token, err
+}
+
+func (s *Service) LoginWithProof(username string, timestamp int64, salt, digest, nonce string) (string, *ProofOfWork, error) {
 	now := s.now()
+	s.mu.Lock()
+	s.pruneFailures(now)
+	if len(s.failures) >= FailureThreshold && !s.consumeProof(now, nonce) {
+		proof, err := s.activeProof(now)
+		s.mu.Unlock()
+		if err != nil {
+			return "", nil, err
+		}
+		return "", proof, ErrProofRequired
+	}
+	s.mu.Unlock()
+
 	if strings.TrimSpace(username) == "" || !validSalt(salt) || !validDigest(digest) {
-		return "", ErrInvalidCredentials
+		s.recordFailure(now)
+		return "", nil, ErrInvalidCredentials
 	}
 	issuedAt := time.UnixMilli(timestamp)
 	if issuedAt.Before(now.Add(-LoginWindow)) || issuedAt.After(now.Add(LoginWindow)) {
-		return "", ErrInvalidCredentials
+		s.recordFailure(now)
+		return "", nil, ErrInvalidCredentials
 	}
 	expected := sha256.Sum256([]byte(s.password + fmt.Sprintf("%d", timestamp) + salt))
 	provided, _ := hex.DecodeString(digest)
 	usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(s.username))
 	digestMatch := subtle.ConstantTimeCompare(provided, expected[:])
 	if usernameMatch != 1 || digestMatch != 1 {
-		return "", ErrInvalidCredentials
+		s.recordFailure(now)
+		return "", nil, ErrInvalidCredentials
 	}
 
 	replayKey := username + "\x00" + fmt.Sprintf("%d", timestamp) + "\x00" + salt + "\x00" + digest
@@ -90,10 +129,72 @@ func (s *Service) Login(username string, timestamp int64, salt, digest string) (
 		}
 	}
 	if _, used := s.replays[replayKey]; used {
-		return "", ErrInvalidCredentials
+		s.failures = append(s.failures, now)
+		return "", nil, ErrInvalidCredentials
 	}
 	s.replays[replayKey] = now.Add(LoginWindow)
-	return s.issue(now)
+	s.failures = nil
+	s.proof = nil
+	token, err := s.issue(now)
+	return token, nil, err
+}
+
+func (s *Service) recordFailure(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneFailures(now)
+	s.failures = append(s.failures, now)
+}
+
+func (s *Service) pruneFailures(now time.Time) {
+	cutoff := now.Add(-FailureWindow)
+	first := 0
+	for first < len(s.failures) && s.failures[first].Before(cutoff) {
+		first++
+	}
+	s.failures = append(s.failures[:0], s.failures[first:]...)
+	if len(s.failures) < FailureThreshold {
+		s.proof = nil
+	}
+}
+
+func (s *Service) activeProof(now time.Time) (*ProofOfWork, error) {
+	if s.proof == nil || !s.proof.expiresAt.After(now) {
+		random := make([]byte, 32)
+		if _, err := rand.Read(random); err != nil {
+			return nil, fmt.Errorf("auth: create proof of work: %w", err)
+		}
+		expiresAt := now.Add(ProofLifetime)
+		s.proof = &pendingProof{
+			ProofOfWork: ProofOfWork{Challenge: hex.EncodeToString(random), Difficulty: ProofDifficulty, ExpiresAt: expiresAt.UnixMilli()},
+			expiresAt:   expiresAt,
+		}
+	}
+	proof := s.proof.ProofOfWork
+	return &proof, nil
+}
+
+func (s *Service) consumeProof(now time.Time, nonce string) bool {
+	if s.proof == nil || !s.proof.expiresAt.After(now) || nonce == "" || len(nonce) > 64 {
+		return false
+	}
+	digest := sha256.Sum256([]byte(s.proof.Challenge + ":" + nonce))
+	if !hasLeadingZeroBits(digest[:], s.proof.Difficulty) {
+		return false
+	}
+	s.proof = nil
+	return true
+}
+
+func hasLeadingZeroBits(value []byte, bits int) bool {
+	for bits >= 8 {
+		if len(value) == 0 || value[0] != 0 {
+			return false
+		}
+		value = value[1:]
+		bits -= 8
+	}
+	return bits == 0 || (len(value) > 0 && value[0]>>(8-bits) == 0)
 }
 
 func (s *Service) Parse(token string) (*Claims, error) {

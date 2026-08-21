@@ -47,6 +47,34 @@ func TestLoginRejectsInvalidAndReplayedProof(t *testing.T) {
 	}
 }
 
+func TestLoginRequiresProofOfWorkAfterExcessFailures(t *testing.T) {
+	svc := newTestService(t)
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	for attempt := 0; attempt < FailureThreshold; attempt++ {
+		salt := fmt.Sprintf("%032x", attempt+1)
+		if _, _, err := svc.LoginWithProof("admin", now.UnixMilli(), salt, loginDigest("wrong", now.UnixMilli(), salt), ""); err != ErrInvalidCredentials {
+			t.Fatalf("failed attempt %d error = %v", attempt+1, err)
+		}
+	}
+
+	salt := "0123456789abcdef0123456789abcdef"
+	digest := loginDigest("password", now.UnixMilli(), salt)
+	if _, proof, err := svc.LoginWithProof("admin", now.UnixMilli(), salt, digest, ""); err != ErrProofRequired || proof == nil {
+		t.Fatalf("challenge = %+v, error = %v", proof, err)
+	} else {
+		nonce := solveProof(t, *proof)
+		if token, nextProof, err := svc.LoginWithProof("admin", now.UnixMilli(), salt, digest, nonce); err != nil || token == "" || nextProof != nil {
+			t.Fatalf("solved login = %q, %+v, %v", token, nextProof, err)
+		}
+	}
+
+	nextSalt := "abcdef0123456789abcdef0123456789"
+	if token, proof, err := svc.LoginWithProof("admin", now.UnixMilli(), nextSalt, loginDigest("password", now.UnixMilli(), nextSalt), ""); err != nil || token == "" || proof != nil {
+		t.Fatalf("login after reset = %q, %+v, %v", token, proof, err)
+	}
+}
+
 func TestRefreshAndCookie(t *testing.T) {
 	svc := newTestService(t)
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
@@ -97,4 +125,15 @@ func newTestService(t *testing.T) *Service {
 func loginDigest(password string, timestamp int64, salt string) string {
 	digest := sha256.Sum256([]byte(password + fmt.Sprintf("%d", timestamp) + salt))
 	return hex.EncodeToString(digest[:])
+}
+
+func solveProof(t *testing.T, proof ProofOfWork) string {
+	t.Helper()
+	for nonce := uint64(0); ; nonce++ {
+		value := fmt.Sprintf("%x", nonce)
+		digest := sha256.Sum256([]byte(proof.Challenge + ":" + value))
+		if hasLeadingZeroBits(digest[:], proof.Difficulty) {
+			return value
+		}
+	}
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/Cyvadra/hephaestus/internal/auth"
@@ -8,10 +9,11 @@ import (
 )
 
 type loginRequest struct {
-	Username  string `json:"username" binding:"required"`
-	Timestamp int64  `json:"timestamp" binding:"required"`
-	Salt      string `json:"salt" binding:"required"`
-	Digest    string `json:"digest" binding:"required"`
+	Username   string `json:"username" binding:"required"`
+	Timestamp  int64  `json:"timestamp" binding:"required"`
+	Salt       string `json:"salt" binding:"required"`
+	Digest     string `json:"digest" binding:"required"`
+	ProofNonce string `json:"proof_nonce"`
 }
 
 // login authenticates a browser login proof.
@@ -31,7 +33,11 @@ func (s *Server) login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
-	token, err := s.auth.Login(request.Username, request.Timestamp, request.Salt, request.Digest)
+	token, proof, err := s.auth.LoginWithProof(request.Username, request.Timestamp, request.Salt, request.Digest, request.ProofNonce)
+	if errors.Is(err, auth.ErrProofRequired) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "proof_of_work_required", "proof_of_work": proof})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return

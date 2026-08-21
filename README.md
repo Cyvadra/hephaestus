@@ -183,7 +183,11 @@ key or a local model URL. Firecrawl is required only when it is the selected
 web-fetch provider.
 
 The browser sends a short-lived SHA-256 login proof instead of the plaintext
-password. This does not replace HTTPS: expose a non-loopback installation only
+password. After five failed logins within ten minutes, the server additionally
+requires a two-minute, 18-bit SHA-256 proof-of-work challenge before checking
+more credentials. The adaptive gate is global because Hephaestus is a
+single-user service; it supplements rather than replaces reverse-proxy rate
+limits. This does not replace HTTPS: expose a non-loopback installation only
 behind a TLS-terminating reverse proxy. Sessions use 14-day JWTs and refresh
 automatically when seven or fewer days remain. The JWT is also stored in an
 `HttpOnly`, `SameSite=Strict` cookie for downloads and browser-native SSE.

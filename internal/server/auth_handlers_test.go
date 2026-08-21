@@ -57,6 +57,30 @@ func TestLoginAndLogoutCookie(t *testing.T) {
 	}
 }
 
+func TestLoginRequiresProofOfWorkAfterExcessFailures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := New(newAuthService(t), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	for attempt := 0; attempt < auth.FailureThreshold; attempt++ {
+		now := time.Now()
+		salt := fmt.Sprintf("%032x", attempt+1)
+		body := fmt.Sprintf(`{"username":"admin","timestamp":%d,"salt":"%s","digest":"%s"}`, now.UnixMilli(), salt, testDigest("wrong", now.UnixMilli(), salt))
+		recorder := httptest.NewRecorder()
+		srv.engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body)))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("failed attempt %d status = %d", attempt+1, recorder.Code)
+		}
+	}
+
+	now := time.Now()
+	salt := "0123456789abcdef0123456789abcdef"
+	body := fmt.Sprintf(`{"username":"admin","timestamp":%d,"salt":"%s","digest":"%s"}`, now.UnixMilli(), salt, testDigest("password", now.UnixMilli(), salt))
+	recorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body)))
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), `"error":"proof_of_work_required"`) || !strings.Contains(recorder.Body.String(), `"difficulty":18`) {
+		t.Fatalf("challenge response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func newAuthService(t *testing.T) *auth.Service {
 	t.Helper()
 	svc, err := auth.New(auth.Config{Username: "admin", Password: "password", Secret: "12345678901234567890123456789012"})
