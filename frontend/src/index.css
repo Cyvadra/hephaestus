@@ -5468,7 +5468,7 @@ body {
 }
 
 .session-menu {
-    z-index: 10;
+    z-index: 30;
     box-sizing: border-box;
     position: fixed;
     width: 132px;
