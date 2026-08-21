@@ -7001,9 +7001,9 @@ body {
     .configuration-sidebar-scrim { display: block }
     .configurations-shell .main-panel { width: 100%; margin-left: 0 }
 
-    .messages-pane {
-        padding-top: 18px
-    }
+    .chat-surface.new-session .messages-pane { padding-top: 12px }
+
+    .chat-surface.new-session .empty-state-card { margin: 16px auto }
 
     .chat-header {
         gap: 8px;
@@ -8384,11 +8384,12 @@ body[data-ds-dark-theme] {
 .sidebar-settings-btn.active { color: var(--dsw-alias-button-primary-fill); background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 10%,transparent) }
 
 .configuration-workspace { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base) }
-.configuration-mobile-nav { display: none; align-items: center; gap: 6px; width: max-content; height: 32px; padding: 0 10px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; font: inherit; font-size: 11px; cursor: pointer }
 .configuration-workspace-header { display: flex; align-items: flex-end; justify-content: space-between; gap: clamp(12px,3vw,32px); padding: clamp(18px,3vw,28px) var(--app-page-padding) clamp(15px,2vw,21px); border-bottom: 1px solid var(--dsw-alias-border-l1) }
 .configuration-workspace-header > div:first-child { min-width: 0 }
 .configuration-return { padding: 2px 5px 2px 2px; margin-left: -2px; background: transparent; border: 0; border-radius: 5px; cursor: pointer }
 .configuration-return:hover,.configuration-return:focus-visible { background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 8%,transparent); outline: none }
+.configuration-return-chat { display: none }
+.configuration-registry-label { display: block }
 .configuration-eyebrow { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-button-primary-fill); font-size: 11px; line-height: 16px; font-weight: 600; text-transform: uppercase }
 .configuration-workspace-header h1 { overflow: hidden; margin: 5px 0 3px; font-size: 24px; line-height: 32px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap }
 .configuration-workspace-header p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 19px }
@@ -8599,11 +8600,22 @@ body[data-ds-dark-theme] {
 .configuration-overview-heading h1 { margin: 8px 0 8px; font-size: 30px; line-height: 38px; font-weight: 600 }
 .configuration-overview-heading p { max-width: 580px; margin: 0; color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px }
 .configuration-overview-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0; margin-top: 48px; border-top: 1px solid var(--dsw-alias-border-l1); border-left: 1px solid var(--dsw-alias-border-l1) }
-.configuration-overview-item { display: grid; align-content: start; gap: 7px; min-height: 126px; padding: 20px; color: inherit; background: transparent; border: 0; border-right: 1px solid var(--dsw-alias-border-l1); border-bottom: 1px solid var(--dsw-alias-border-l1); font: inherit; text-align: left; cursor: pointer; transition: background-color .15s ease,box-shadow .15s ease }
-.configuration-overview-item:hover,.configuration-overview-item:focus-visible { z-index: 1; background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 5%,var(--dsw-alias-bg-base)); box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 24%,transparent); outline: none }
-.configuration-overview-item strong { font-size: 13px }
-.configuration-overview-item span { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 17px }
-.configuration-overview-item small { margin-top: auto; color: var(--dsw-alias-label-tertiary); font-size: 10px }
+.configuration-overview-item { display: grid; align-content: start; gap: 8px; min-height: 126px; padding: 16px; border-right: 1px solid var(--dsw-alias-border-l1); border-bottom: 1px solid var(--dsw-alias-border-l1); cursor: pointer }
+.configuration-overview-item:focus-visible { z-index: 1; outline: 2px solid color-mix(in srgb,var(--dsw-alias-button-primary-fill) 48%,transparent); outline-offset: -2px }
+.configuration-overview-group { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 4px; color: var(--dsw-alias-label-primary); background: transparent; border: 0; border-radius: 5px; font: inherit; text-align: left; cursor: pointer }
+.configuration-overview-group:hover,.configuration-overview-group:focus-visible { background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 7%,transparent); outline: none }
+.configuration-overview-group > span { display: grid; gap: 2px; min-width: 0; flex: 1 }
+.configuration-overview-group strong { font-size: 13px }
+.configuration-overview-group small,.configuration-overview-item > p,.configuration-overview-records > span { color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 15px }
+.configuration-overview-group svg { flex: none; transition: transform .15s ease }
+.configuration-overview-item.expanded .configuration-overview-group svg { transform: rotate(180deg) }
+.configuration-overview-item > p { min-height: 34px; margin: 0; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 17px }
+.configuration-overview-create { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: max-content; height: 28px; padding: 0 8px; color: var(--dsw-alias-label-secondary); background: transparent; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font: inherit; font-size: 10px; cursor: pointer }
+.configuration-overview-create:hover,.configuration-overview-create:focus-visible { color: var(--dsw-alias-button-primary-fill); border-color: var(--dsw-alias-button-primary-fill); outline: none }
+.configuration-overview-records { display: grid; gap: 3px; max-height: 170px; padding-top: 4px; overflow-y: auto; border-top: 1px solid var(--dsw-alias-border-l1) }
+.configuration-overview-records > span { padding: 7px 5px }
+.configuration-overview-records button { overflow: hidden; width: 100%; padding: 7px 8px; color: var(--dsw-alias-label-primary); background: transparent; border: 0; border-radius: 5px; font: inherit; font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer }
+.configuration-overview-records button:hover,.configuration-overview-records button:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none }
 .spin { animation: configuration-spin .8s linear infinite }
 @keyframes configuration-spin { to { transform: rotate(360deg) } }
 @keyframes configuration-pulse { 50% { opacity: .45 } }
@@ -8626,9 +8638,10 @@ body[data-ds-dark-theme] {
 @media not all and (min-width: 560px) {
     .sidebar.configuration-mode { display: none; position: fixed; z-index: 40; inset: 0 auto 0 0; width: min(86vw,300px); box-shadow: 18px 0 40px rgba(0,0,0,.18) }
     .sidebar.configuration-mode.mobile-open { display: flex }
-    .configuration-mobile-nav { display: inline-flex }
-    .configuration-workspace-header { align-items: stretch }
-    .configuration-workspace-header h1 { font-size: 20px; line-height: 28px }
+    .configuration-registry-label { display: none!important }
+    .configuration-return-chat { display: flex }
+    .configuration-workspace-header { padding: 28px var(--app-page-padding) }
+    .configuration-workspace-header h1,.configuration-overview-heading h1 { font-size: 24px; line-height: 32px }
     .configuration-action-bar { align-items: center; flex-wrap: wrap; min-height: 60px; padding-top: 8px; padding-bottom: 8px }
     .configuration-action-bar > div { flex-wrap: wrap }
     .configuration-action-bar button { padding: 0 9px }
@@ -8641,17 +8654,19 @@ body[data-ds-dark-theme] {
     .configuration-placeholder-editor-inline { align-items: flex-start; flex-direction: column; gap: 5px; white-space: normal }
     .configuration-qa-answer-header { align-items: flex-start; flex-wrap: wrap; padding-top: 7px; padding-bottom: 7px }
     .configuration-markdown-message-actions { margin-left: 0 }
-    .configuration-overview { padding: 45px 20px }
-    .configuration-overview-grid { grid-template-columns: 1fr; margin-top: 32px }
+    .configuration-overview { padding: 28px var(--app-page-padding) 36px }
+    .configuration-overview-grid { grid-template-columns: 1fr; margin-top: 28px }
     .configuration-markdown-editor.fullscreen { inset: 0; border-radius: 0 }
 }
 
 @media (max-height: 640px) {
     :root { --configuration-editor-height: clamp(12rem,44dvh,20rem) }
     .welcome-card,.empty-state-card { margin-top: 2rem; margin-bottom: 2rem }
-    .configuration-workspace-header { padding-top: 14px; padding-bottom: 12px }
+    .chat-surface.new-session .empty-state-card { margin-top: 12px; margin-bottom: 16px }
+    .configuration-workspace-header { padding-top: 20px; padding-bottom: 20px }
     .configuration-workspace-scroll { padding-top: 14px }
-    .configuration-overview { padding-top: 28px; padding-bottom: 28px }
+    .configuration-overview { padding-top: 20px; padding-bottom: 28px }
+    .configuration-overview-grid { margin-top: 20px }
 }
 @media (prefers-reduced-motion: reduce) {
     .configuration-list-skeleton i,.spin { animation: none }

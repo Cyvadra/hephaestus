@@ -237,6 +237,8 @@ export default function App() {
           refreshKey={configurationRefreshKey}
           onDirtyChange={handleConfigurationDirtyChange}
           onCreate={handleConfigurationCreate}
+          onSelect={handleConfigurationSelect}
+          onOpenConstants={handleOpenConstants}
           onSaved={(kind, name) => {
             handleConfigurationDirtyChange(false)
             setConfigurationRefreshKey(value => value + 1)
@@ -247,7 +249,7 @@ export default function App() {
             navigate(routes.configurations(), { replace: true })
           }}
           onReturnToOverview={() => navigate(routes.configurations())}
-          onOpenNavigation={() => setConfigurationSidebarOpen(true)}
+          onReturnToChat={handleCloseConfigurations}
         /> : <ChatView
           sessionId={sessionId}
           draftConcierge={draftConcierge}

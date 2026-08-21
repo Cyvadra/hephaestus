@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronLeft, Database, ListTree, LoaderCircle, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, ChevronLeft, LoaderCircle, MessageSquareText, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, listConfigurations, replaceConfiguration } from '../api/client'
@@ -18,13 +18,15 @@ interface Props {
   refreshKey: number
   onDirtyChange: (dirty: boolean) => void
   onCreate: (kind: ConfigurationKind) => void
+  onSelect: (kind: ConfigurationKind, name: string) => void
+  onOpenConstants: () => void
   onSaved: (kind: ConfigurationKind, name: string) => void
   onDeleted: () => void
   onReturnToOverview: () => void
-  onOpenNavigation: () => void
+  onReturnToChat: () => void
 }
 
-export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSaved, onDeleted, onReturnToOverview, onOpenNavigation }: Props) {
+export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSelect, onOpenConstants, onSaved, onDeleted, onReturnToOverview, onReturnToChat }: Props) {
   const { t } = useTranslation()
   const [value, setValue] = useState<Configuration | null>(null)
   const [valueSelectionKey, setValueSelectionKey] = useState('')
@@ -81,8 +83,8 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
   const dirty = currentValue != null && serialized !== baseline
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
-  if (kind == null) return <ConfigurationOverview lists={lists} onCreate={onCreate} onOpenNavigation={onOpenNavigation} />
-  if (isConstantsOverview) return <ConstantsWorkspace refreshKey={refreshKey} onDirtyChange={onDirtyChange} onSaved={() => { onDirtyChange(false); onSaved('constants', '') }} onReturnToOverview={onReturnToOverview} onOpenNavigation={onOpenNavigation} />
+  if (kind == null) return <ConfigurationOverview lists={lists} onCreate={onCreate} onSelect={onSelect} onOpenConstants={onOpenConstants} onReturnToChat={onReturnToChat} />
+  if (isConstantsOverview) return <ConstantsWorkspace refreshKey={refreshKey} onDirtyChange={onDirtyChange} onSaved={() => { onDirtyChange(false); onSaved('constants', '') }} onReturnToOverview={onReturnToOverview} />
   const meta = getConfigurationMeta(kind)
   const validationDescriptors = currentValue == null ? {} : validateConfiguration(kind, currentValue, catalog.constants)
   const errors = Object.fromEntries(Object.entries(validationDescriptors).map(([field, descriptor]) => [field, renderDescriptor(t, descriptor)]))
@@ -169,8 +171,7 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
   return (
     <div className="configuration-workspace">
       <header className="configuration-workspace-header">
-        <button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button>
-        <div><button className="configuration-eyebrow configuration-return" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={onReturnToOverview}><ChevronLeft size={15} /><Database size={14} />{t('configuration.databaseConfiguration')} · {t(`${meta.translationKey}.singular`)}</button><h1>{isNew ? t('configuration.createNamed', { name: t(`${meta.translationKey}.label`) }) : currentValue?.name ?? name}</h1><p>{t(`${meta.translationKey}.description`)}</p></div>
+        <div><button className="configuration-eyebrow configuration-return" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={onReturnToOverview}><ChevronLeft size={15} />{t('configuration.databaseConfiguration')} · {t(`${meta.translationKey}.singular`)}</button><h1>{isNew ? t('configuration.createNamed', { name: t(`${meta.translationKey}.label`) }) : currentValue?.name ?? name}</h1><p>{t(`${meta.translationKey}.description`)}</p></div>
       </header>
       <div className="configuration-workspace-scroll">
         {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} onNotify={notify} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
@@ -186,14 +187,26 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
   )
 }
 
-function ConfigurationOverview({ lists, onCreate, onOpenNavigation }: { lists: ConfigurationLists; onCreate: (kind: ConfigurationKind) => void; onOpenNavigation: () => void }) {
+function ConfigurationOverview({ lists, onCreate, onSelect, onOpenConstants, onReturnToChat }: { lists: ConfigurationLists; onCreate: (kind: ConfigurationKind) => void; onSelect: (kind: ConfigurationKind, name: string) => void; onOpenConstants: () => void; onReturnToChat: () => void }) {
   const { t } = useTranslation()
-  return <div className="configuration-overview"><button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button><div className="configuration-overview-heading"><span>{t('configuration.registryConsole')}</span><h1>{t('configuration.databaseConfiguration')}</h1><p>{t('configuration.overview')}</p></div><div className="configuration-overview-grid">{CONFIGURATION_META.map(meta => <button className="configuration-overview-item" type="button" key={meta.kind} onClick={() => onCreate(meta.kind)}><strong>{t(`${meta.translationKey}.label`)}</strong><span>{t(`${meta.translationKey}.description`)}</span><small>{t('configuration.recordCount', { count: lists[meta.kind]?.length ?? 0 })}</small></button>)}</div></div>
+  const [expandedKind, setExpandedKind] = useState<ConfigurationKind | null>(null)
+  return <div className="configuration-overview"><div className="configuration-overview-heading"><span className="configuration-registry-label">{t('configuration.registryConsole')}</span><button className="configuration-eyebrow configuration-return configuration-return-chat" type="button" onClick={onReturnToChat}><ChevronLeft size={15} /><MessageSquareText size={14} />{t('app.returnToChat')}</button><h1>{t('configuration.databaseConfiguration')}</h1><p>{t('configuration.overview')}</p></div><div className="configuration-overview-grid">{CONFIGURATION_META.map(meta => {
+    const values = lists[meta.kind] ?? []
+    const expanded = expandedKind === meta.kind
+    const label = t(`${meta.translationKey}.label`)
+    const toggle = () => meta.kind === 'constants' ? onOpenConstants() : setExpandedKind(current => current === meta.kind ? null : meta.kind)
+    return <section className={`configuration-overview-item${expanded ? ' expanded' : ''}`} key={meta.kind} role="button" tabIndex={0} aria-expanded={expanded} onClick={toggle} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle() } }}>
+      <button className="configuration-overview-group" type="button" aria-expanded={expanded} onClick={event => { event.stopPropagation(); toggle() }}><span><strong>{label}</strong><small>{t('configuration.recordCount', { count: values.length })}</small></span><ChevronDown size={17} /></button>
+      <p>{t(`${meta.translationKey}.description`)}</p>
+      {meta.kind !== 'constants' && <button className="configuration-overview-create" type="button" onClick={event => { event.stopPropagation(); onCreate(meta.kind) }}><Plus size={15} />{t('configuration.create', { name: label })}</button>}
+      {expanded && meta.kind !== 'constants' && <div className="configuration-overview-records">{values.length === 0 ? <span>{t('configuration.createFirst', { name: label })}</span> : values.map(value => <button type="button" key={value.name} onClick={event => { event.stopPropagation(); onSelect(meta.kind, value.name) }}><strong>{value.name}</strong></button>)}</div>}
+    </section>
+  })}</div></div>
 }
 
 type ConstantDraft = ConstantConfiguration & { id: number }
 
-function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onReturnToOverview, onOpenNavigation }: { refreshKey: number; onDirtyChange: (dirty: boolean) => void; onSaved: () => void; onReturnToOverview: () => void; onOpenNavigation: () => void }) {
+function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onReturnToOverview }: { refreshKey: number; onDirtyChange: (dirty: boolean) => void; onSaved: () => void; onReturnToOverview: () => void }) {
   const { t } = useTranslation()
   const nextDraftID = useRef(0)
   const createDraft = (constant: ConstantConfiguration): ConstantDraft => ({ ...constant, id: nextDraftID.current++ })
@@ -251,7 +264,7 @@ function ConstantsWorkspace({ refreshKey, onDirtyChange, onSaved, onReturnToOver
   }
 
   return <div className="configuration-workspace">
-    <header className="configuration-workspace-header"><button className="configuration-mobile-nav" type="button" onClick={onOpenNavigation}><ListTree size={16} />{t('configuration.list')}</button><div><button className="configuration-eyebrow configuration-return" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={onReturnToOverview}><ChevronLeft size={15} /><Database size={14} />{t('configuration.databaseConfiguration')}</button><h1>{t('configuration.kinds.constants.label')}</h1><p>{t('configuration.kinds.constants.description')}</p></div></header>
+    <header className="configuration-workspace-header"><div><button className="configuration-eyebrow configuration-return" type="button" aria-label={t('app.configurationManagement')} title={t('app.configurationManagement')} onClick={onReturnToOverview}><ChevronLeft size={15} />{t('configuration.databaseConfiguration')}</button><h1>{t('configuration.kinds.constants.label')}</h1><p>{t('configuration.kinds.constants.description')}</p></div></header>
     <div className="configuration-workspace-scroll"><div className="configuration-constants-editor">{loading ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <>{constants.map((item, index) => <div className="configuration-constant-row" key={item.id}><input aria-label={t('configuration.form.name')} value={item.name} placeholder="variable_name" onChange={event => update(index, { name: event.target.value })} /><input aria-label={t('configuration.form.value')} value={item.value} placeholder={t('configuration.form.value')} onChange={event => update(index, { value: event.target.value })} /><button type="button" aria-label={t('common.delete')} title={t('common.delete')} onClick={() => setConstants(current => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={15} /></button></div>)}<button className="configuration-add-row" type="button" onClick={() => setConstants(current => [...current, createDraft({ name: '', value: '' })])}><Plus size={15} />{t('common.create')}</button>{!valid && <p className="configuration-constants-error">{t('configuration.validation.constantNameInvalid')}</p>}</>}</div></div>
     {!loading && <footer className="configuration-action-bar"><div /><div><button type="button" disabled={!dirty || submitting} onClick={() => setConstants(baseline)}><RotateCcw size={15} />{t('common.reset')}</button><button className="primary" type="button" disabled={!dirty || submitting || !valid} onClick={() => void save()}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{t('common.saveChanges')}</button></div></footer>}
     {notification && <div className={`configuration-toast ${notification.type}`} role={notification.type === 'error' ? 'alert' : 'status'}><span>{notification.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}</span><p>{notification.message}</p><button type="button" aria-label={t('common.close')} onClick={() => setNotification(null)}><X size={15} /></button></div>}
