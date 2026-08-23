@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -36,13 +37,25 @@ func TestParseSessionSummary_ClampsFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseSessionSummary: %v", err)
 	}
-	if len([]rune(title)) > 30 || len([]rune(summary)) > 300 {
+	if len([]rune(title)) > 35 || len([]rune(summary)) > 300 {
 		t.Fatalf("clamped lengths = %d, %d", len([]rune(title)), len([]rune(summary)))
 	}
 }
 
 func TestParseSessionSummary_RejectsMissingJSON(t *testing.T) {
-	if _, _, err := parseSessionSummary("no json here"); err == nil {
+	result := "no json here\n"
+	if _, _, err := parseSessionSummary(result); err == nil {
 		t.Fatal("parseSessionSummary unexpectedly accepted response without JSON")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("response=%q", result)) {
+		t.Fatalf("parse error missing raw response: %v", err)
+	}
+}
+
+func TestParseSessionSummary_ReportsMalformedResponse(t *testing.T) {
+	result := "{\"session\":\n"
+	if _, _, err := parseSessionSummary(result); err == nil {
+		t.Fatal("parseSessionSummary unexpectedly accepted malformed response")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("response=%q", result)) {
+		t.Fatalf("parse error missing raw response: %v", err)
 	}
 }

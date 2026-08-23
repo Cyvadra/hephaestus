@@ -101,18 +101,22 @@ func parseSessionSummary(result string) (string, string, error) {
 	start := strings.Index(result, "{")
 	end := strings.LastIndex(result, "}")
 	if start < 0 || end < start {
-		return "", "", fmt.Errorf("JSON object not found")
+		return "", "", sessionSummaryParseError(result, fmt.Errorf("JSON object not found"))
 	}
 
 	var response sessionSummaryResponse
 	if err := json.Unmarshal([]byte(result[start:end+1]), &response); err != nil {
-		return "", "", err
+		return "", "", sessionSummaryParseError(result, err)
 	}
 	// 适度放宽硬 cap 限制
 	title := clampRunes(strings.TrimSpace(response.Session.Title), 35)
 	summary := clampRunes(strings.TrimSpace(response.Session.Summary), 300)
 	if title == "" || summary == "" {
-		return "", "", fmt.Errorf("title or summary is empty")
+		return "", "", sessionSummaryParseError(result, fmt.Errorf("title or summary is empty"))
 	}
 	return title, summary, nil
+}
+
+func sessionSummaryParseError(result string, err error) error {
+	return fmt.Errorf("%w; response=%q", err, result)
 }
