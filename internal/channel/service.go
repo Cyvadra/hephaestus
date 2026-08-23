@@ -286,7 +286,12 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 		text += fmt.Sprintf("\n[received file: %s, path: %s]", attachment.Name, attachment.Path)
 	}
 	if command.IsCommand(text) {
-		result, executeErr := s.commands.ExecuteResult(sessionID, text)
+		commandCtx := interaction.WithReporter(ctx, func(event interaction.Event) {
+			if event.Type == interaction.EventAskPermission {
+				s.beginApproval(ctx, external, message, event.Request)
+			}
+		})
+		result, executeErr := s.commands.ExecuteResultContext(commandCtx, sessionID, text)
 		response := result.Response
 		if executeErr == nil && result.SessionTarget != nil {
 			executeErr = s.saveBinding(message.Channel, message.ChatID, result.SessionTarget.ID)

@@ -201,6 +201,12 @@ func (s *Service) Execute(sessionID uint, text string) (string, error) {
 // ExecuteResult parses and runs a slash command with any transport-specific
 // intent returned separately from the user-visible response.
 func (s *Service) ExecuteResult(sessionID uint, text string) (Result, error) {
+	return s.ExecuteResultContext(context.Background(), sessionID, text)
+}
+
+// ExecuteResultContext runs a slash command with a context that may report
+// and await interactive permission requests.
+func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text string) (Result, error) {
 	fields := strings.Fields(strings.TrimSpace(text))
 	if len(fields) == 0 {
 		return Result{}, fmt.Errorf("command: empty input")
@@ -226,7 +232,7 @@ func (s *Service) ExecuteResult(sessionID uint, text string) (Result, error) {
 	case "/detail":
 		response, err = s.detail(sessionID, args)
 	case "/switch":
-		response, target, err = s.switchTo(sessionID, args)
+		response, target, err = s.switchTo(ctx, sessionID, args)
 	case "/activate":
 		response, err = s.setActive(sessionID, args, true)
 	case "/deactivate":
@@ -589,7 +595,7 @@ func (s *Service) detail(sessionID uint, args []string) (string, error) {
 	return string(data), nil
 }
 
-func (s *Service) switchTo(sessionID uint, args []string) (string, *SessionTarget, error) {
+func (s *Service) switchTo(ctx context.Context, sessionID uint, args []string) (string, *SessionTarget, error) {
 	if len(args) != 2 {
 		return "", nil, fmt.Errorf("command: usage: /switch <identity|concierge|project> <#id|name> | /switch session <ordinal|#session-id>")
 	}
@@ -634,8 +640,7 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, *SessionTarge
 		}
 		nextSettings := session.SettingsFromConcierge(c)
 		settings = nextSettings
-		sess.SourceConcierge = c.Name
-		if err := s.saveSettings(sess, settings); err != nil {
+		if err := s.saveConciergeSettings(sess, c.Name, settings); err != nil {
 			return "", nil, err
 		}
 		return fmt.Sprintf("Switched to concierge %q (identity now %q).", name, c.Identity), nil, nil
@@ -650,7 +655,29 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, *SessionTarge
 			return "", nil, fmt.Errorf("command: unknown project %q", name)
 		}
 		if !s.projects.IsConciergeAvailable(*boundProject, sess.SourceConcierge) {
-			return "", nil, fmt.Errorf("command: concierge %q is not available for project %q", sess.SourceConcierge, name)
+			concierge, ok := firstAvailableConcierge(*boundProject, s.currentRegistry().Concierges)
+			if !ok || !interaction.HasReporter(ctx) {
+				return "", nil, fmt.Errorf("command: concierge %q is not available for project %q", sess.SourceConcierge, name)
+			}
+			title := fmt.Sprintf("Concierge %q is unavailable for project %q.", sess.SourceConcierge, name)
+			details := fmt.Sprintf("Switch Concierge to %q and continue switching the project?", concierge.Name)
+			if err := s.interactions.RequestPermission(ctx, sessionID, title, details); err != nil {
+				return "", nil, fmt.Errorf("command: switch project: %w", err)
+			}
+			settings := session.SettingsFromConcierge(concierge)
+			if err := s.db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(sess).Updates(map[string]any{
+					"source_concierge": concierge.Name,
+					"settings":         datatypes.NewJSONType(settings),
+					"project_id":       boundProject.ID,
+				}).Error; err != nil {
+					return err
+				}
+				return nil
+			}); err != nil {
+				return "", nil, fmt.Errorf("command: switch project: %w", err)
+			}
+			return fmt.Sprintf("Switched to concierge %q (identity now %q) and project %q.", concierge.Name, concierge.Identity, name), nil, nil
 		}
 		if err := s.db.Model(sess).Update("project_id", boundProject.ID).Error; err != nil {
 			return "", nil, fmt.Errorf("command: switch project: %w", err)
@@ -671,6 +698,15 @@ func (s *Service) switchTo(sessionID uint, args []string) (string, *SessionTarge
 	default:
 		return "", nil, fmt.Errorf("command: /switch does not support kind %q", kind)
 	}
+}
+
+func firstAvailableConcierge(project store.Project, concierges map[string]registry.Concierge) (registry.Concierge, bool) {
+	for _, name := range project.AvailableConciergeList {
+		if concierge, ok := concierges[name]; ok {
+			return concierge, true
+		}
+	}
+	return registry.Concierge{}, false
 }
 
 func (s *Service) setActive(sessionID uint, args []string, active bool) (string, error) {
@@ -897,6 +933,13 @@ func (s *Service) loadSession(id uint) (*store.Session, error) {
 
 func (s *Service) saveSettings(sess *store.Session, settings store.SessionSettings) error {
 	return s.db.Model(sess).Update("settings", datatypes.NewJSONType(settings)).Error
+}
+
+func (s *Service) saveConciergeSettings(sess *store.Session, concierge string, settings store.SessionSettings) error {
+	return s.db.Model(sess).Updates(map[string]any{
+		"source_concierge": concierge,
+		"settings":         datatypes.NewJSONType(settings),
+	}).Error
 }
 
 func (s *Service) resolveSessionTarget(sessionID uint, ref string) (*store.Session, *store.Project, error) {

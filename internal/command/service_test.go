@@ -6,8 +6,12 @@ import (
 	"testing"
 
 	"github.com/Cyvadra/hephaestus/internal/interaction"
+	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/glebarez/sqlite"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 func testService() *Service {
@@ -43,6 +47,139 @@ func TestValidateKindNameUsesPublishedRegistry(t *testing.T) {
 	})
 	if err := validateKindName(service, KindIdentity, "updated"); err != nil {
 		t.Fatalf("expected published identity to be accepted: %v", err)
+	}
+}
+
+func TestSaveConciergeSettingsPersistsConciergeAndSettings(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := db.AutoMigrate(&store.Project{}, &store.Session{}); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	project := store.Project{Name: "default"}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	sess := store.Session{
+		ProjectID:       project.ID,
+		SourceConcierge: "default",
+		Settings:        datatypes.NewJSONType(store.SessionSettings{Identity: "Default"}),
+	}
+	if err := db.Create(&sess).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	service := &Service{db: db}
+	wantSettings := store.SessionSettings{Identity: "Rose"}
+	if err := service.saveConciergeSettings(&sess, "rose-initial", wantSettings); err != nil {
+		t.Fatalf("save concierge settings: %v", err)
+	}
+
+	var reloaded store.Session
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if reloaded.SourceConcierge != "rose-initial" {
+		t.Fatalf("source concierge = %q, want %q", reloaded.SourceConcierge, "rose-initial")
+	}
+	if reloaded.Settings.Data().Identity != "Rose" {
+		t.Fatalf("identity = %q, want %q", reloaded.Settings.Data().Identity, "Rose")
+	}
+}
+
+func TestFirstAvailableConciergeUsesProjectOrderAndSkipsMissing(t *testing.T) {
+	project := store.Project{AvailableConciergeList: []string{"deleted", "rose-initial", "default"}}
+	concierges := map[string]registry.Concierge{
+		"default":      {Name: "default"},
+		"rose-initial": {Name: "rose-initial", Identity: "Rose"},
+	}
+
+	got, ok := firstAvailableConcierge(project, concierges)
+	if !ok || got.Name != "rose-initial" {
+		t.Fatalf("firstAvailableConcierge() = (%q, %v), want (%q, true)", got.Name, ok, "rose-initial")
+	}
+}
+
+func TestFirstAvailableConciergeRejectsProjectWithoutRegisteredConcierge(t *testing.T) {
+	project := store.Project{AvailableConciergeList: []string{"deleted"}}
+	if _, ok := firstAvailableConcierge(project, map[string]registry.Concierge{}); ok {
+		t.Fatal("expected no available registered concierge")
+	}
+}
+
+func TestSwitchProjectCanApproveConciergeSwitch(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := db.AutoMigrate(&store.Project{}, &store.Session{}); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	currentProject := store.Project{Name: "current", AvailableConciergeList: []string{"default"}}
+	targetProject := store.Project{Name: "lifespace", AvailableConciergeList: []string{"rose-initial"}}
+	if err := db.Create(&currentProject).Error; err != nil {
+		t.Fatalf("create current project: %v", err)
+	}
+	if err := db.Create(&targetProject).Error; err != nil {
+		t.Fatalf("create target project: %v", err)
+	}
+	sess := store.Session{
+		ProjectID:       currentProject.ID,
+		SourceConcierge: "default",
+		Settings:        datatypes.NewJSONType(store.SessionSettings{Identity: "Default"}),
+	}
+	if err := db.Create(&sess).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	projects, err := project.New(db, t.TempDir())
+	if err != nil {
+		t.Fatalf("create project service: %v", err)
+	}
+	interactions := interaction.NewManager()
+	service := &Service{
+		db: db, projects: projects, interactions: interactions,
+		registries: registry.NewStore(&registry.Registry{Concierges: map[string]registry.Concierge{
+			"default":      {Name: "default", Identity: "Default"},
+			"rose-initial": {Name: "rose-initial", Identity: "Rose"},
+		}}),
+		lastList: map[uint]map[Kind][]string{}, cancels: map[uint]cancelRegistration{},
+	}
+	events := make(chan interaction.Event, 1)
+	ctx := interaction.WithReporter(context.Background(), func(event interaction.Event) { events <- event })
+
+	type commandResult struct {
+		result Result
+		err    error
+	}
+	done := make(chan commandResult, 1)
+	go func() {
+		result, executeErr := service.ExecuteResultContext(ctx, sess.ID, "/switch project lifespace")
+		done <- commandResult{result: result, err: executeErr}
+	}()
+
+	event := <-events
+	if !strings.Contains(event.Request.Details, `"rose-initial"`) {
+		t.Fatalf("approval details = %q, want rose-initial", event.Request.Details)
+	}
+	if err := interactions.Respond(sess.ID, true); err != nil {
+		t.Fatalf("approve switch: %v", err)
+	}
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("switch project: %v", got.err)
+	}
+	if !strings.Contains(got.result.Response, `project "lifespace"`) {
+		t.Fatalf("response = %q", got.result.Response)
+	}
+
+	var reloaded store.Session
+	if err := db.First(&reloaded, sess.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if reloaded.ProjectID != targetProject.ID || reloaded.SourceConcierge != "rose-initial" || reloaded.Settings.Data().Identity != "Rose" {
+		t.Fatalf("session after switch = project %d, concierge %q, identity %q", reloaded.ProjectID, reloaded.SourceConcierge, reloaded.Settings.Data().Identity)
 	}
 }
 

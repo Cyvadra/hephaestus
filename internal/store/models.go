@@ -215,8 +215,8 @@ type Session struct {
 	Project             Project `gorm:"foreignKey:ProjectID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;"`
 	ParentSubagentRunID *uint   `gorm:"index"`
 
-	// SourceConcierge is the Concierge name used at creation time, kept
-	// for reference only; it has no further business influence.
+	// SourceConcierge is the active Concierge used to derive session settings
+	// and validate project availability.
 	SourceConcierge string `gorm:"size:255"`
 
 	// Settings is the live, mutable configuration for this session.
