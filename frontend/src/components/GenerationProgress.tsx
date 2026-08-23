@@ -2,23 +2,26 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '../i18n'
 import Markdown from './Markdown'
-import type { InteractionRequest, StreamToolCall } from '../api/types'
+import type { InteractionRequest, QuestionsInteractionRequest, StreamToolCall } from '../api/types'
 import type { AuthorizationMode } from './Composer'
+import { normalizeQuestionAnswers, type DraftQuestionAnswer } from '../lib/questionAnswers'
 
 export type StreamActivity =
   | { type: 'reasoning'; sequence: number; content: string }
   | { type: 'tool'; sequence: number; toolCall: StreamToolCall }
-	| { type: 'permission'; sequence: number; request: InteractionRequest }
+  | { type: 'permission'; sequence: number; request: Extract<InteractionRequest, { kind: 'permission' }> }
+  | { type: 'questions'; sequence: number; request: QuestionsInteractionRequest }
 
 interface Props {
   content: string
   activities: StreamActivity[]
-	onRespondToPermission?: (request: InteractionRequest, approved: boolean) => Promise<boolean>
+  onRespondToPermission?: (request: Extract<InteractionRequest, { kind: 'permission' }>, approved: boolean) => Promise<boolean>
+  onRespondToQuestions?: (request: QuestionsInteractionRequest, answers: import('../api/types').QuestionAnswer[]) => Promise<boolean>
   authorizationMode?: AuthorizationMode
   onAutoApprovePermission?: (request: InteractionRequest) => Promise<boolean>
 }
 
-export default function GenerationProgress({ content, activities, onRespondToPermission, authorizationMode = 'askEachTime', onAutoApprovePermission }: Props) {
+export default function GenerationProgress({ content, activities, onRespondToPermission, onRespondToQuestions, authorizationMode = 'askEachTime', onAutoApprovePermission }: Props) {
   const { t } = useTranslation()
   return (
     <div className="message-stack generation-progress">
@@ -32,8 +35,10 @@ export default function GenerationProgress({ content, activities, onRespondToPer
             <div className="reasoning-text" key={activity.sequence}>{activity.content}</div>
           ) : activity.type === 'tool' ? (
             <StreamToolActivity key={activity.sequence} toolCall={activity.toolCall} />
-          ) : (
+		  ) : activity.type === 'permission' ? (
       <PermissionActivity key={activity.sequence} request={activity.request} onRespond={onRespondToPermission} authorizationMode={authorizationMode} onAutoApprove={onAutoApprovePermission} />
+		  ) : (
+			<QuestionActivity key={activity.sequence} request={activity.request} onRespond={onRespondToQuestions} />
           ))}
           {activities.length === 0 && <span className="reasoning-pending">{t('chat.reasoning.analyzing')}</span>}
         </div>
@@ -50,7 +55,7 @@ export default function GenerationProgress({ content, activities, onRespondToPer
   )
 }
 
-function PermissionActivity({ request, onRespond, authorizationMode, onAutoApprove }: { request: InteractionRequest; onRespond?: (request: InteractionRequest, approved: boolean) => Promise<boolean>; authorizationMode: AuthorizationMode; onAutoApprove?: (request: InteractionRequest) => Promise<boolean> }) {
+function PermissionActivity({ request, onRespond, authorizationMode, onAutoApprove }: { request: Extract<InteractionRequest, { kind: 'permission' }>; onRespond?: (request: Extract<InteractionRequest, { kind: 'permission' }>, approved: boolean) => Promise<boolean>; authorizationMode: AuthorizationMode; onAutoApprove?: (request: InteractionRequest) => Promise<boolean> }) {
   const { t } = useTranslation()
   const [secondsRemaining, setSecondsRemaining] = useState(20)
   const [responding, setResponding] = useState(false)
@@ -130,4 +135,72 @@ function StreamToolActivity({ toolCall }: { toolCall: StreamToolCall }) {
       </div>
     </div>
   )
+}
+
+function QuestionActivity({ request, onRespond }: { request: QuestionsInteractionRequest; onRespond?: (request: QuestionsInteractionRequest, answers: import('../api/types').QuestionAnswer[]) => Promise<boolean> }) {
+  const { t } = useTranslation()
+  const [drafts, setDrafts] = useState<Record<string, DraftQuestionAnswer>>({})
+  const [responding, setResponding] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const answers = normalizeQuestionAnswers(request.questions, drafts)
+
+  const setSelection = (questionId: string, optionId: string, multiSelect: boolean, checked: boolean) => {
+    setDrafts(current => {
+      const draft = current[questionId] ?? { selectedOptionIds: [], customText: '' }
+      const selectedOptionIds = multiSelect
+        ? checked ? [...draft.selectedOptionIds, optionId] : draft.selectedOptionIds.filter(id => id !== optionId)
+        : checked ? [optionId] : []
+      return { ...current, [questionId]: { ...draft, selectedOptionIds } }
+    })
+  }
+
+  return <div className="tool-activity-list">
+    <div className="tool-activity question-activity">
+      <div className="tool-activity-header">
+        <span className="tool-status-dot" data-status="calling" />
+        <strong>{t('chat.questions.title')}</strong>
+        <span>{t('chat.questions.awaiting')}</span>
+      </div>
+      <form onSubmit={async event => {
+        event.preventDefault()
+        if (!answers || responding || !onRespond) return
+        setResponding(true)
+        setError(null)
+        const accepted = await onRespond(request, answers)
+        if (!accepted) {
+          setResponding(false)
+          setError(t('chat.questions.submitFailed'))
+        }
+      }}>
+        {request.questions.map(question => {
+          const draft = drafts[question.id] ?? { selectedOptionIds: [], customText: '' }
+          return <fieldset className="question-fieldset" key={question.id} disabled={responding}>
+            <legend>{question.prompt}</legend>
+            <div className="question-options">
+              {question.options.map(option => <label className="question-option" key={option.id}>
+                <input
+                  type={question.multi_select ? 'checkbox' : 'radio'}
+                  name={question.id}
+                  checked={draft.selectedOptionIds.includes(option.id)}
+                  onChange={event => setSelection(question.id, option.id, question.multi_select, event.currentTarget.checked)}
+                />
+                <span><strong>{option.title}</strong><small>{option.description}</small></span>
+              </label>)}
+            </div>
+            <label className="question-custom-text">
+              <span>{t('chat.questions.customAnswer')}</span>
+              <textarea value={draft.customText} onChange={event => {
+                const customText = event.currentTarget.value
+                setDrafts(current => ({ ...current, [question.id]: { ...draft, customText } }))
+              }} rows={2} />
+            </label>
+          </fieldset>
+        })}
+        {error && <p className="question-submit-error">{error}</p>}
+        <div className="message-editor-actions permission-response-actions">
+          <button type="submit" className="composer-send-btn" disabled={responding || answers == null}>{responding ? t('chat.questions.submitting') : t('chat.questions.submit')}</button>
+        </div>
+      </form>
+    </div>
+  </div>
 }

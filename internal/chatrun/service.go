@@ -246,7 +246,7 @@ func (s *Service) snapshot(runID uint) (store.ChatRunSnapshot, error) {
 			snapshot.ReasoningContent += delta.Text
 		case "tool_call", "tool_output", "tool_result":
 			snapshot.ToolCalls = appendJSON(snapshot.ToolCalls, delta.ToolCall)
-		case "ask_permission":
+		case "ask_permission", "ask_questions":
 			snapshot.Interaction = marshalJSON(delta.Interaction)
 		case "session_updated":
 			snapshot.SessionUpdate = marshalJSON(delta.Session)

@@ -137,13 +137,42 @@ export interface ChatRunDone {
   response: SendMessageResponse
 }
 
-export interface InteractionRequest {
+export interface PermissionInteractionRequest {
   id: number
   session_id: number
   kind: 'permission'
   title: string
   details: string
   created_at: string
+}
+
+export interface QuestionOption {
+  id: string
+  title: string
+  description: string
+}
+
+export interface Question {
+  id: string
+  prompt: string
+  multi_select: boolean
+  options: QuestionOption[]
+}
+
+export interface QuestionsInteractionRequest {
+  id: number
+  session_id: number
+  kind: 'questions'
+  questions: Question[]
+  created_at: string
+}
+
+export type InteractionRequest = PermissionInteractionRequest | QuestionsInteractionRequest
+
+export interface QuestionAnswer {
+  question_id: string
+  selected_option_ids: string[]
+  custom_text?: string
 }
 
 export interface HistoryResponse {

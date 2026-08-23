@@ -10,6 +10,7 @@ export type StreamEvent =
   | { sequence: number; type: 'tool_result'; data: StreamToolCall }
   | { sequence: number; type: 'session_updated'; data: Session }
   | { sequence: number; type: 'ask_permission'; data: InteractionRequest }
+  | { sequence: number; type: 'ask_questions'; data: InteractionRequest }
   | { sequence: number; type: 'done'; data: ChatRunDone }
   | { sequence: number; type: 'error'; data: string }
   | { sequence: number; type: 'snapshot'; data: ChatRun }
@@ -121,9 +122,9 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
     } else if (eventName === 'session_updated') {
       if (!progress.session) throw new Error('Invalid SSE session event data')
       yield { sequence: envelope.sequence, type: 'session_updated', data: progress.session }
-    } else if (eventName === 'ask_permission') {
+    } else if (eventName === 'ask_permission' || eventName === 'ask_questions') {
       if (!progress.interaction) throw new Error('Invalid SSE interaction event data')
-      yield { sequence: envelope.sequence, type: 'ask_permission', data: progress.interaction }
+    yield { sequence: envelope.sequence, type: eventName, data: progress.interaction }
     } else if (eventName === 'done') {
       yield { sequence: envelope.sequence, type: 'done', data: envelope.data as ChatRunDone }
     } else {

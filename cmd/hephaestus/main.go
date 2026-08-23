@@ -100,6 +100,7 @@ func main() {
 	toolReg.Register(tools.NewSubagentAwaitTool(subagentSvc))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
 	interactions := interaction.NewManager()
+	toolReg.Register(tools.NewAskQuestionsTool(interactions))
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
 		Provider:        cfg.WebFetchProvider,
 		FirecrawlAPIKey: cfg.FirecrawlAPIKey,

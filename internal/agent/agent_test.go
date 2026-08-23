@@ -423,9 +423,9 @@ func TestTrackConsecutiveToolCall_RejectsRepeatedCallWithoutInteractiveApproval(
 func TestTrackConsecutiveToolCall_ApprovalResetsCounter(t *testing.T) {
 	manager := interaction.NewManager()
 	runner := testRunner(&fakeLLM{}, manager)
-	events := make(chan *interaction.Request, 1)
-	req := Request{OwnerID: 7, OnInteraction: func(request *interaction.Request) {
-		events <- request
+	events := make(chan interaction.Event, 1)
+	req := Request{OwnerID: 7, OnInteraction: func(event interaction.Event) {
+		events <- event
 	}}
 	lastToolName := "shell"
 	consecutiveToolCalls := maxConsecutiveToolCalls
@@ -435,7 +435,7 @@ func TestTrackConsecutiveToolCall_ApprovalResetsCounter(t *testing.T) {
 		done <- runner.trackConsecutiveToolCall(context.Background(), req, &lastToolName, &consecutiveToolCalls, "shell")
 	}()
 
-	request := <-events
+	request := (<-events).Request
 	if request.SessionID != 7 || request.Title != "Continue repeated tool calls?" {
 		t.Fatalf("unexpected permission request: %+v", request)
 	}

@@ -6,6 +6,7 @@ import type { ChatMessage, ToolCall } from '../api/types'
 import { attachmentDownloadURL } from '../api/client'
 import { siblings, descendToLeaf } from '../lib/tree'
 import { parseAttachmentPrefix } from '../lib/attachments'
+import { parseAskQuestionsHistory } from '../lib/askQuestionsHistory'
 
 interface Props {
   msg: ChatMessage
@@ -490,6 +491,7 @@ function StoredToolCall({ toolCall, result }: { toolCall: ToolCall; result?: str
   const { t } = useTranslation()
   const name = toolCall.function?.name || t('chat.message.toolCall')
   const args = toolCall.function?.arguments
+  const questionHistory = name === 'ask_questions' ? parseAskQuestionsHistory(args, result) : null
   const resultPreview = result && result.length > 12000
     ? `${result.slice(0, 12000)}\n\n${t('chat.message.truncatedResult')}`
     : result
@@ -501,8 +503,8 @@ function StoredToolCall({ toolCall, result }: { toolCall: ToolCall; result?: str
         <strong>{name}</strong>
         <span>{t('chat.message.called')}</span>
       </div>
-      {args && <pre>{args}</pre>}
-      {resultPreview && (
+      {questionHistory ? <AskQuestionsHistory history={questionHistory} /> : args && <pre>{args}</pre>}
+      {!questionHistory && resultPreview && (
         <details className="tool-output">
           <summary>{t('chat.message.viewResult')}</summary>
           <pre className="tool-result-content">{resultPreview}</pre>
@@ -510,6 +512,29 @@ function StoredToolCall({ toolCall, result }: { toolCall: ToolCall; result?: str
       )}
     </div>
   )
+}
+
+function AskQuestionsHistory({ history }: { history: NonNullable<ReturnType<typeof parseAskQuestionsHistory>> }) {
+  const { t } = useTranslation()
+  return <div className="question-history" aria-label={t('chat.questions.historyTitle')}>
+    {history.questions.map(question => {
+      const answer = history.answersByQuestionID.get(question.id)
+      const selected = new Set(answer?.selected_option_ids ?? [])
+      return <section className="question-history-item" key={question.id}>
+        <strong className="question-history-prompt">{question.prompt}</strong>
+        <div className="question-history-options">
+          {question.options.map(option => <div className={`question-history-option${selected.has(option.id) ? ' is-selected' : ''}`} key={option.id}>
+            <span className="question-history-marker" aria-hidden="true" />
+            <span><strong>{option.title}</strong><small>{option.description}</small></span>
+          </div>)}
+        </div>
+        {answer?.custom_text && <div className="question-history-custom-text">
+          <span>{t('chat.questions.customAnswer')}</span>
+          <p>{answer.custom_text}</p>
+        </div>}
+      </section>
+    })}
+  </div>
 }
 
 function BranchSwitcher({ current, total, onPrev, onNext }: { current: number; total: number; onPrev: () => void; onNext: () => void }) {

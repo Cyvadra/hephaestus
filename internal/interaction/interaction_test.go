@@ -116,3 +116,54 @@ func TestRequestPermissionHonorsApprovalRacingCancellation(t *testing.T) {
 		t.Fatalf("expected the delivered approval to win over cancellation, got %v", err)
 	}
 }
+
+func TestRequestQuestionsReturnsStructuredAnswers(t *testing.T) {
+	manager := NewManager()
+	events := make(chan Event, 1)
+	ctx := WithReporter(context.Background(), func(event Event) { events <- event })
+	questions := []Question{{
+		ID: "stack", Prompt: "Choose a stack", MultiSelect: true,
+		Options: []Option{{ID: "go", Title: "Go", Description: "Compiled"}, {ID: "ts", Title: "TypeScript", Description: "Typed"}},
+	}}
+	done := make(chan struct {
+		answers []Answer
+		err     error
+	}, 1)
+	go func() {
+		answers, err := manager.RequestQuestions(ctx, 7, questions)
+		done <- struct {
+			answers []Answer
+			err     error
+		}{answers, err}
+	}()
+
+	event := <-events
+	if event.Type != EventAskQuestions || event.Request.Kind != "questions" || len(event.Request.Questions) != 1 {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+	answers := []Answer{{QuestionID: "stack", SelectedOptionIDs: []string{"go"}, CustomText: " Also use SQL. "}}
+	if err := manager.RespondQuestions(7, event.Request.ID, answers); err != nil {
+		t.Fatalf("respond questions: %v", err)
+	}
+	result := <-done
+	if result.err != nil || len(result.answers) != 1 || result.answers[0].CustomText != "Also use SQL." {
+		t.Fatalf("unexpected result: %+v, %v", result.answers, result.err)
+	}
+}
+
+func TestRespondQuestionsRejectsStaleOrInvalidAnswer(t *testing.T) {
+	manager := NewManager()
+	events := make(chan Event, 1)
+	ctx, cancel := context.WithCancel(WithReporter(context.Background(), func(event Event) { events <- event }))
+	defer cancel()
+	go func() {
+		_, _ = manager.RequestQuestions(ctx, 7, []Question{{ID: "q", Prompt: "Pick", Options: []Option{{ID: "a", Title: "A", Description: "First"}, {ID: "b", Title: "B", Description: "Second"}}}})
+	}()
+	event := <-events
+	if err := manager.RespondQuestions(7, event.Request.ID+1, nil); !errors.Is(err, ErrRequestMismatch) {
+		t.Fatalf("expected stale id rejection, got %v", err)
+	}
+	if err := manager.RespondQuestions(7, event.Request.ID, []Answer{{QuestionID: "q", SelectedOptionIDs: []string{"unknown"}}}); !errors.Is(err, ErrInvalidResponse) {
+		t.Fatalf("expected invalid answer rejection, got %v", err)
+	}
+}

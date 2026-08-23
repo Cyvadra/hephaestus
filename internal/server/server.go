@@ -80,6 +80,7 @@ func New(authService *auth.Service, registries *registry.Store, sessions *sessio
 	api.POST("/sessions/:id/chat-runs/cancel", s.cancelActiveChatRun)
 	api.GET("/sessions/:id/attachments/:attachmentID/download", s.downloadAttachment)
 	api.POST("/sessions/:id/messages", s.sendMessage)
+	api.POST("/sessions/:id/interactions/:requestID/responses", s.respondToQuestions)
 	api.POST("/sessions/:id/messages/:messageID/fork", s.forkSessionAtMessage)
 	api.POST("/sessions/:id/messages/:messageID/edit", s.editAssistantMessage)
 	api.POST("/sessions/:id/regenerate", s.regenerate)

@@ -121,6 +121,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		"chat_history_read":   true,
 		"create_project":      true, "list_projects": true,
 		"web_fetch": true, "web_search": true, "shell": true, "send_file": true,
+		"ask_questions":     true,
 		"send_notification": true,
 		"spawn":             true, "fork": true, "await": true,
 	}

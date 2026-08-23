@@ -130,6 +130,15 @@ export const resources = {
           failed: '失败',
           calling: '调用中',
         },
+        questions: {
+          title: '需要你的选择',
+          awaiting: '等待回答',
+          customAnswer: '补充说明',
+          submit: '提交回答',
+          submitting: '正在提交',
+          submitFailed: '提交失败，请重试。',
+          historyTitle: '问答记录',
+        },
         session: {
           new: '新会话',
           unnamed: '会话 #{{id}}',
@@ -403,6 +412,15 @@ export const resources = {
           complete: 'Complete',
           failed: 'Failed',
           calling: 'Calling',
+        },
+        questions: {
+          title: 'Your input is needed',
+          awaiting: 'Awaiting answers',
+          customAnswer: 'Additional details',
+          submit: 'Submit answers',
+          submitting: 'Submitting',
+          submitFailed: 'Unable to submit answers. Please try again.',
+          historyTitle: 'Question and answer history',
         },
         session: {
           new: 'New chat',

@@ -11,6 +11,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,10 @@ type chatRunDone struct {
 	Status   store.ChatRunStatus `json:"status"`
 	Error    string              `json:"error,omitempty"`
 	Response sendMessageResponse `json:"response"`
+}
+
+type questionResponseRequest struct {
+	Answers []interaction.Answer `json:"answers"`
 }
 
 func newChatRunResponse(run *store.ChatRun) chatRunResponse {
@@ -262,9 +267,9 @@ func (s *Server) streamChatRun(c *gin.Context) {
 	sequence := uint64(0)
 	emit(sequence, "snapshot", newChatRunResponse(run))
 	for index, event := range events {
-		// Permission requests block generation. If replay contains a later
+		// Interactive requests block generation. If replay contains a later
 		// event, this request was already resolved and must not be shown again.
-		if event.Type == "ask_permission" && index != len(events)-1 {
+		if (event.Type == interaction.EventAskPermission || event.Type == interaction.EventAskQuestions) && index != len(events)-1 {
 			continue
 		}
 		sequence++
@@ -296,6 +301,35 @@ func (s *Server) streamChatRun(c *gin.Context) {
 			sequence++
 			emit(sequence, event.Type, json.RawMessage(event.Payload))
 		}
+	}
+}
+
+func (s *Server) respondToQuestions(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	requestID, err := parseUintParam(c, "requestID", "interaction request id")
+	if err != nil || requestID == 0 {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid interaction request id"})
+		return
+	}
+	var request questionResponseRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	err = s.pipeline.RespondQuestions(sessionID, uint64(requestID), request.Answers)
+	switch {
+	case err == nil:
+		c.Status(http.StatusNoContent)
+	case errors.Is(err, interaction.ErrNoPending), errors.Is(err, interaction.ErrRequestMismatch):
+		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
+	case errors.Is(err, interaction.ErrInvalidResponse):
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+	default:
+		internalError(c, err)
 	}
 }
 

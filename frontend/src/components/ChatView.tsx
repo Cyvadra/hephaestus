@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSubagentRun, listConcierges, respondToInteraction, setAutomaticApproval, updateSession } from '../api/client'
+import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSubagentRun, listConcierges, respondToInteraction, respondToQuestions, setAutomaticApproval, updateSession } from '../api/client'
 import { authFetch } from '../api/auth'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
+import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer, { type AuthorizationMode } from './Composer'
@@ -74,7 +74,7 @@ interface Props {
 // permission, and lazily asks for it otherwise so the first prompt in a
 // session can request it (browsers require a user gesture to grant, so a
 // fire-and-forget call here is best-effort, not guaranteed to prompt).
-function notifyPermissionRequest(request: InteractionRequest) {
+function notifyPermissionRequest(request: PermissionInteractionRequest) {
   if (typeof Notification === 'undefined') return
   if (Notification.permission === 'default') {
     void Notification.requestPermission()
@@ -112,9 +112,12 @@ async function consumeStream(
       handlers.setStreamingActivities(current => mergeToolActivity(current, ev.sequence, ev.data))
     } else if (ev.type === 'session_updated') {
       handlers.onSessionUpdated?.(ev.data)
-    } else if (ev.type === 'ask_permission') {
-      handlers.setStreamingActivities(current => [...current, { type: 'permission', sequence: ev.sequence, request: ev.data }])
-      notifyPermissionRequest(ev.data)
+    } else if (ev.type === 'ask_permission' && ev.data.kind === 'permission') {
+	  const request = ev.data as PermissionInteractionRequest
+      handlers.setStreamingActivities(current => [...current, { type: 'permission', sequence: ev.sequence, request }])
+      notifyPermissionRequest(request)
+	} else if (ev.type === 'ask_questions' && ev.data.kind === 'questions') {
+	  handlers.setStreamingActivities(current => [...current, { type: 'questions', sequence: ev.sequence, request: ev.data as QuestionsInteractionRequest }])
     } else if (ev.type === 'snapshot') {
       handlers.onSnapshot?.(ev.data)
     } else if (ev.type === 'done') {
@@ -794,6 +797,18 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
   }, [resolvedSessionId])
 
+  const handleQuestionsResponse = useCallback(async (request: QuestionsInteractionRequest, answers: import('../api/types').QuestionAnswer[]): Promise<boolean> => {
+    if (resolvedSessionId == null) return false
+    try {
+      await respondToQuestions(resolvedSessionId, request.id, answers)
+      setStreamingActivities(current => current.filter(activity => activity.type !== 'questions' || activity.request.id !== request.id))
+      return true
+    } catch (cause) {
+      setError(String(cause))
+      return false
+    }
+  }, [resolvedSessionId])
+
   const handleAuthorizationModeChange = useCallback((mode: AuthorizationMode) => {
     setAuthorizationMode(mode)
     if (mode !== 'allowAll' && project != null) {
@@ -946,7 +961,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         ) : (
           displayMessages.map((item, idx) => regeneratingMessageId === item.message.ID || continuingMessageId === item.message.ID ? (
             <div className="message-row assistant" key={item.message.ID}>
-          <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
+          <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} onRespondToQuestions={handleQuestionsResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
             </div>
           ) : (
             <MessageBubble
@@ -983,7 +998,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         )}
         {streaming && regeneratingMessageId == null && continuingMessageId == null && (
           <div className="message-row assistant">
-      <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
+      <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} onRespondToQuestions={handleQuestionsResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
           </div>
         )}
         {commandResponse && (

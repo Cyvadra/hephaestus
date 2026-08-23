@@ -857,9 +857,9 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 				onDelta(event)
 			}
 		},
-		OnInteraction: func(request *interaction.Request) {
+		OnInteraction: func(event interaction.Event) {
 			if onDelta != nil {
-				onDelta(StreamEvent{Type: interaction.EventAskPermission, Interaction: request})
+				onDelta(StreamEvent{Type: event.Type, Interaction: &event.Request})
 			}
 		},
 	})
@@ -867,6 +867,15 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, err
 	}
 	return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, nil
+}
+
+// RespondQuestions delivers structured user answers to the pending session
+// interaction. It is used by the Web-only response endpoint.
+func (p *Pipeline) RespondQuestions(sessionID uint, requestID uint64, answers []interaction.Answer) error {
+	if p.interactions == nil {
+		return fmt.Errorf("questions are unavailable")
+	}
+	return p.interactions.RespondQuestions(sessionID, requestID, answers)
 }
 
 func (p *Pipeline) notificationCommit(ids []uint) func(*gorm.DB) error {

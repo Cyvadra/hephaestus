@@ -6,27 +6,55 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
 
-const EventAskPermission = "ask_permission"
+const (
+	EventAskPermission = "ask_permission"
+	EventAskQuestions  = "ask_questions"
+)
 
 var (
-	ErrDenied    = errors.New("interaction: denied by user")
-	ErrNoPending = errors.New("interaction: no pending request")
+	ErrDenied          = errors.New("interaction: denied by user")
+	ErrNoPending       = errors.New("interaction: no pending request")
+	ErrInvalidResponse = errors.New("interaction: invalid response")
+	ErrRequestMismatch = errors.New("interaction: request does not match pending interaction")
 )
+
+// Question is one choice the user must answer. IDs are supplied by the
+// caller so a tool result can unambiguously refer to each question and option.
+type Question struct {
+	ID          string   `json:"id"`
+	Prompt      string   `json:"prompt"`
+	MultiSelect bool     `json:"multi_select"`
+	Options     []Option `json:"options"`
+}
+
+type Option struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+type Answer struct {
+	QuestionID        string   `json:"question_id"`
+	SelectedOptionIDs []string `json:"selected_option_ids"`
+	CustomText        string   `json:"custom_text,omitempty"`
+}
 
 // Request is the client-visible description of an interaction required by
 // the running agent. More kinds can be added without changing the stream
 // transport or command protocol.
 type Request struct {
-	ID        uint64    `json:"id"`
-	SessionID uint      `json:"session_id"`
-	Kind      string    `json:"kind"`
-	Title     string    `json:"title"`
-	Details   string    `json:"details"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uint64     `json:"id"`
+	SessionID uint       `json:"session_id"`
+	Kind      string     `json:"kind"`
+	Title     string     `json:"title"`
+	Details   string     `json:"details"`
+	Questions []Question `json:"questions,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // Event is reported by a running agent to its stream consumer.
@@ -59,7 +87,12 @@ func report(ctx context.Context, event Event) {
 
 type pending struct {
 	request  Request
-	decision chan bool
+	response chan response
+}
+
+type response struct {
+	approved *bool
+	answers  []Answer
 }
 
 // Manager owns at most one visible interaction per session. Concurrent tool
@@ -103,8 +136,12 @@ func (m *Manager) EnableAutoApprove(sessionID uint) error {
 	if p == nil {
 		return nil
 	}
+	if p.request.Kind != "permission" {
+		return nil
+	}
+	approved := true
 	select {
-	case p.decision <- true:
+	case p.response <- response{approved: &approved}:
 		return nil
 	default:
 		return fmt.Errorf("interaction: request %d has already been answered", p.request.ID)
@@ -136,15 +173,15 @@ func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, 
 			p := &pending{request: Request{
 				ID: m.nextID, SessionID: sessionID, Kind: "permission",
 				Title: title, Details: details, CreatedAt: time.Now(),
-			}, decision: make(chan bool, 1)}
+			}, response: make(chan response, 1)}
 			m.pending[sessionID] = p
 			m.mu.Unlock()
 
 			report(ctx, Event{Type: EventAskPermission, Request: p.request})
 			select {
-			case approved := <-p.decision:
+			case response := <-p.response:
 				m.finish(sessionID, p)
-				if !approved {
+				if response.approved == nil || !*response.approved {
 					return ErrDenied
 				}
 				return nil
@@ -153,9 +190,9 @@ func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, 
 				// already landed in the buffered channel over reporting the
 				// approval lost to cancellation.
 				select {
-				case approved := <-p.decision:
+				case response := <-p.response:
 					m.finish(sessionID, p)
-					if !approved {
+					if response.approved == nil || !*response.approved {
 						return ErrDenied
 					}
 					return nil
@@ -183,12 +220,144 @@ func (m *Manager) Respond(sessionID uint, approved bool) error {
 	if !ok {
 		return ErrNoPending
 	}
+	if p.request.Kind != "permission" {
+		return ErrInvalidResponse
+	}
 	select {
-	case p.decision <- approved:
+	case p.response <- response{approved: &approved}:
 		return nil
 	default:
 		return fmt.Errorf("interaction: request %d has already been answered", p.request.ID)
 	}
+}
+
+// RequestQuestions reports a structured question form and blocks until the
+// user answers it or the enclosing turn is canceled. Questions do not time
+// out because choosing on behalf of the user would defeat their purpose.
+func (m *Manager) RequestQuestions(ctx context.Context, sessionID uint, questions []Question) ([]Answer, error) {
+	if err := validateQuestions(questions); err != nil {
+		return nil, err
+	}
+	for {
+		m.mu.Lock()
+		if _, occupied := m.pending[sessionID]; !occupied {
+			if m.changed[sessionID] == nil {
+				m.changed[sessionID] = make(chan struct{})
+			}
+			m.nextID++
+			p := &pending{request: Request{
+				ID: m.nextID, SessionID: sessionID, Kind: "questions", Questions: questions, CreatedAt: time.Now(),
+			}, response: make(chan response, 1)}
+			m.pending[sessionID] = p
+			m.mu.Unlock()
+
+			report(ctx, Event{Type: EventAskQuestions, Request: p.request})
+			select {
+			case reply := <-p.response:
+				m.finish(sessionID, p)
+				return normalizeAnswers(reply.answers), nil
+			case <-ctx.Done():
+				select {
+				case reply := <-p.response:
+					m.finish(sessionID, p)
+					return normalizeAnswers(reply.answers), nil
+				default:
+				}
+				m.finish(sessionID, p)
+				return nil, ctx.Err()
+			}
+		}
+		changed := m.changed[sessionID]
+		m.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// RespondQuestions applies answers only to the matching visible question
+// request. The request id prevents a stale browser form from answering a
+// later prompt in the same session.
+func (m *Manager) RespondQuestions(sessionID uint, requestID uint64, answers []Answer) error {
+	m.mu.Lock()
+	p, ok := m.pending[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return ErrNoPending
+	}
+	if p.request.Kind != "questions" || p.request.ID != requestID {
+		return ErrRequestMismatch
+	}
+	if err := validateAnswers(p.request.Questions, answers); err != nil {
+		return err
+	}
+	select {
+	case p.response <- response{answers: answers}:
+		return nil
+	default:
+		return fmt.Errorf("interaction: request %d has already been answered", p.request.ID)
+	}
+}
+
+func validateQuestions(questions []Question) error {
+	if len(questions) < 1 || len(questions) > 5 {
+		return fmt.Errorf("%w: require 1 to 5 questions", ErrInvalidResponse)
+	}
+	seenQuestions := map[string]bool{}
+	for _, question := range questions {
+		if question.ID == "" || question.Prompt == "" || seenQuestions[question.ID] || len(question.Options) < 2 || len(question.Options) > 5 {
+			return fmt.Errorf("%w: malformed question", ErrInvalidResponse)
+		}
+		seenQuestions[question.ID] = true
+		seenOptions := map[string]bool{}
+		for _, option := range question.Options {
+			if option.ID == "" || option.Title == "" || option.Description == "" || seenOptions[option.ID] {
+				return fmt.Errorf("%w: malformed option", ErrInvalidResponse)
+			}
+			seenOptions[option.ID] = true
+		}
+	}
+	return nil
+}
+
+func validateAnswers(questions []Question, answers []Answer) error {
+	if len(answers) != len(questions) {
+		return fmt.Errorf("%w: every question requires an answer", ErrInvalidResponse)
+	}
+	byID := make(map[string]Question, len(questions))
+	for _, question := range questions {
+		byID[question.ID] = question
+	}
+	seenAnswers := map[string]bool{}
+	for _, answer := range answers {
+		question, ok := byID[answer.QuestionID]
+		if !ok || seenAnswers[answer.QuestionID] || (len(answer.SelectedOptionIDs) == 0 && strings.TrimSpace(answer.CustomText) == "") || (!question.MultiSelect && len(answer.SelectedOptionIDs) > 1) {
+			return fmt.Errorf("%w: malformed answer", ErrInvalidResponse)
+		}
+		seenAnswers[answer.QuestionID] = true
+		options := map[string]bool{}
+		for _, option := range question.Options {
+			options[option.ID] = true
+		}
+		selected := map[string]bool{}
+		for _, optionID := range answer.SelectedOptionIDs {
+			if !options[optionID] || selected[optionID] {
+				return fmt.Errorf("%w: invalid selected option", ErrInvalidResponse)
+			}
+			selected[optionID] = true
+		}
+	}
+	return nil
+}
+
+func normalizeAnswers(answers []Answer) []Answer {
+	result := append([]Answer(nil), answers...)
+	for index := range result {
+		result[index].CustomText = strings.TrimSpace(result[index].CustomText)
+	}
+	return result
 }
 
 func (m *Manager) finish(sessionID uint, p *pending) {

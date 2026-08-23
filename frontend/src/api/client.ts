@@ -12,6 +12,7 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error ?? res.statusText)
   }
+  if (res.status === 204 || res.headers.get('Content-Length') === '0') return undefined as T
   return res.json()
 }
 
@@ -143,6 +144,13 @@ export const respondToInteraction = (sessionId: number, approved: boolean) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text: approved ? '/interact approve' : '/interact deny' }),
+  })
+
+export const respondToQuestions = (sessionId: number, requestId: number, answers: import('./types').QuestionAnswer[]) =>
+  fetchJSON<void>(`${BASE}/sessions/${sessionId}/interactions/${requestId}/responses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
   })
 
 export const setAutomaticApproval = (sessionId: number, enabled: boolean) =>

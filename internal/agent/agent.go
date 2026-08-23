@@ -65,9 +65,9 @@ type Request struct {
 	OwnerID uint
 	// OnDelta streams assistant progress; nil disables streaming.
 	OnDelta func(StreamEvent)
-	// OnInteraction forwards ask_permission requests to a visible client;
+	// OnInteraction forwards interactive requests to a visible client;
 	// nil disables interactive approval (headless workflow runs).
-	OnInteraction func(*interaction.Request)
+	OnInteraction func(interaction.Event)
 	// ClaimNotifications atomically claims durable completion notifications
 	// before an outbound model request. Claimed notifications are at-most-once.
 	ClaimNotifications func() ([]Notification, error)
@@ -350,9 +350,7 @@ func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[
 	}
 	if r.interactions != nil && req.OnInteraction != nil {
 		toolCtx = interaction.WithReporter(toolCtx, func(event interaction.Event) {
-			if event.Type == interaction.EventAskPermission {
-				req.OnInteraction(&event.Request)
-			}
+			req.OnInteraction(event)
 		})
 	}
 	result := toolkit.RunTool(toolCtx, t, args)
@@ -411,9 +409,7 @@ func (r *Runner) trackConsecutiveToolCall(ctx context.Context, req Request, last
 		return fmt.Errorf("agent: tool %q called consecutively more than %d times; interactive approval is unavailable", toolName, maxConsecutiveToolCalls)
 	}
 	permissionCtx := interaction.WithReporter(ctx, func(event interaction.Event) {
-		if event.Type == interaction.EventAskPermission {
-			req.OnInteraction(&event.Request)
-		}
+		req.OnInteraction(event)
 	})
 	if err := r.interactions.RequestPermission(
 		permissionCtx,
