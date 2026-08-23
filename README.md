@@ -312,3 +312,5 @@ make build
 ## 致谢
 
 初始 `pkg/channels` 实现改编自 PicoClaw 的 [`pkg/channels`](https://github.com/sipeed/picoclaw/tree/main/pkg/channels)，遵循 MIT License。
+
+部分 Agent Harness 实现与 Identity 配置参考 DeepSeek 的 [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness)，遵循 MIT License。
