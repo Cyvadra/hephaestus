@@ -357,8 +357,10 @@ func formatReplayedMessage(message command.ReplayedMessage) string {
 	return message.Content
 }
 
+var channelDisabledTools = []string{"ask_questions"}
+
 func channelTurnOptions(expectedLeaf *uint, attachments []channels.Attachment, onDelta func(chat.StreamEvent)) chat.TurnOptions {
-	options := chat.TurnOptions{ExpectedLeaf: expectedLeaf, OnDelta: onDelta}
+	options := chat.TurnOptions{ExpectedLeaf: expectedLeaf, OnDelta: onDelta, DisabledTools: channelDisabledTools}
 	for _, attachment := range attachments {
 		attachment.MIME = normalizedMIME(attachment.MIME, attachment.Name)
 		kind := store.MessageAttachmentUserUpload

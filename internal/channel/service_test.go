@@ -51,6 +51,16 @@ func TestChannelTurnOptionsPreservesExpectedLeaf(t *testing.T) {
 	if options.ExpectedLeaf == nil || *options.ExpectedLeaf != leaf {
 		t.Fatalf("ExpectedLeaf = %v, want %d", options.ExpectedLeaf, leaf)
 	}
+	if len(options.DisabledTools) == 0 {
+		t.Fatalf("DisabledTools = %v, want [ask_questions]", options.DisabledTools)
+	} else {
+		for _, tool := range options.DisabledTools {
+			if tool == "ask_questions" {
+				return
+			}
+		}
+		t.Fatalf("DisabledTools = %v, want [ask_questions]", options.DisabledTools)
+	}
 }
 
 func TestCollectInboundCombinesTextThenImage(t *testing.T) {
