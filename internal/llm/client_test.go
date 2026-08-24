@@ -114,6 +114,53 @@ func TestCallRoutesLocalModelAlias(t *testing.T) {
 	}
 }
 
+func TestCallOmitsOrphanToolResultsFromLegacyInterruptedTurn(t *testing.T) {
+	var request ds4.ChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleUser, Content: "run it"},
+		{Role: ds4.RoleAssistant, Content: "calling tool"},
+		{Role: ds4.RoleTool, Content: "orphaned output", ToolCallID: "call-1"},
+		{Role: ds4.RoleUser, Content: "continue"},
+	}
+	if _, err := client.Call(context.Background(), registry.Identity{}, messages, nil); err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+
+	for _, message := range request.Messages {
+		if message.Role == ds4.RoleTool {
+			t.Fatalf("expected orphan tool result omitted, got %+v", request.Messages)
+		}
+	}
+}
+
+func TestWithoutOrphanToolResultsPreservesMatchedBatch(t *testing.T) {
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleAssistant, ToolCalls: datatypes.JSON(`[{"id":"call-1"},{"id":"call-2"}]`)},
+		{Role: ds4.RoleTool, Content: "one", ToolCallID: "call-1"},
+		{Role: ds4.RoleTool, Content: "two", ToolCallID: "call-2"},
+	}
+
+	got := withoutOrphanToolResults(messages)
+	if !reflect.DeepEqual(got, messages) {
+		t.Fatalf("matched tool exchange changed: got %+v, want %+v", got, messages)
+	}
+}
+
 func TestCallAttachesOnlyFinalUserVisualUploads(t *testing.T) {
 	var request struct {
 		Model    string            `json:"model"`

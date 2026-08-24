@@ -649,14 +649,37 @@ func incompleteMessages(messages []store.ChatMessage, cause error) []store.ChatM
 	for index := len(messages) - 1; index >= 0; index-- {
 		if messages[index].Role == ds4.RoleAssistant {
 			messages[index].Status = store.MessageStatusIncomplete
-			// A tool_calls message with no matching tool result would make
-			// the next request to the provider fail outright, so an
-			// interrupted turn can only keep the assistant's visible text.
-			messages[index].ToolCalls = nil
+			// Keep completed tool exchanges replayable. Only a tool_calls
+			// message without all matching results is unsafe to retain.
+			if !hasMatchingToolResults(messages[index], messages[index+1:]) {
+				messages[index].ToolCalls = nil
+			}
 			break
 		}
 	}
 	return messages
+}
+
+func hasMatchingToolResults(assistant store.ChatMessage, following []store.ChatMessage) bool {
+	if len(assistant.ToolCalls) == 0 {
+		return true
+	}
+	var calls []ds4.ToolCall
+	if err := json.Unmarshal(assistant.ToolCalls, &calls); err != nil || len(calls) == 0 {
+		return false
+	}
+	results := make(map[string]struct{}, len(following))
+	for _, message := range following {
+		if message.Role == ds4.RoleTool {
+			results[message.ToolCallID] = struct{}{}
+		}
+	}
+	for _, call := range calls {
+		if _, ok := results[call.ID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func hasMessageContent(message ds4.Message) bool {

@@ -256,6 +256,18 @@ func TestIncompleteMessages_StripsDanglingToolCallsFromInterruptedAssistantMessa
 	}
 }
 
+func TestIncompleteMessages_PreservesToolCallsWithMatchingResults(t *testing.T) {
+	messages := []store.ChatMessage{
+		{Role: ds4.RoleAssistant, ToolCalls: []byte(`[{"id":"call-1","type":"function","function":{"name":"shell","arguments":"{}"}}]`), Status: store.MessageStatusComplete},
+		{Role: ds4.RoleTool, Content: "tool output", ToolCallID: "call-1", Status: store.MessageStatusComplete},
+	}
+
+	got := incompleteMessages(messages, context.Canceled)
+	if len(got[0].ToolCalls) == 0 {
+		t.Fatal("expected completed tool_calls to remain replayable")
+	}
+}
+
 func TestMaybeCompress_SkipsWhenContextWindowUnset(t *testing.T) {
 	// A missing context window must not fire compression on every turn.
 	pipeline := &Pipeline{}

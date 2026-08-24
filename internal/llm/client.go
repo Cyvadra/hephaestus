@@ -238,7 +238,7 @@ func (c *Client) buildChat(ctx context.Context, identity registry.Identity, mess
 	for _, m := range identity.InjectedMessages {
 		builder.AddMessage(ds4.Message{Role: m.Role, Content: m.Content})
 	}
-	for _, m := range messages {
+	for _, m := range withoutOrphanToolResults(messages) {
 		builder.AddMessage(store2ds4(m))
 	}
 
@@ -271,6 +271,34 @@ func (c *Client) buildChat(ctx context.Context, identity registry.Identity, mess
 		return nil, err
 	}
 	return builder, nil
+}
+
+func withoutOrphanToolResults(messages []store.ChatMessage) []store.ChatMessage {
+	out := make([]store.ChatMessage, 0, len(messages))
+	pending := map[string]struct{}{}
+	for _, message := range messages {
+		switch message.Role {
+		case ds4.RoleAssistant:
+			pending = map[string]struct{}{}
+			var calls []ds4.ToolCall
+			if err := json.Unmarshal(message.ToolCalls, &calls); err == nil {
+				for _, call := range calls {
+					if call.ID != "" {
+						pending[call.ID] = struct{}{}
+					}
+				}
+			}
+		case ds4.RoleTool:
+			if _, ok := pending[message.ToolCallID]; !ok {
+				continue
+			}
+			delete(pending, message.ToolCallID)
+		default:
+			pending = map[string]struct{}{}
+		}
+		out = append(out, message)
+	}
+	return out
 }
 
 func addFinalUserImages(ctx context.Context, builder *ds4.ChatBuilder, messages []store.ChatMessage) error {
