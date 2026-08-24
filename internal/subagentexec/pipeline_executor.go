@@ -10,6 +10,7 @@ import (
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
+	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/subagent"
@@ -20,14 +21,15 @@ import (
 // PipelineExecutor runs delegated work as a normal turn in an independent
 // child session, retaining all existing identity, plugin, tool, and workspace behavior.
 type PipelineExecutor struct {
-	db       *gorm.DB
-	sessions *session.Service
-	pipeline *chat.Pipeline
-	chatRuns *chatrun.Service
+	db           *gorm.DB
+	sessions     *session.Service
+	pipeline     *chat.Pipeline
+	chatRuns     *chatrun.Service
+	interactions *interaction.Manager
 }
 
-func NewPipelineExecutor(db *gorm.DB, sessions *session.Service, pipeline *chat.Pipeline, chatRuns *chatrun.Service) *PipelineExecutor {
-	return &PipelineExecutor{db: db, sessions: sessions, pipeline: pipeline, chatRuns: chatRuns}
+func NewPipelineExecutor(db *gorm.DB, sessions *session.Service, pipeline *chat.Pipeline, chatRuns *chatrun.Service, interactions *interaction.Manager) *PipelineExecutor {
+	return &PipelineExecutor{db: db, sessions: sessions, pipeline: pipeline, chatRuns: chatRuns, interactions: interactions}
 }
 
 func (e *PipelineExecutor) ExecuteSubagent(ctx context.Context, run *store.SubagentRun) (uint, string, error) {
@@ -49,6 +51,9 @@ func (e *PipelineExecutor) ExecuteSubagent(ctx context.Context, run *store.Subag
 	}
 	if err := e.db.Create(&child).Error; err != nil {
 		return 0, "", fmt.Errorf("subagent: create child session: %w", err)
+	}
+	if e.interactions != nil {
+		e.interactions.RegisterSubagent(child.ID, parent.ID)
 	}
 	if err := e.db.Model(&store.SubagentRun{}).Where("id = ?", run.ID).Update("child_session_id", child.ID).Error; err != nil {
 		return child.ID, "", fmt.Errorf("subagent: link child session: %w", err)

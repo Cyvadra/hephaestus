@@ -95,6 +95,39 @@ func TestEnableAutoApproveApprovesPendingRequest(t *testing.T) {
 	}
 }
 
+func TestSubagentInheritsParentAutomaticApproval(t *testing.T) {
+	manager := NewManager()
+	manager.RegisterSubagent(8, 7)
+	manager.SetAutoApprove(7, true)
+
+	if err := manager.RequestPermission(context.Background(), 8, "Allow command?", "test"); err != nil {
+		t.Fatalf("inherited auto-approval: %v", err)
+	}
+	if !manager.AutoApprove(8) {
+		t.Fatal("subagent should reflect its parent's live automatic approval policy")
+	}
+}
+
+func TestSubagentPermissionAutoApprovesAfterTimeout(t *testing.T) {
+	manager := NewManager()
+	manager.subagentApprovalTimeout = 10 * time.Millisecond
+	manager.RegisterSubagent(8, 7)
+	events := make(chan Event, 1)
+	ctx := WithReporter(context.Background(), func(event Event) { events <- event })
+
+	done := make(chan error, 1)
+	go func() { done <- manager.RequestPermission(ctx, 8, "Allow command?", "test") }()
+	<-events
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("timed-out subagent request should be approved: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subagent permission did not auto-approve")
+	}
+}
+
 // TestRequestPermissionHonorsApprovalRacingCancellation guards against a
 // Respond that races the caller's context cancellation: the buffered
 // decision channel can hold an approval that select's pseudo-random choice

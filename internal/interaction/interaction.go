@@ -99,19 +99,34 @@ type response struct {
 // calls queue behind the visible request, which keeps `/interact approve` and
 // `/interact deny` unambiguous without requiring a request id in the command.
 type Manager struct {
-	mu          sync.Mutex
-	nextID      uint64
-	pending     map[uint]*pending
-	changed     map[uint]chan struct{}
-	autoApprove map[uint]bool
+	mu                      sync.Mutex
+	nextID                  uint64
+	pending                 map[uint]*pending
+	changed                 map[uint]chan struct{}
+	autoApprove             map[uint]bool
+	parent                  map[uint]uint
+	subagentApprovalTimeout time.Duration
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		pending:     map[uint]*pending{},
-		changed:     map[uint]chan struct{}{},
-		autoApprove: map[uint]bool{},
+		pending:                 map[uint]*pending{},
+		changed:                 map[uint]chan struct{}{},
+		autoApprove:             map[uint]bool{},
+		parent:                  map[uint]uint{},
+		subagentApprovalTimeout: 30 * time.Second,
 	}
+}
+
+// RegisterSubagent makes childSessionID use the same live authorization
+// policy as parentSessionID. A delegated session has no dependable human
+// response channel, so an unanswered prompt is approved after a short grace
+// period. Availability comes first: a subagent must not remain stuck merely
+// because its parent UI is not currently observing the child's event stream.
+func (m *Manager) RegisterSubagent(childSessionID, parentSessionID uint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.parent[childSessionID] = parentSessionID
 }
 
 // SetAutoApprove changes whether permission requests in sessionID are
@@ -153,7 +168,17 @@ func (m *Manager) EnableAutoApprove(sessionID uint) error {
 func (m *Manager) AutoApprove(sessionID uint) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.autoApprove[sessionID]
+	return m.autoApprovedLocked(sessionID)
+}
+
+func (m *Manager) autoApprovedLocked(sessionID uint) bool {
+	for sessionID != 0 {
+		if m.autoApprove[sessionID] {
+			return true
+		}
+		sessionID = m.parent[sessionID]
+	}
+	return false
 }
 
 // RequestPermission emits an ask_permission event and blocks until the user
@@ -161,7 +186,7 @@ func (m *Manager) AutoApprove(sessionID uint) bool {
 func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, details string) error {
 	for {
 		m.mu.Lock()
-		if m.autoApprove[sessionID] {
+		if m.autoApprovedLocked(sessionID) {
 			m.mu.Unlock()
 			return nil
 		}
@@ -175,9 +200,20 @@ func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, 
 				Title: title, Details: details, CreatedAt: time.Now(),
 			}, response: make(chan response, 1)}
 			m.pending[sessionID] = p
+			timeout := time.Duration(0)
+			if m.parent[sessionID] != 0 {
+				timeout = m.subagentApprovalTimeout
+			}
 			m.mu.Unlock()
 
 			report(ctx, Event{Type: EventAskPermission, Request: p.request})
+			var timeoutC <-chan time.Time
+			var timer *time.Timer
+			if timeout > 0 {
+				timer = time.NewTimer(timeout)
+				timeoutC = timer.C
+				defer timer.Stop()
+			}
 			select {
 			case response := <-p.response:
 				m.finish(sessionID, p)
@@ -200,6 +236,20 @@ func (m *Manager) RequestPermission(ctx context.Context, sessionID uint, title, 
 				}
 				m.finish(sessionID, p)
 				return ctx.Err()
+			case <-timeoutC:
+				// Availability first: delegated work auto-approves when nobody
+				// answers, while an explicit decision delivered at the boundary wins.
+				select {
+				case response := <-p.response:
+					m.finish(sessionID, p)
+					if response.approved == nil || !*response.approved {
+						return ErrDenied
+					}
+					return nil
+				default:
+				}
+				m.finish(sessionID, p)
+				return nil
 			}
 		}
 		changed := m.changed[sessionID]

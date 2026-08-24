@@ -113,7 +113,7 @@ func main() {
 		log.Fatalf("web fetch: %v", err)
 	}
 	toolReg.Register(webFetch)
-	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars})
+	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars, Notifier: notifier})
 	toolReg.Register(webSearch)
 	shellTool, err := tools.NewShellToolWithConfig(tools.ShellConfig{
 		Enabled:         cfg.ShellEnabled,
@@ -192,7 +192,7 @@ func main() {
 	if err := subagentSvc.Reconcile(chatRunSvc); err != nil {
 		log.Fatalf("subagents: reconcile stale runs: %v", err)
 	}
-	subagentSvc.SetExecutor(subagentexec.NewPipelineExecutor(db, sessions, pipeline, chatRunSvc))
+	subagentSvc.SetExecutor(subagentexec.NewPipelineExecutor(db, sessions, pipeline, chatRunSvc, interactions))
 	// Deliver any completions that finished while their parent session was
 	// idle (or that were rebuilt by subagent Reconcile above).
 	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
