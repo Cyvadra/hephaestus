@@ -712,7 +712,7 @@ func parseUintParam(c *gin.Context, param, label string) (uint, error) {
 // listSessions godoc
 //
 //	@Summary		List all sessions
-//	@Description	Returns every session ordered by last_message_time descending, including direct background subagent summaries.
+//	@Description	Returns every session ordered by last_message_time descending, including spawned and forked subagent summaries.
 //	@Tags			sessions
 //	@Produce		json
 //	@Success		200	{array}		sessionListResponse
@@ -760,7 +760,7 @@ func (s *Server) sessionListResponses(sessions []store.Session) ([]sessionListRe
 	if len(ids) == 0 {
 		return responses, nil
 	}
-	runs, err := s.subagents.ListBackgroundByParentSessions(ids)
+	runs, err := s.subagents.ListByParentSessions(ids)
 	if err != nil {
 		return nil, err
 	}

@@ -320,12 +320,12 @@ func (s *Service) ListByParentSession(sessionID uint) ([]store.SubagentRun, erro
 	return runs, err
 }
 
-func (s *Service) ListBackgroundByParentSessions(sessionIDs []uint) ([]store.SubagentRun, error) {
+func (s *Service) ListByParentSessions(sessionIDs []uint) ([]store.SubagentRun, error) {
 	if len(sessionIDs) == 0 {
 		return []store.SubagentRun{}, nil
 	}
 	var runs []store.SubagentRun
-	err := s.db.Where("parent_session_id IN ? AND schedule = ?", sessionIDs, store.SubagentScheduleBackground).
+	err := s.db.Where("parent_session_id IN ?", sessionIDs).
 		Order("parent_session_id, id desc").Find(&runs).Error
 	return runs, err
 }

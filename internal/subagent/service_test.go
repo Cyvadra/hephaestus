@@ -167,7 +167,7 @@ func TestCreateRejectsInvalidCategory(t *testing.T) {
 	}
 }
 
-func TestListBackgroundByParentSessionsFiltersAndOrders(t *testing.T) {
+func TestListByParentSessionsIncludesSpawnAndForkAndOrders(t *testing.T) {
 	db := openTestDB(t)
 	service := New(db, 2)
 	older := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunSucceeded)
@@ -191,15 +191,15 @@ func TestListBackgroundByParentSessionsFiltersAndOrders(t *testing.T) {
 		db.Delete(&store.SubagentRun{}, newer.ID)
 	})
 
-	runs, err := service.ListBackgroundByParentSessions([]uint{older.ParentSessionID})
+	runs, err := service.ListByParentSessions([]uint{older.ParentSessionID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 2 || runs[0].ID != newer.ID || runs[1].ID != older.ID {
-		t.Fatalf("runs = %+v, want background runs newest first", runs)
+	if len(runs) != 3 || runs[0].ID != foreground.ID || runs[1].ID != newer.ID || runs[2].ID != older.ID {
+		t.Fatalf("runs = %+v, want all runs newest first", runs)
 	}
 	for _, run := range runs {
-		if run.Schedule != store.SubagentScheduleBackground || run.ParentSessionID == other.ParentSessionID {
+		if run.ParentSessionID == other.ParentSessionID {
 			t.Fatalf("unexpected run: %+v", run)
 		}
 	}

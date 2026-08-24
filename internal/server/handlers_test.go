@@ -25,7 +25,7 @@ func (f *fakeSubagentRunner) Get(uint) (*store.SubagentRun, error) { return nil,
 func (f *fakeSubagentRunner) ListByParentSession(uint) ([]store.SubagentRun, error) {
 	return nil, nil
 }
-func (f *fakeSubagentRunner) ListBackgroundByParentSessions([]uint) ([]store.SubagentRun, error) {
+func (f *fakeSubagentRunner) ListByParentSessions([]uint) ([]store.SubagentRun, error) {
 	return f.runs, f.err
 }
 func (f *fakeSubagentRunner) Cancel(uint) error { return nil }
