@@ -63,7 +63,7 @@ func publicRunError(run *store.ChatRun) string {
 	case store.ChatRunInterrupted:
 		return "chat generation interrupted"
 	default:
-		return "internal server error"
+		return "server error: " + run.Error + " " + string(run.Status)
 	}
 }
 
