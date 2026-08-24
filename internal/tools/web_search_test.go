@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/joho/godotenv"
 )
@@ -210,13 +211,18 @@ func TestRenderSearchResults(t *testing.T) {
 func TestWebSearchToleratesPartialProviderFailure(t *testing.T) {
 	failing := &stubProvider{name: "first", err: fmt.Errorf("blocked")}
 	working := &stubProvider{name: "second", results: []SearchResult{{Title: "Hit", URL: "https://example.test"}}}
-	tool := &WebSearchTool{fixed: []Provider{failing, working}, random: &stubRandom{}}
+	notifier := notify.New("")
+	tool := &WebSearchTool{fixed: []Provider{failing, working}, random: &stubRandom{}, notifier: notifier}
 	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
 	if result.IsError || !strings.Contains(result.ForLLM, "Hit") {
 		t.Fatalf("expected successful aggregation, got %+v", result)
 	}
 	if !strings.Contains(result.ForLLM, "via second") {
 		t.Fatalf("expected successful provider in result, got %q", result.ForLLM)
+	}
+	warnings := notifier.Recent()
+	if len(warnings) != 1 || warnings[0].Level != "WARN" || !strings.Contains(warnings[0].Message, `web_search: provider first failed for query "q": blocked`) {
+		t.Fatalf("unexpected warnings: %+v", warnings)
 	}
 }
 
@@ -457,16 +463,22 @@ func countLanguages(results []SearchResult) map[searchLanguage]int {
 }
 
 func TestWebSearchReturnsErrorWhenAllProvidersFail(t *testing.T) {
+	notifier := notify.New("")
 	tool := &WebSearchTool{
 		fixed: []Provider{
 			&stubProvider{name: "failed", err: errors.New("blocked")},
 			&stubProvider{name: "empty"},
 		},
-		random: &stubRandom{},
+		random:   &stubRandom{},
+		notifier: notifier,
 	}
 	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
 	if !result.IsError || !strings.Contains(result.ForLLM, "failed: blocked") || !strings.Contains(result.ForLLM, "empty: no results") {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	warnings := notifier.Recent()
+	if len(warnings) != 3 || warnings[2].Level != "ERROR" || !strings.Contains(warnings[2].Message, "web_search: all providers failed") {
+		t.Fatalf("unexpected warnings: %+v", warnings)
 	}
 }
 
@@ -523,9 +535,14 @@ func TestWebSearchDegradesToRawListOnSummarizeError(t *testing.T) {
 	summarizer := func(_ context.Context, _ string, _ int) (string, error) {
 		return "", errors.New("summarizer down")
 	}
-	tool := &WebSearchTool{fixed: []Provider{provider}, random: &stubRandom{}, summaryMaxChars: 100, summarizer: summarizer}
+	notifier := notify.New("")
+	tool := &WebSearchTool{fixed: []Provider{provider}, random: &stubRandom{}, summaryMaxChars: 100, summarizer: summarizer, notifier: notifier}
 	result := tool.Execute(context.Background(), map[string]any{"query": "q"})
 	if result.IsError || !strings.Contains(result.ForLLM, "Result 1") {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	warnings := notifier.Recent()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, `web_search: query "q" failed: summarization failed: summarizer down`) {
+		t.Fatalf("unexpected warnings: %+v", warnings)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/llm"
+	"github.com/Cyvadra/hephaestus/internal/notify"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/transform"
 	"golang.org/x/net/publicsuffix"
@@ -72,6 +73,7 @@ type WebSearchConfig struct {
 	SearXNGBaseURL                           string
 	SerpAPIEngine                            string
 	BraveAPIKeys, TavilyAPIKeys, SerpAPIKeys []string
+	Notifier                                 *notify.Notifier
 	// LLMClient, when set, enables LLM condensation of result lists: rendered
 	// results over SummaryMaxChars are condensed before being returned to the
 	// calling agent. When nil, results are returned as-is.
@@ -122,6 +124,7 @@ type WebSearchTool struct {
 	random          searchRandom
 	summaryMaxChars int
 	summarizer      summarizeFunc
+	notifier        *notify.Notifier
 }
 
 // NewWebSearchTool builds the provider groups used for per-request selection.
@@ -133,7 +136,8 @@ func NewWebSearchTool(config WebSearchConfig) *WebSearchTool {
 			duckDuckGoSearch{client: client},
 			sogouSearch{client: client, endpoint: "https://wap.sogou.com/web/searchList.jsp"},
 		},
-		random: newLockedRandom(),
+		random:   newLockedRandom(),
+		notifier: config.Notifier,
 	}
 	if len(config.BraveAPIKeys) > 0 {
 		tool.primary = append(tool.primary, braveSearch{client: client, keys: NewAPIKeyPool(config.BraveAPIKeys)})
@@ -172,11 +176,11 @@ func (WebSearchTool) Parameters() map[string]any {
 func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *toolkit.ToolResult {
 	query, _ := args["query"].(string)
 	if strings.TrimSpace(query) == "" {
-		return toolkit.ErrorResult("web_search: query is required")
+		return t.errorResult("query is required")
 	}
 	providers, results, err := t.search(ctx, query)
 	if err != nil {
-		return toolkit.ErrorResult("web_search: " + err.Error())
+		return t.errorResult(err.Error())
 	}
 	rendered := RenderSearchResults(providers, query, results)
 	// Condense the ranked results with the LLM when enabled. Summarization is
@@ -185,9 +189,18 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *toolk
 	if t.summarizer != nil && len([]rune(rendered)) > t.summaryMaxChars {
 		if summary, summaryErr := t.summarizer(ctx, rendered, t.summaryMaxChars); summaryErr == nil {
 			return toolkit.SilentResult(summary)
+		} else {
+			t.warnFailure(query, "summarization failed: "+summaryErr.Error())
 		}
 	}
 	return toolkit.SilentResult(rendered)
+}
+
+func (t *WebSearchTool) errorResult(message string) *toolkit.ToolResult {
+	if t.notifier != nil {
+		t.notifier.Error("web_search: %s", message)
+	}
+	return toolkit.ErrorResult("web_search: " + message)
 }
 
 type providerResponse struct {
@@ -225,6 +238,7 @@ func (t *WebSearchTool) search(ctx context.Context, query string) ([]string, []S
 	}
 	wait.Wait()
 	if err := ctx.Err(); err != nil {
+		t.warnFailure(query, err.Error())
 		return nil, nil, err
 	}
 
@@ -233,10 +247,12 @@ func (t *WebSearchTool) search(ctx context.Context, query string) ([]string, []S
 	var aggregated []SearchResult
 	for _, response := range responses {
 		if response.err != nil {
+			t.warnProviderFailure(query, response.name, response.err.Error())
 			failures = append(failures, fmt.Sprintf("%s: %v", response.name, response.err))
 			continue
 		}
 		if len(response.results) == 0 {
+			t.warnProviderFailure(query, response.name, "no results")
 			failures = append(failures, response.name+": no results")
 			continue
 		}
@@ -249,9 +265,22 @@ func (t *WebSearchTool) search(ctx context.Context, query string) ([]string, []S
 
 	filtered := filterSearchResults(aggregated, t.random)
 	if len(filtered) == 0 {
+		t.warnFailure(query, "all search results were filtered")
 		return nil, nil, fmt.Errorf("all search results were filtered")
 	}
 	return successfulProviders, selectSearchResults(filtered, t.random), nil
+}
+
+func (t *WebSearchTool) warnProviderFailure(query, provider, reason string) {
+	if t.notifier != nil {
+		t.notifier.Warn("web_search: provider %s failed for query %q: %s", provider, query, reason)
+	}
+}
+
+func (t *WebSearchTool) warnFailure(query, reason string) {
+	if t.notifier != nil {
+		t.notifier.Warn("web_search: query %q failed: %s", query, reason)
+	}
 }
 
 // filterSearchResults randomizes provider precedence, removes blocked or
