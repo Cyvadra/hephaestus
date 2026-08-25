@@ -1077,7 +1077,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 }
 
 function composerReasoningEffort(effort: string): ReasoningEffort {
-  if (effort === 'high' || effort === 'max') return effort
+  if (effort === 'low' || effort === 'high' || effort === 'max') return effort
   return 'none'
 }
 
