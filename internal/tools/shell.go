@@ -178,7 +178,7 @@ func (ShellTool) Name() string       { return "shell" }
 func (t *ShellTool) Available() bool { return t.enabled }
 func (ShellTool) Audited() bool      { return true }
 func (ShellTool) Description() string {
-	return "Runs one shell command on the configured execution host in the current Project and returns stdout and stderr. For code development and multi-step operational work, prefer a spawn or fork subagent when available so the main conversation remains focused; use shell directly only for simple inspection, when delegation is unavailable, or when direct main-context action is explicitly necessary. Request user confirmation for commands that may be destructive, elevate privileges, change system state, or execute untrusted external code."
+	return "Runs one shell command on the configured execution host in the current Project and returns stdout and stderr. For code development and multi-step operational work, prefer a spawn or fork subagent when available so the main conversation remains focused; use shell directly only for simple inspection, when delegation is unavailable, or when direct main-context action is explicitly necessary. Never run low-value expansive filesystem scans such as `find /`; limit searches to relevant directories and use targeted commands. When essential data, scope, requirements, or access details are missing, ask the user for clarification rather than guessing or scanning broadly. Request user confirmation for commands that may be destructive, elevate privileges, change system state, or execute untrusted external code."
 }
 func (ShellTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{

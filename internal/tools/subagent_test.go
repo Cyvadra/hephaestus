@@ -55,7 +55,13 @@ func TestSubagentToolRejectsMissingOrInvalidCategory(t *testing.T) {
 
 func TestShellToolDescriptionPrefersSubagentForSubstantialWork(t *testing.T) {
 	description := (ShellTool{}).Description()
-	for _, required := range []string{"code development", "multi-step operational work", "spawn or fork subagent"} {
+	for _, required := range []string{
+		"code development",
+		"multi-step operational work",
+		"spawn or fork subagent",
+		"Never run low-value expansive filesystem scans such as `find /`",
+		"ask the user for clarification",
+	} {
 		if !strings.Contains(description, required) {
 			t.Errorf("shell description %q does not contain %q", description, required)
 		}
