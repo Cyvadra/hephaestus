@@ -105,7 +105,7 @@ func parseSessionSummary(result string) (string, string, error) {
 	}
 
 	var response sessionSummaryResponse
-	if err := json.Unmarshal([]byte(result[start:end+1]), &response); err != nil {
+	if err := unmarshalSessionJSON([]byte(result[start:end+1]), result, &response); err != nil {
 		return "", "", sessionSummaryParseError(result, err)
 	}
 	// 适度放宽硬 cap 限制
@@ -115,6 +115,27 @@ func parseSessionSummary(result string) (string, string, error) {
 		return "", "", sessionSummaryParseError(result, fmt.Errorf("title or summary is empty"))
 	}
 	return title, summary, nil
+}
+
+// unmarshalSessionJSON decodes the fixed two-level session object
+// ({"session":{"title","summary"}}). Models occasionally truncate their
+// output before emitting the final closing brace(s), which would otherwise
+// surface as "unexpected end of JSON input". We repair that by appending the
+// missing closing braces and retrying; the schema depth is fixed at two, so
+// at most two braces are ever appended.
+func unmarshalSessionJSON(raw []byte, result string, response *sessionSummaryResponse) error {
+	for i := 0; i <= 2; i++ {
+		if err := json.Unmarshal(raw, response); err == nil {
+			return nil
+		}
+		if !strings.HasSuffix(result, "}") && strings.Count(result, "\"")%2 != 0 {
+			raw = append(raw, '"')
+		}
+		if strings.Count(result, "{") > strings.Count(result, "}") {
+			raw = append(raw, '}')
+		}
+	}
+	return json.Unmarshal(raw, response)
 }
 
 func sessionSummaryParseError(result string, err error) error {
