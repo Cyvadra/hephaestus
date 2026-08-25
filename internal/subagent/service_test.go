@@ -1,11 +1,14 @@
 package subagent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,17 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+type blockingExecutor struct {
+	started chan struct{}
+	once    *sync.Once
+}
+
+func (e blockingExecutor) ExecuteSubagent(ctx context.Context, _ *store.SubagentRun) (uint, string, error) {
+	e.once.Do(func() { close(e.started) })
+	<-ctx.Done()
+	return 0, "", ctx.Err()
+}
 
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -165,6 +179,72 @@ func TestCreateRejectsInvalidCategory(t *testing.T) {
 	if !errors.Is(err, ErrInvalidCategory) {
 		t.Fatalf("create error = %v, want ErrInvalidCategory", err)
 	}
+}
+
+func TestCancelByParentChatRunStopsOnlyOwnedBackgroundRuns(t *testing.T) {
+	db, err := store.Open("sqlite://" + filepath.Join(t.TempDir(), "subagent-cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := store.Project{Name: "subagent-cancel"}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	parentSession := store.Session{ProjectID: project.ID, SourceConcierge: "test", Settings: datatypes.NewJSONType(store.SessionSettings{Identity: "test"})}
+	if err := db.Create(&parentSession).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, 2)
+	started := make(chan struct{})
+	service.SetExecutor(blockingExecutor{started: started, once: &sync.Once{}})
+	parentChatRunID := uint(time.Now().UnixNano())
+	run, err := service.StartSpawn(context.Background(), Request{
+		ParentSessionID: parentSession.ID, ParentChatRunID: &parentChatRunID, ProjectID: project.ID,
+		Category: store.SubagentCategoryGeneral, Label: "owned", Prompt: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherChatRunID := parentChatRunID + 1
+	unrelated := &store.SubagentRun{
+		ParentSessionID: parentSession.ID, ParentChatRunID: &otherChatRunID, ProjectID: project.ID,
+		Mode: store.SubagentModeSpawn, Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunPending,
+		Depth: 1, Category: store.SubagentCategoryGeneral, Label: "unrelated", Prompt: "test",
+	}
+	if err := db.Create(unrelated).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Delete(&store.SubagentRun{}, unrelated.ID) })
+	<-started
+
+	service.CancelByParentChatRun(parentChatRunID)
+	deadline := time.After(3 * time.Second)
+	for {
+		final, err := service.Get(run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if final.Status.IsTerminal() {
+			if final.Status != store.SubagentRunCancelled {
+				t.Fatalf("status = %s, want cancelled", final.Status)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("owned subagent did not stop after parent chat run cancellation")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	persistedUnrelated, err := service.Get(unrelated.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedUnrelated.Status != store.SubagentRunPending {
+		t.Fatalf("unrelated status = %s, want pending", persistedUnrelated.Status)
+	}
+	service.wg.Wait()
 }
 
 func TestListByParentSessionsIncludesSpawnAndForkAndOrders(t *testing.T) {

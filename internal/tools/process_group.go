@@ -28,3 +28,16 @@ func killProcessGroup(process *os.Process) error {
 	}
 	return nil
 }
+
+func interruptProcessGroup(process *os.Process) error {
+	if process == nil {
+		return os.ErrProcessDone
+	}
+	if runtime.GOOS == "windows" {
+		return process.Kill()
+	}
+	if err := syscall.Kill(-process.Pid, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
+}

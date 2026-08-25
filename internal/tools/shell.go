@@ -16,7 +16,8 @@ import (
 const (
 	// defaultCommandTimeout is used when NewShellTool receives a zero timeout.
 	defaultCommandTimeout = 30 * time.Second
-	defaultWaitDelay      = 2 * time.Second
+	interruptGracePeriod  = 5 * time.Second
+	defaultWaitDelay      = interruptGracePeriod + 100*time.Millisecond
 	maxRetainedOutput     = 1024 * 1024
 )
 
@@ -239,17 +240,34 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 		return toolkit.ErrorResult("shell: " + err.Error())
 	}
 	setProcessGroup(cmd)
+	var cancelMu sync.Mutex
+	var forceKill *time.Timer
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
 		}
-		return killProcessGroup(cmd.Process)
+		if err := interruptProcessGroup(cmd.Process); err != nil {
+			return err
+		}
+		cancelMu.Lock()
+		if forceKill == nil {
+			forceKill = time.AfterFunc(interruptGracePeriod, func() {
+				_ = killProcessGroup(cmd.Process)
+			})
+		}
+		cancelMu.Unlock()
+		return nil
 	}
 	cmd.WaitDelay = defaultWaitDelay
 	output := &streamingOutputWriter{ctx: execCtx}
 	cmd.Stdout = output
 	cmd.Stderr = output
 	err = cmd.Run()
+	cancelMu.Lock()
+	if forceKill != nil {
+		forceKill.Stop()
+	}
+	cancelMu.Unlock()
 	if execCtx.Err() == context.DeadlineExceeded {
 		return toolkit.ErrorResult(fmt.Sprintf("shell: command timed out after %s\n%s", timeout, output.String()))
 	}

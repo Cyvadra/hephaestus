@@ -76,6 +76,9 @@ func (t SubagentTool) Execute(ctx context.Context, args map[string]any) *toolkit
 	if owner.RunID != 0 {
 		request.ParentRunID = &owner.RunID
 	}
+	if chatRunID, ok := toolkit.ChatRunIDFromContext(ctx); ok {
+		request.ParentChatRunID = &chatRunID
+	}
 	if t.mode == store.SubagentModeFork {
 		messages, ok := toolkit.TurnMessagesFromContext(ctx)
 		if !ok || len(messages) == 0 {

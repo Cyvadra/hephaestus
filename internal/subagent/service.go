@@ -39,6 +39,7 @@ const (
 type Request struct {
 	ParentSessionID uint
 	ParentRunID     *uint
+	ParentChatRunID *uint
 	ProjectID       uint
 	Depth           int
 	Category        store.SubagentCategory
@@ -136,7 +137,7 @@ func (s *Service) create(req Request, mode store.SubagentMode, schedule store.Su
 		return nil, errors.New("subagent: service is shutting down")
 	}
 	run := &store.SubagentRun{
-		ParentSessionID: req.ParentSessionID, ParentRunID: req.ParentRunID, ProjectID: req.ProjectID,
+		ParentSessionID: req.ParentSessionID, ParentRunID: req.ParentRunID, ParentChatRunID: req.ParentChatRunID, ProjectID: req.ProjectID,
 		Mode: mode, Schedule: schedule, Status: store.SubagentRunPending, Depth: req.Depth + 1,
 		Category: req.Category, Label: req.Label, Prompt: req.Prompt,
 	}
@@ -223,7 +224,7 @@ func (s *Service) finish(run *store.SubagentRun, status store.SubagentRunStatus,
 		if err := tx.Model(run).Updates(updates).Error; err != nil {
 			return fmt.Errorf("update terminal status: %w", err)
 		}
-		if run.Schedule != store.SubagentScheduleBackground {
+		if run.Schedule != store.SubagentScheduleBackground || status == store.SubagentRunCancelled {
 			return nil
 		}
 		var err error
@@ -235,7 +236,7 @@ func (s *Service) finish(run *store.SubagentRun, status store.SubagentRunStatus,
 	}); err != nil {
 		return err
 	}
-	if run.Schedule == store.SubagentScheduleBackground && s.onCompletion != nil {
+	if run.Schedule == store.SubagentScheduleBackground && status != store.SubagentRunCancelled && s.onCompletion != nil {
 		s.onCompletion(deliverySessionID)
 	}
 	return nil
@@ -334,6 +335,21 @@ func (s *Service) Cancel(runID uint) error {
 	return s.ctrl.CancelRun(s.db, &store.SubagentRun{}, runID, ErrRunNotFound, ErrRunFinished)
 }
 
+// CancelByParentChatRun stops the active subagents spawned by a cancelled
+// chat turn. Background tasks from earlier, completed turns are unaffected.
+func (s *Service) CancelByParentChatRun(chatRunID uint) {
+	var runs []store.SubagentRun
+	if err := s.db.Where("parent_chat_run_id = ? AND status IN ?", chatRunID, []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning}).Find(&runs).Error; err != nil {
+		log.Printf("subagents: list children for cancelled chat run %d: %v", chatRunID, err)
+		return
+	}
+	for _, run := range runs {
+		if err := s.Cancel(run.ID); err != nil && !errors.Is(err, ErrRunFinished) {
+			log.Printf("subagents: cancel child run %d for cancelled chat run %d: %v", run.ID, chatRunID, err)
+		}
+	}
+}
+
 // AwaitActiveDirect freezes and waits for the currently active direct spawn set.
 func (s *Service) AwaitActiveDirect(ctx context.Context, parentSessionID uint, parentRunID *uint) ([]store.SubagentRun, error) {
 	query := s.db.Where("parent_session_id = ? AND schedule = ? AND status IN ?", parentSessionID, store.SubagentScheduleBackground, []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning})
@@ -409,7 +425,7 @@ func (s *Service) Reconcile(recovery ...InterruptedResultSource) error {
 	var missingEvents []store.SubagentRun
 	if err := s.db.Where("schedule = ? AND status IN ? AND NOT EXISTS (?)",
 		store.SubagentScheduleBackground,
-		[]store.SubagentRunStatus{store.SubagentRunSucceeded, store.SubagentRunFailed, store.SubagentRunCancelled, store.SubagentRunInterrupted},
+		[]store.SubagentRunStatus{store.SubagentRunSucceeded, store.SubagentRunFailed, store.SubagentRunInterrupted},
 		s.db.Model(&store.SubagentEvent{}).Select("1").Where("subagent_events.run_id = subagent_runs.id"),
 	).Find(&missingEvents).Error; err != nil {
 		return err

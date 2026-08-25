@@ -85,6 +85,28 @@ func TestShellToolReportsOutputBeforeCommandCompletes(t *testing.T) {
 	}
 }
 
+func TestShellToolCancellationDeliversSIGINT(t *testing.T) {
+	baseCtx, _ := projectTestContext(t)
+	ctx, cancel := context.WithCancel(baseCtx)
+	resultCh := make(chan *toolkit.ToolResult, 1)
+	go func() {
+		resultCh <- NewShellTool(true, 0).Execute(ctx, map[string]any{
+			"command": "trap 'printf interrupted; exit 0' INT; while :; do sleep 1; done",
+		})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case result := <-resultCh:
+		if !strings.Contains(result.ForLLM, "interrupted") {
+			t.Fatalf("shell did not handle SIGINT: %+v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("shell command did not stop after context cancellation")
+	}
+}
+
 func TestStreamingOutputWriterRetainsBoundedTail(t *testing.T) {
 	writer := &streamingOutputWriter{ctx: context.Background()}
 	chunk := strings.Repeat("x", maxRetainedOutput+128)
@@ -307,7 +329,7 @@ func TestShellToolForegroundTimeoutKillsDescendantsHoldingOutput(t *testing.T) {
 	if !result.IsError || !strings.Contains(result.ForLLM, "timed out") {
 		t.Fatalf("expected timeout, got %+v", result)
 	}
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
+	if elapsed := time.Since(started); elapsed > interruptGracePeriod+time.Second {
 		t.Fatalf("foreground cleanup took too long: %s", elapsed)
 	}
 }

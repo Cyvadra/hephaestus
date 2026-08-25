@@ -197,7 +197,10 @@ func main() {
 	// idle (or that were rebuilt by subagent Reconcile above).
 	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
 	subagentSvc.SetOnCompletion(dispatcher.Deliver)
-	chatRunSvc.SetOnRunEnded(func(sessionID uint, _ store.ChatRunStatus) {
+	chatRunSvc.SetOnRunEnded(func(chatRunID, sessionID uint, status store.ChatRunStatus) {
+		if status == store.ChatRunCancelled || status == store.ChatRunInterrupted {
+			subagentSvc.CancelByParentChatRun(chatRunID)
+		}
 		dispatcher.Deliver(sessionID)
 	})
 	if err := dispatcher.Sweep(); err != nil {
@@ -244,16 +247,26 @@ func main() {
 		defer schedulerWG.Done()
 		scheduler.Run(ctx)
 	}()
+	var shutdownOnce sync.Once
+	shutdownWorkers := func() {
+		shutdownOnce.Do(func() {
+			workflowSvc.Shutdown()
+			chatRunSvc.Shutdown()
+			subagentSvc.Shutdown()
+			jobSvc.Shutdown()
+		})
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownWorkers()
+	}()
 
 	if err := srv.Run(ctx, cfg.ListenAddr); err != nil {
 		log.Printf("server: %v", err)
 	}
-	// The server returned after ctx was canceled: stop the scheduler, cancel
-	// any active runs, and wait for workers to finalize their statuses.
-	workflowSvc.Shutdown()
-	chatRunSvc.Shutdown()
-	subagentSvc.Shutdown()
-	jobSvc.Shutdown()
+	// The server returned after ctx was canceled: all worker cancellation has
+	// completed, so stop the remaining transport and scheduler infrastructure.
+	shutdownWorkers()
 	stop()
 	if err := channelService.Stop(context.Background()); err != nil {
 		log.Printf("channel shutdown: %v", err)

@@ -121,6 +121,17 @@ func TestActiveForSessionReturnsNotFoundWhenNoRunIsActive(t *testing.T) {
 	}
 }
 
+func TestStartRejectsAfterShutdownBegins(t *testing.T) {
+	svc := New(nil)
+	svc.Shutdown()
+	_, err := svc.Start(1, 1, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
+		return nil, nil
+	})
+	if !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("start error = %v, want ErrShuttingDown", err)
+	}
+}
+
 func TestStartRejectsConcurrentRunForSession(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
@@ -148,7 +159,7 @@ func TestCancelledRunInvokesRunEnded(t *testing.T) {
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
 	var callbackCount atomic.Int32
-	svc.SetOnRunEnded(func(_ uint, _ store.ChatRunStatus) {
+	svc.SetOnRunEnded(func(_ uint, _ uint, _ store.ChatRunStatus) {
 		callbackCount.Add(1)
 	})
 	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(ctx context.Context, _ func(chat.StreamEvent)) (*Result, error) {

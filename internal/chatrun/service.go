@@ -13,15 +13,17 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/runctrl"
 	"github.com/Cyvadra/hephaestus/internal/store"
+	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrRunNotFound = errors.New("chatrun: run not found")
-	ErrRunActive   = errors.New("chatrun: session already has an active run")
-	ErrRunFinished = errors.New("chatrun: run already finished")
+	ErrRunNotFound  = errors.New("chatrun: run not found")
+	ErrRunActive    = errors.New("chatrun: session already has an active run")
+	ErrRunFinished  = errors.New("chatrun: run already finished")
+	ErrShuttingDown = errors.New("chatrun: service is shutting down")
 )
 
 // Result is the final client-visible payload and optional persisted message id
@@ -61,12 +63,12 @@ type Service struct {
 
 	// onRunEnded notifies the delivery layer that a session's run finished,
 	// so completions that arrived too late to be steered can be delivered.
-	onRunEnded func(sessionID uint, status store.ChatRunStatus)
+	onRunEnded func(runID, sessionID uint, status store.ChatRunStatus)
 }
 
 // SetOnRunEnded registers a callback invoked after a run reaches a terminal
 // state for the given session.
-func (s *Service) SetOnRunEnded(fn func(sessionID uint, status store.ChatRunStatus)) {
+func (s *Service) SetOnRunEnded(fn func(runID, sessionID uint, status store.ChatRunStatus)) {
 	s.onRunEnded = fn
 }
 
@@ -86,6 +88,13 @@ func (s *Service) StartSubagent(sessionID, projectID, subagentRunID uint, reques
 }
 
 func (s *Service) start(sessionID, projectID uint, subagentRunID *uint, kind store.ChatRunKind, request map[string]any, execute Execute) (*store.ChatRun, error) {
+	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return nil, ErrShuttingDown
+	}
+	defer s.mu.Unlock()
+
 	run := &store.ChatRun{
 		SessionID:     sessionID,
 		ProjectID:     projectID,
@@ -144,6 +153,7 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 		return
 	}
 	var progressErr error
+	ctx = toolkit.WithChatRunID(ctx, runID)
 	result, runErr := execute(ctx, func(delta chat.StreamEvent) {
 		if progressErr == nil {
 			progressErr = s.recordDelta(runID, delta)
@@ -154,9 +164,9 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 	}
 	status := store.ChatRunSucceeded
 	if errors.Is(ctx.Err(), context.Canceled) {
-		s.progressMu.Lock()
+		s.mu.Lock()
 		interrupted := s.shuttingDown
-		s.progressMu.Unlock()
+		s.mu.Unlock()
 		if interrupted {
 			status = store.ChatRunInterrupted
 		} else {
@@ -174,7 +184,7 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 		return
 	}
 	if s.onRunEnded != nil {
-		s.onRunEnded(sessionID, status)
+		s.onRunEnded(runID, sessionID, status)
 	}
 }
 
@@ -355,9 +365,9 @@ func (s *Service) CancelSession(sessionID uint) error {
 // Shutdown interrupts all active worker contexts. Startup reconciliation owns
 // marking any unfinished persisted runs as interrupted.
 func (s *Service) Shutdown() {
-	s.progressMu.Lock()
+	s.mu.Lock()
 	s.shuttingDown = true
-	s.progressMu.Unlock()
+	s.mu.Unlock()
 	s.ctrl.Shutdown()
 	s.wg.Wait()
 }

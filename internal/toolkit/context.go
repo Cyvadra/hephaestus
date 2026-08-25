@@ -76,6 +76,19 @@ func SubagentContextFromContext(ctx context.Context) SubagentContext {
 	return value
 }
 
+type chatRunIDContextKey struct{}
+
+// WithChatRunID identifies the durable chat run currently executing.
+func WithChatRunID(ctx context.Context, runID uint) context.Context {
+	return context.WithValue(ctx, chatRunIDContextKey{}, runID)
+}
+
+// ChatRunIDFromContext retrieves the durable chat run currently executing.
+func ChatRunIDFromContext(ctx context.Context) (uint, bool) {
+	id, ok := ctx.Value(chatRunIDContextKey{}).(uint)
+	return id, ok && id != 0
+}
+
 type turnMessagesContextKey struct{}
 
 // WithTurnMessages attaches a defensive snapshot of the messages visible at

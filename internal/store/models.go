@@ -162,6 +162,7 @@ type SubagentRun struct {
 	ID              uint              `gorm:"primaryKey;autoIncrement"`
 	ParentSessionID uint              `gorm:"not null;index:idx_subagent_parent_status,priority:1;index"`
 	ParentRunID     *uint             `gorm:"index"`
+	ParentChatRunID *uint             `gorm:"index"`
 	ChildSessionID  *uint             `gorm:"index"`
 	ProjectID       uint              `gorm:"not null;index"`
 	Mode            SubagentMode      `gorm:"size:16;not null"`
