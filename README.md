@@ -276,12 +276,12 @@ Shell 默认关闭。启用后，高风险操作会要求确认；`/interact aut
 ```sh
 cp .env.example .env
 # 编辑 .env 后继续
-make deploy-build
-pm2 start ecosystem.config.cjs
-pm2 save
+make deploy
 ```
 
-PM2 进程名为 `hephaestus-api` 与 `hephaestus-web`。更新后执行 `make deploy-build`，再重启两个进程。
+`make deploy` 会构建后端和前端、通过 PM2 创建或重启 `hephaestus-api` 与 `hephaestus-web`、保存 PM2 进程列表，并验证本机 `9016` 和 `5173` 端口可连接。每次修改 `.env` 后都应重新执行该命令。
+
+仓库根目录的 `.env` 是生产配置的权威来源。服务启动时会用其中的值覆盖 PM2 或父进程遗留的同名变量，因此不会继续使用旧的模型地址或密钥。`make deploy-build` 仍只负责构建，适用于不需要重启服务的场景。
 
 不要将 HTTP 监听器直接暴露到互联网。请在 TLS 终止的反向代理后部署，并将 `/api` 转发到前端；后端 `9016` 端口应保持私有。前端采用 SPA 路由，生产静态主机或反向代理需要将未知的非 `/api` 路由回退至 `index.html`。
 

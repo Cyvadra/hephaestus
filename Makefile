@@ -1,4 +1,4 @@
-.PHONY: build build-server build-frontend deploy-build run test test-integration vet swagger
+.PHONY: build build-server build-frontend deploy-build deploy run test test-integration vet swagger
 
 build:
 	go build ./...
@@ -11,6 +11,9 @@ build-frontend:
 	npm --prefix frontend run build
 
 deploy-build: build-server build-frontend
+
+deploy:
+	./scripts/deploy.sh
 
 run:
 	go run ./cmd/hephaestus

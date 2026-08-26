@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"os"
@@ -53,8 +54,32 @@ import (
 	"github.com/joho/godotenv"
 )
 
+func loadEnvironment(filename string) error {
+	values, err := godotenv.Read(filename)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "HEPHAESTUS_") {
+			if err := os.Unsetenv(key); err != nil {
+				return err
+			}
+		}
+	}
+	for key, value := range values {
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func main() {
-	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+	if err := loadEnvironment(".env"); err != nil {
 		log.Fatalf("dotenv: %v", err)
 	}
 
