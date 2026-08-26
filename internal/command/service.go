@@ -97,6 +97,14 @@ type Result struct {
 	Response         string
 	SessionTarget    *SessionTarget
 	ReplayedMessages []ReplayedMessage
+	Edit             *EditRequest
+}
+
+// EditRequest asks the caller to resend Text from the parent of a previous
+// user message, creating a new branch without modifying history.
+type EditRequest struct {
+	Text         string
+	ParentLeafID *uint
 }
 
 // ReplayedMessage is transient command output and is never persisted.
@@ -158,6 +166,7 @@ var commandDefinitions = []commandDefinition{
 	{name: "new", help: "alias of /clear"},
 	{name: "last", help: "resend recent assistant messages"},
 	{name: "replay", help: "resend recent conversation rounds"},
+	{name: "edit", help: "edit and resend a previous user message (/edit [n] <text>)"},
 	{name: "interact", help: "respond to a pending request or change session automatic approval"},
 }
 
@@ -216,6 +225,7 @@ func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text
 	var response string
 	var target *SessionTarget
 	var replayed []ReplayedMessage
+	var edit *EditRequest
 	var err error
 
 	switch name {
@@ -245,12 +255,54 @@ func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text
 		replayed, err = s.last(sessionID, args)
 	case "/replay":
 		replayed, err = s.replay(sessionID, args)
+	case "/edit":
+		edit, err = s.edit(sessionID, args)
 	case "/interact":
 		response, err = s.interact(sessionID, args)
 	default:
 		err = fmt.Errorf("command: unknown command %q", name)
 	}
-	return Result{Response: response, SessionTarget: target, ReplayedMessages: replayed}, err
+	return Result{Response: response, SessionTarget: target, ReplayedMessages: replayed, Edit: edit}, err
+}
+
+func (s *Service) edit(sessionID uint, args []string) (*EditRequest, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("command: usage: /edit [n] <text>")
+	}
+	distance := 1
+	textStart := 0
+	if parsed, err := strconv.Atoi(args[0]); err == nil {
+		if parsed < 1 {
+			return nil, fmt.Errorf("command: edit distance must be a positive integer")
+		}
+		distance = parsed
+		textStart = 1
+	}
+	if textStart == len(args) {
+		return nil, fmt.Errorf("command: edit text is required")
+	}
+	if s.sessions == nil {
+		return nil, fmt.Errorf("command: sessions are not configured")
+	}
+	sess, err := s.sessions.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	path, err := s.sessions.ActivePath(*sess)
+	if err != nil {
+		return nil, err
+	}
+	requestedDistance := distance
+	for index := len(path) - 1; index >= 0; index-- {
+		if path[index].Role != "user" {
+			continue
+		}
+		distance--
+		if distance == 0 {
+			return &EditRequest{Text: strings.Join(args[textStart:], " "), ParentLeafID: path[index].ParentMessageID}, nil
+		}
+	}
+	return nil, fmt.Errorf("command: user message %d does not exist on the active branch", requestedDistance)
 }
 
 func (s *Service) interact(sessionID uint, args []string) (string, error) {

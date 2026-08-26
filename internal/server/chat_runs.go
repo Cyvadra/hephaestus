@@ -363,8 +363,13 @@ func (s *Server) prepareMessageRunFromRequest(c *gin.Context, text string, req s
 		result, err := s.commands.ExecuteResult(sessionID, text)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		} else {
+		} else if result.Edit == nil {
 			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget, ReplayedMessages: result.ReplayedMessages})
+		} else {
+			req.Text = result.Edit.Text
+			req.ActiveLeafMessageID = result.Edit.ParentLeafID
+			req.SelectRoot = result.Edit.ParentLeafID == nil
+			return sessionID, req, nil, messageRunExecute(s, sessionID, req, nil), map[string]any{"text": req.Text, "options": req}
 		}
 		return 0, sendMessageRequest{}, nil, nil, nil
 	}

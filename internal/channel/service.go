@@ -285,6 +285,7 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 	for _, attachment := range message.Attachments {
 		text += fmt.Sprintf("\n[received file: %s, path: %s]", attachment.Name, attachment.Path)
 	}
+	var editParentLeafID *uint
 	if command.IsCommand(text) {
 		commandCtx := interaction.WithReporter(ctx, func(event interaction.Event) {
 			if event.Type == interaction.EventAskPermission {
@@ -292,22 +293,27 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 			}
 		})
 		result, executeErr := s.commands.ExecuteResultContext(commandCtx, sessionID, text)
-		response := result.Response
-		if executeErr == nil && result.SessionTarget != nil {
-			executeErr = s.saveBinding(message.Channel, message.ChatID, result.SessionTarget.ID)
-		}
-		if executeErr != nil {
-			response = executeErr.Error()
-		}
-		if response != "" {
-			_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
-		}
-		if executeErr == nil {
-			for _, replayed := range result.ReplayedMessages {
-				_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: formatReplayedMessage(replayed)})
+		if executeErr == nil && result.Edit != nil {
+			text = result.Edit.Text
+			editParentLeafID = result.Edit.ParentLeafID
+		} else {
+			response := result.Response
+			if executeErr == nil && result.SessionTarget != nil {
+				executeErr = s.saveBinding(message.Channel, message.ChatID, result.SessionTarget.ID)
 			}
+			if executeErr != nil {
+				response = executeErr.Error()
+			}
+			if response != "" {
+				_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: response})
+			}
+			if executeErr == nil {
+				for _, replayed := range result.ReplayedMessages {
+					_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: formatReplayedMessage(replayed)})
+				}
+			}
+			return
 		}
-		return
 	}
 
 	sessionRow, err := s.sessions.Get(sessionID)
@@ -318,14 +324,19 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 	done := make(chan struct{})
 	_, err = s.chatRuns.Start(sessionID, sessionRow.ProjectID, store.ChatRunMessage, map[string]any{"text": text, "channel": message.Channel}, func(turnCtx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
 		defer close(done)
-		result, runErr := s.pipeline.Run(turnCtx, sessionID, text, channelTurnOptions(sessionRow.ActiveLeafMessageID, message.Attachments, func(event chat.StreamEvent) {
+		turnOptions := channelTurnOptions(sessionRow.ActiveLeafMessageID, message.Attachments, func(event chat.StreamEvent) {
 			onDelta(event)
 			if event.Type == interaction.EventAskPermission && event.Interaction != nil {
 				s.beginApproval(ctx, external, message, *event.Interaction)
 			}
 			// Reasoning, deltas and tool events intentionally become "_" at the
 			// external-channel boundary and are not sent.
-		}))
+		})
+		if command.IsCommand(message.Content) {
+			turnOptions.SelectedLeaf = editParentLeafID
+			turnOptions.SelectRoot = editParentLeafID == nil
+		}
+		result, runErr := s.pipeline.Run(turnCtx, sessionID, text, turnOptions)
 		if runErr != nil {
 			if !errors.Is(runErr, context.Canceled) {
 				_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: runErr.Error()})

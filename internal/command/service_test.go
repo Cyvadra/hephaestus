@@ -8,6 +8,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
+	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/glebarez/sqlite"
 	"gorm.io/datatypes"
@@ -34,6 +35,57 @@ func TestValidateKindNameRejectsUnknownConfiguredName(t *testing.T) {
 		if err := validateKindName(service, kind, "missing"); err == nil {
 			t.Fatalf("expected unknown %s to be rejected", kind)
 		}
+	}
+}
+
+func TestEditResendsPreviousUserMessageFromItsParent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := db.AutoMigrate(&store.Project{}, &store.Session{}, &store.ChatMessage{}, &store.MessageAttachment{}); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	project := store.Project{Name: "default"}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	sessions := session.New(db)
+	sess := store.Session{ProjectID: project.ID, Settings: datatypes.NewJSONType(store.SessionSettings{})}
+	if err := db.Create(&sess).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	messages, err := sessions.AppendMessages(sess.ID, nil, []store.ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "answer one"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "answer two"},
+	})
+	if err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+	service := testService()
+	service.sessions = sessions
+
+	result, err := service.ExecuteResult(sess.ID, "/edit replacement text")
+	if err != nil {
+		t.Fatalf("edit latest: %v", err)
+	}
+	if result.Edit == nil || result.Edit.Text != "replacement text" || result.Edit.ParentLeafID == nil || *result.Edit.ParentLeafID != messages[1].ID {
+		t.Fatalf("latest edit = %#v, want parent %d", result.Edit, messages[1].ID)
+	}
+
+	result, err = service.ExecuteResult(sess.ID, "/edit 2 replacement first")
+	if err != nil {
+		t.Fatalf("edit second latest: %v", err)
+	}
+	if result.Edit == nil || result.Edit.Text != "replacement first" || result.Edit.ParentLeafID != nil {
+		t.Fatalf("second latest edit = %#v, want root parent", result.Edit)
+	}
+
+	result, err = service.ExecuteResult(sess.ID, "/edit 2026 plan")
+	if err == nil || result.Edit != nil || !strings.Contains(err.Error(), "user message 2026") {
+		t.Fatalf("numeric first argument should be a distance: result %#v, err %v", result.Edit, err)
 	}
 }
 

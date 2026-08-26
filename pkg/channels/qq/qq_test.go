@@ -102,7 +102,7 @@ func (c *retryHTTPClient) Do(*http.Request) (*http.Response, error) {
 func TestSupportedCommands(t *testing.T) {
 	want := []string{
 		"help", "ping", "stop", "status", "list", "detail",
-		"switch", "activate", "deactivate", "clear", "new", "last", "replay", "interact",
+		"switch", "activate", "deactivate", "clear", "new", "last", "replay", "edit", "interact",
 	}
 	if !slices.Equal(command.Names(), want) {
 		t.Fatalf("command.Names() = %v, want %v", command.Names(), want)
