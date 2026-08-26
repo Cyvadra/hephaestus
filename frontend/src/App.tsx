@@ -3,7 +3,7 @@ import { useBlocker, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import SessionSidebar from './components/SessionSidebar'
 import { Menu, PanelLeftClose, Plus, Settings } from 'lucide-react'
-import type { ConfigurationKind, ConciergeItem, Session, SessionTarget } from './api/types'
+import type { Configuration, ConfigurationKind, ConciergeItem, Session, SessionTarget } from './api/types'
 import type { ConfigurationLists } from './components/ConfigurationSidebar'
 import { parseRoute, routes } from './lib/routes'
 
@@ -25,6 +25,7 @@ export default function App() {
   const [configurationDirty, setConfigurationDirty] = useState(false)
   const [configurationRefreshKey, setConfigurationRefreshKey] = useState(0)
   const [configurationLists, setConfigurationLists] = useState<ConfigurationLists>({})
+  const [configurationDuplicate, setConfigurationDuplicate] = useState<{ kind: ConfigurationKind; value: Configuration } | null>(null)
   const [configurationSidebarOpen, setConfigurationSidebarOpen] = useState(false)
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false)
   const [chatHeaderTitle, setChatHeaderTitle] = useState<string | null>(null)
@@ -93,9 +94,15 @@ export default function App() {
     setConfigurationSidebarOpen(false)
   }, [navigate])
   const handleConfigurationCreate = useCallback((kind: ConfigurationKind) => {
+    setConfigurationDuplicate(null)
     navigate(routes.configurationNew(kind))
     setConfigurationSidebarOpen(false)
   }, [navigate])
+  const handleConfigurationDuplicate = useCallback((kind: ConfigurationKind, value: Configuration) => {
+    handleConfigurationDirtyChange(false)
+    setConfigurationDuplicate({ kind, value: structuredClone(value) })
+    navigate(routes.configurationNew(kind))
+  }, [handleConfigurationDirtyChange, navigate])
   const handleOpenConstants = useCallback(() => {
     navigate(routes.constants())
     setConfigurationSidebarOpen(false)
@@ -232,11 +239,13 @@ export default function App() {
           name={configurationName}
           isConstantsOverview={route.type === 'configuration-constants'}
           isNew={configurationIsNew}
+          duplicateValue={configurationDuplicate?.kind === configurationKind ? configurationDuplicate.value : null}
           lists={configurationLists}
           selectionKey={`${configurationKind ?? 'overview'}:${configurationName ?? (configurationIsNew ? 'new' : '')}`}
           refreshKey={configurationRefreshKey}
           onDirtyChange={handleConfigurationDirtyChange}
           onCreate={handleConfigurationCreate}
+          onDuplicate={handleConfigurationDuplicate}
           onSelect={handleConfigurationSelect}
           onOpenConstants={handleOpenConstants}
           onSaved={(kind, name) => {

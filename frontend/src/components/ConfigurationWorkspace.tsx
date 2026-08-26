@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronDown, ChevronLeft, LoaderCircle, MessageSquareText, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, ChevronLeft, CopyPlus, LoaderCircle, MessageSquareText, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createConfiguration, deleteConfiguration, getConfiguration, getConfigurationCatalog, listConfigurations, replaceConfiguration } from '../api/client'
@@ -13,11 +13,13 @@ interface Props {
   name: string | null
   isConstantsOverview: boolean
   isNew: boolean
+  duplicateValue: Configuration | null
   lists: ConfigurationLists
   selectionKey: string
   refreshKey: number
   onDirtyChange: (dirty: boolean) => void
   onCreate: (kind: ConfigurationKind) => void
+  onDuplicate: (kind: ConfigurationKind, value: Configuration) => void
   onSelect: (kind: ConfigurationKind, name: string) => void
   onOpenConstants: () => void
   onSaved: (kind: ConfigurationKind, name: string) => void
@@ -26,7 +28,7 @@ interface Props {
   onReturnToChat: () => void
 }
 
-export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onSelect, onOpenConstants, onSaved, onDeleted, onReturnToOverview, onReturnToChat }: Props) {
+export default function ConfigurationWorkspace({ kind, name, isConstantsOverview, isNew, duplicateValue, lists, selectionKey, refreshKey, onDirtyChange, onCreate, onDuplicate, onSelect, onOpenConstants, onSaved, onDeleted, onReturnToOverview, onReturnToChat }: Props) {
   const { t } = useTranslation()
   const [value, setValue] = useState<Configuration | null>(null)
   const [valueSelectionKey, setValueSelectionKey] = useState('')
@@ -39,6 +41,8 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
   const [undefinedVariables, setUndefinedVariables] = useState<string[] | null>(null)
   const [variableDefaults, setVariableDefaults] = useState<Record<string, string>>({})
   const [catalog, setCatalog] = useState<ConfigurationCatalog>({ identities: [], impressions: [], tool_groups: [], concierges: [], workflows: [], jobs: [], constants: [], tools: [], plugins: [], plugin_descriptions: {} })
+  const duplicateValueRef = useRef(duplicateValue)
+  duplicateValueRef.current = duplicateValue
 
   const notify = (type: 'error' | 'success', message: string) => setNotification({ type, message })
 
@@ -61,7 +65,8 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
     setNotification(null)
     if (isNew) {
       const empty = createEmptyConfiguration(kind) as Configuration
-      setValue(empty)
+      const duplicate = duplicateValueRef.current
+      setValue(duplicate == null ? empty : { ...structuredClone(duplicate), name: '' } as Configuration)
       setValueSelectionKey(selectionKey)
       setBaseline(JSON.stringify(empty))
       return
@@ -177,7 +182,7 @@ export default function ConfigurationWorkspace({ kind, name, isConstantsOverview
         {loading || currentValue == null ? <div className="configuration-detail-loading"><LoaderCircle className="spin" size={22} />{t('configuration.loading')}</div> : <><form id="configuration-form" onSubmit={event => { event.preventDefault(); void save() }}><ConfigurationForm kind={kind} value={currentValue} errors={errors} isNew={isNew} catalog={catalog} onChange={setValue} onNotify={notify} /></form>{kind === 'workflows' && name != null && !isNew && <WorkflowRunTester workflowName={currentValue.name} inputSchema={(currentValue as ConfigurationByKind['workflows']).input_schema} />}{kind === 'jobs' && name != null && !isNew && <JobRunsPanel jobName={currentValue.name} />}</>}
       </div>
       {currentValue && !loading && <footer className="configuration-action-bar">
-        <div>{!isNew && <button className="danger-quiet" type="button" onClick={() => { setDeleteName(''); setDeleteOpen(true) }}><Trash2 size={15} />{t('common.delete')}</button>}</div>
+        <div>{!isNew && <><button className="danger-quiet" type="button" onClick={() => { setDeleteName(''); setDeleteOpen(true) }}><Trash2 size={15} />{t('common.delete')}</button><button type="button" onClick={() => onDuplicate(kind, currentValue)}><CopyPlus size={15} />{t('configuration.duplicate')}</button></>}</div>
         <div><button type="button" disabled={!dirty || submitting} onClick={() => setValue(JSON.parse(baseline) as Configuration)}><RotateCcw size={15} />{t('common.reset')}</button><button className="primary" form="configuration-form" type="submit" disabled={!dirty || submitting || Object.keys(errors).length > 0}>{submitting ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{isNew ? t('common.create') : t('common.saveChanges')}</button></div>
       </footer>}
       {notification && <div className={`configuration-toast ${notification.type}`} role={notification.type === 'error' ? 'alert' : 'status'}><span>{notification.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}</span><p>{notification.message}</p><button type="button" aria-label={t('common.close')} onClick={() => setNotification(null)}><X size={15} /></button></div>}
