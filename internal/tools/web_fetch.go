@@ -116,9 +116,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *toolki
 	if err := validatePublicURL(ctx, parsed, net.DefaultResolver); err != nil {
 		return toolkit.ErrorResult("web_fetch: " + err.Error())
 	}
-	text, primaryErr := t.primary.Fetch(ctx, parsed)
+	text, primaryErr := t.fetch(ctx, t.primary, parsed)
 	if primaryErr != nil && t.fallback != nil {
-		text, err = t.fallback.Fetch(ctx, parsed)
+		text, err = t.fetch(ctx, t.fallback, parsed)
 		if err != nil {
 			return toolkit.ErrorResult(fmt.Sprintf("web_fetch: %s failed: %v; %s fallback failed: %v", t.primary.Name(), primaryErr, t.fallback.Name(), err))
 		}
@@ -142,6 +142,13 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *toolki
 		}
 	}
 	return toolkit.SilentResult(text)
+}
+
+func (t *WebFetchTool) fetch(ctx context.Context, provider webFetchProvider, target *url.URL) (string, error) {
+	if err := sharedWebProviderQueues.wait(ctx, provider.Name()); err != nil {
+		return "", err
+	}
+	return provider.Fetch(ctx, target)
 }
 
 func truncateWebText(text string, maxChars int) string {

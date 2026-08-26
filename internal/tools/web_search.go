@@ -232,6 +232,10 @@ func (t *WebSearchTool) search(ctx context.Context, query string) ([]string, []S
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
+			if err := sharedWebProviderQueues.wait(ctx, provider.Name()); err != nil {
+				responses[index] = providerResponse{name: provider.Name(), err: err}
+				return
+			}
 			results, err := provider.Search(ctx, query, providerResultLimit)
 			responses[index] = providerResponse{name: provider.Name(), results: results, err: err}
 		}()
