@@ -19,6 +19,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const runTimeout = 30 * time.Minute
+
 var (
 	ErrRunNotFound  = errors.New("chatrun: run not found")
 	ErrRunActive    = errors.New("chatrun: session already has an active run")
@@ -120,7 +122,7 @@ func (s *Service) start(sessionID, projectID uint, subagentRunID *uint, kind sto
 		return nil, fmt.Errorf("chatrun: create: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	s.ctrl.Register(run.ID, cancel)
 	s.progressMu.Lock()
 	s.sequences[run.ID] = 0
@@ -144,11 +146,25 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 	defer s.closeRun(runID)
 
 	now := time.Now()
-	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(map[string]any{
+	start := s.db.Model(&store.ChatRun{}).Where("id = ? AND status = ?", runID, store.ChatRunPending).Updates(map[string]any{
 		"status": store.ChatRunRunning, "started_at": &now,
-	}).Error; err != nil {
-		if _, finishErr := s.finish(runID, store.ChatRunInterrupted, nil, err); finishErr != nil {
+	})
+	if start.Error != nil || start.RowsAffected == 0 {
+		status := store.ChatRunInterrupted
+		runErr := start.Error
+		if runErr == nil {
+			runErr = errors.New("chat run did not start")
+			var run store.ChatRun
+			if err := s.db.First(&run, runID).Error; err == nil && run.Status == store.ChatRunCancelling {
+				status = store.ChatRunCancelled
+				runErr = context.Canceled
+			}
+		}
+		if _, finishErr := s.finish(runID, status, nil, runErr); finishErr != nil {
 			log.Printf("chatrun: finalize run %d after start failure: %v", runID, finishErr)
+		}
+		if s.onRunEnded != nil {
+			s.onRunEnded(runID, sessionID, status)
 		}
 		return
 	}
@@ -296,7 +312,7 @@ func (s *Service) Get(runID uint) (*store.ChatRun, error) {
 // ActiveForSession returns the pending or running run for a session.
 func (s *Service) ActiveForSession(sessionID uint) (*store.ChatRun, error) {
 	var run store.ChatRun
-	result := s.db.Where("session_id = ? AND status IN ?", sessionID, []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).Limit(1).Find(&run)
+	result := s.db.Where("session_id = ? AND status IN ?", sessionID, []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning, store.ChatRunCancelling}).Limit(1).Find(&run)
 	if result.Error != nil {
 		return nil, fmt.Errorf("chatrun: active session run: %w", result.Error)
 	}
@@ -350,7 +366,20 @@ func (s *Service) InterruptedSubagentResult(subagentRunID uint) (uint, string, b
 
 // Cancel cancels a live run after rejecting nonexistent and terminal rows.
 func (s *Service) Cancel(runID uint) error {
-	return s.ctrl.CancelRun(s.db, &store.ChatRun{}, runID, ErrRunNotFound, ErrRunFinished)
+	var run store.ChatRun
+	if err := s.db.First(&run, runID).Error; err != nil {
+		return ErrRunNotFound
+	}
+	if run.Terminal() {
+		return fmt.Errorf("%w: run %d already finished", ErrRunFinished, runID)
+	}
+	if err := s.db.Model(&run).Where("status IN ?", []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).Update("status", store.ChatRunCancelling).Error; err != nil {
+		return fmt.Errorf("chatrun: mark run %d cancelling: %w", runID, err)
+	}
+	if err := s.ctrl.Cancel(runID); err != nil {
+		return fmt.Errorf("%w: run %d is not actively executing", ErrRunFinished, runID)
+	}
+	return nil
 }
 
 // CancelSession cancels the session's one active run, if it has one.
@@ -377,7 +406,7 @@ func (s *Service) Shutdown() {
 func (s *Service) Reconcile() error {
 	finished := time.Now()
 	var runs []store.ChatRun
-	if err := s.db.Where("status IN ?", []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning}).Find(&runs).Error; err != nil {
+	if err := s.db.Where("status IN ?", []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning, store.ChatRunCancelling}).Find(&runs).Error; err != nil {
 		return err
 	}
 	for index := range runs {

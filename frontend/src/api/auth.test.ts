@@ -12,7 +12,7 @@ describe('login', () => {
         error: 'proof_of_work_required',
         proof_of_work: { challenge, difficulty: 1, expires_at: Date.now() + 60_000 },
       }), { status: 429, headers: { 'Content-Type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response('{}', { status: 200, headers: { 'X-Hephaestus-Token': 'token', 'X-Hephaestus-Request-Key': '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
     await login('admin', 'password')

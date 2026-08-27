@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
@@ -80,6 +81,20 @@ type echoTool struct {
 type deliveryTool struct {
 	name     string
 	delivery toolkit.FileDelivery
+}
+
+type blockingTool struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (blockingTool) Name() string               { return "blocking" }
+func (blockingTool) Description() string        { return "" }
+func (blockingTool) Parameters() map[string]any { return nil }
+func (t blockingTool) Execute(context.Context, map[string]any) *toolkit.ToolResult {
+	t.started <- struct{}{}
+	<-t.release
+	return toolkit.NewToolResult("finished")
 }
 
 func (t deliveryTool) Name() string             { return t.name }
@@ -213,6 +228,34 @@ func TestRun_CollectsUniqueDeliveriesInToolCallOrder(t *testing.T) {
 	}
 	if len(result.Deliveries) != 2 || result.Deliveries[0].Path != "first.md" || result.Deliveries[1].Path != "third.txt" {
 		t.Fatalf("deliveries = %+v, want ordered de-duplicated files", result.Deliveries)
+	}
+}
+
+func TestRunToolCallsReturnsWhenContextCancelsEvenIfToolIgnoresIt(t *testing.T) {
+	runner := testRunner(&fakeLLM{}, nil)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer close(release)
+
+	done := make(chan struct{})
+	go func() {
+		runner.runToolCalls(ctx, Request{}, 0, map[string]toolkit.Tool{
+			"blocking": blockingTool{started: started, release: release},
+		}, []ds4.ToolCall{toolCall("call-1", "blocking", "{}")}, nil, nil, plugin.TurnContext{})
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("blocking tool did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("tool batch waited for a non-cooperative tool after cancellation")
 	}
 }
 

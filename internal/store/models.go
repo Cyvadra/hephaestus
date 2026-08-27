@@ -26,6 +26,7 @@ type ChatRunStatus string
 const (
 	ChatRunPending     ChatRunStatus = "pending"
 	ChatRunRunning     ChatRunStatus = "running"
+	ChatRunCancelling  ChatRunStatus = "cancelling"
 	ChatRunSucceeded   ChatRunStatus = "succeeded"
 	ChatRunFailed      ChatRunStatus = "failed"
 	ChatRunCancelled   ChatRunStatus = "cancelled"
@@ -72,7 +73,7 @@ type ChatRunEvent struct {
 // unique index permits at most one pending/running run for each session.
 type ChatRun struct {
 	ID            uint          `gorm:"primaryKey;autoIncrement"`
-	SessionID     uint          `gorm:"not null;index:idx_chat_runs_active_session,unique,where:status = 'pending' OR status = 'running';index"`
+	SessionID     uint          `gorm:"not null;index:idx_chat_runs_active_session,unique,where:status = 'pending' OR status = 'running' OR status = 'cancelling';index"`
 	ProjectID     uint          `gorm:"not null;index"`
 	SubagentRunID *uint         `gorm:"uniqueIndex"`
 	Kind          ChatRunKind   `gorm:"size:32;not null"`

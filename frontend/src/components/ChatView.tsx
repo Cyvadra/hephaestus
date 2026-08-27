@@ -753,6 +753,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const handleStop = useCallback(async () => {
     if (resolvedSessionId == null) return
     try {
+    streamAbortRef.current?.abort()
+    setStreaming(false)
+    setStreamingText('')
+    setStreamingActivities([])
+    setOptimisticUserMessage(null)
       await cancelActiveChatRun(resolvedSessionId)
     } catch (cause) {
       setError(String(cause))

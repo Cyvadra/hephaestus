@@ -43,6 +43,9 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	); err != nil {
 		return nil, fmt.Errorf("store: automigrate: %w", err)
 	}
+	if err := recreateActiveChatRunIndex(db); err != nil {
+		return nil, err
+	}
 	for _, model := range []any{
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
@@ -81,6 +84,17 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+func recreateActiveChatRunIndex(db *gorm.DB) error {
+	const index = "idx_chat_runs_active_session"
+	if err := db.Exec("DROP INDEX IF EXISTS " + index).Error; err != nil {
+		return fmt.Errorf("store: drop active chat-run index: %w", err)
+	}
+	if err := db.Migrator().CreateIndex(&ChatRun{}, index); err != nil {
+		return fmt.Errorf("store: create active chat-run index: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying SQL connection pool after all services that

@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/Cyvadra/ds4"
@@ -212,6 +211,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		var batchDeliveries []toolkit.FileDelivery
 		messages, toPersist, turn, batchDeliveries = r.runToolCalls(ctx, req, callIndex, allowedTools, toolCalls, messages, toPersist, turn)
 		deliveries = appendUniqueDeliveries(deliveries, batchDeliveries)
+		if err := ctx.Err(); err != nil {
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+		}
 
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseBefore, turn)
 		messages = turn.Messages
@@ -248,13 +250,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 // the model's original order for deterministic persistence.
 func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext, []toolkit.FileDelivery) {
 	results := make([]*toolkit.ToolResult, len(toolCalls))
-	var wg sync.WaitGroup
+	type toolExecution struct {
+		index  int
+		result *toolkit.ToolResult
+	}
+	completed := make(chan toolExecution, len(toolCalls))
 	for i, tc := range toolCalls {
-		wg.Add(1)
 		go func(idx int, tc ds4.ToolCall) {
-			defer wg.Done()
 			streamedBytes := 0
-			results[idx] = r.executeTool(ctx, req, allowedTools, tc, turn.History, func(chunk string) {
+			result := r.executeTool(ctx, req, allowedTools, tc, turn.History, func(chunk string) {
 				if req.OnDelta != nil {
 					chunk = transform.LimitToolExchangeContent(tc.Function.Arguments, chunk)
 					remaining := transform.MaxToolExchangeBytes - 1 - len(tc.Function.Arguments) - streamedBytes
@@ -273,9 +277,22 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 					}})
 				}
 			})
+			completed <- toolExecution{index: idx, result: result}
 		}(i, tc)
 	}
-	wg.Wait()
+	for remaining := len(toolCalls); remaining > 0; remaining-- {
+		select {
+		case execution := <-completed:
+			results[execution.index] = execution.result
+		case <-ctx.Done():
+			for index := range results {
+				if results[index] == nil {
+					results[index] = toolkit.ErrorResult(ctx.Err().Error())
+				}
+			}
+			remaining = 0
+		}
+	}
 
 	var deliveries []toolkit.FileDelivery
 	for toolIndex, tc := range toolCalls {

@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,33 +20,20 @@ import (
 )
 
 const (
-	CookieName               = "hephaestus_session"
-	TokenHeader              = "X-Hephaestus-Token"
-	RequestKeyHeader         = "X-Hephaestus-Request-Key"
-	SignatureVersionHeader   = "X-Hephaestus-Signature-Version"
-	SignatureSessionHeader   = "X-Hephaestus-Signature-Session"
-	SignatureTimestampHeader = "X-Hephaestus-Signature-Timestamp"
-	SignatureNonceHeader     = "X-Hephaestus-Signature-Nonce"
-	SignatureBodyHashHeader  = "X-Hephaestus-Signature-Body-SHA256"
-	SignatureHeader          = "X-Hephaestus-Signature"
-	SignatureVersion         = "1"
-	TokenLifetime            = 14 * 24 * time.Hour
-	RefreshThreshold         = 7 * 24 * time.Hour
-	LoginWindow              = 5 * time.Minute
-	RequestWindow            = 2 * time.Minute
-	MaxRequestNonces         = 4096
-	FailureWindow            = 10 * time.Minute
-	FailureThreshold         = 5
-	ProofLifetime            = 2 * time.Minute
-	ProofDifficulty          = 18
+	CookieName       = "hephaestus_session"
+	TokenLifetime    = 14 * 24 * time.Hour
+	RefreshThreshold = 7 * 24 * time.Hour
+	LoginWindow      = 5 * time.Minute
+	FailureWindow    = 10 * time.Minute
+	FailureThreshold = 5
+	ProofLifetime    = 2 * time.Minute
+	ProofDifficulty  = 18
 )
 
 var (
-	ErrInvalidCredentials      = errors.New("invalid credentials")
-	ErrInvalidToken            = errors.New("invalid token")
-	ErrInvalidRequestSignature = errors.New("invalid request signature")
-	ErrRequestTimestamp        = errors.New("request timestamp outside accepted window")
-	ErrProofRequired           = errors.New("proof of work required")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInvalidToken       = errors.New("invalid token")
+	ErrProofRequired      = errors.New("proof of work required")
 )
 
 type Config struct {
@@ -75,12 +61,6 @@ type pendingProof struct {
 	expiresAt time.Time
 }
 
-type sessionState struct {
-	requestKey []byte
-	expiresAt  time.Time
-	nonces     map[string]time.Time
-}
-
 type Service struct {
 	username string
 	password string
@@ -88,7 +68,6 @@ type Service struct {
 	now      func() time.Time
 	mu       sync.Mutex
 	replays  map[string]time.Time
-	sessions map[string]*sessionState
 	failures []time.Time
 	proof    *pendingProof
 }
@@ -100,32 +79,12 @@ func New(config Config) (*Service, error) {
 	if len(config.Secret) < 32 {
 		return nil, fmt.Errorf("auth: secret must be at least 32 bytes")
 	}
-	return &Service{username: strings.TrimSpace(config.Username), password: config.Password, secret: []byte(config.Secret), now: time.Now, replays: make(map[string]time.Time), sessions: make(map[string]*sessionState)}, nil
+	return &Service{username: strings.TrimSpace(config.Username), password: config.Password, secret: []byte(config.Secret), now: time.Now, replays: make(map[string]time.Time)}, nil
 }
 
 func (s *Service) Login(username string, timestamp int64, salt, digest string) (string, error) {
 	token, _, err := s.LoginWithProof(username, timestamp, salt, digest, "")
 	return token, err
-}
-
-// LoginWithRequestKey authenticates a login proof and returns the JWT plus a
-// per-session key used to authenticate every subsequent HTTP request.
-func (s *Service) LoginWithRequestKey(username string, timestamp int64, salt, digest, nonce string) (string, string, *ProofOfWork, error) {
-	token, proof, err := s.LoginWithProof(username, timestamp, salt, digest, nonce)
-	if err != nil {
-		return "", "", proof, err
-	}
-	claims, err := s.Parse(token)
-	if err != nil {
-		return "", "", nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state := s.sessions[claims.ID]
-	if state == nil {
-		return "", "", nil, ErrInvalidToken
-	}
-	return token, hex.EncodeToString(state.requestKey), nil, nil
 }
 
 func (s *Service) LoginWithProof(username string, timestamp int64, salt, digest, nonce string) (string, *ProofOfWork, error) {
@@ -257,43 +216,17 @@ func (s *Service) Parse(token string) (*Claims, error) {
 	return claims, nil
 }
 
-// Authenticate accepts an Authorization bearer token or the session cookie.
-// An explicitly supplied malformed bearer token is never silently bypassed by
-// a cookie, preventing header corruption from changing authentication mode.
+// Authenticate accepts the durable HttpOnly browser session cookie.
 func (s *Service) Authenticate(request *http.Request) (*Claims, error) {
-	_, claims, err := s.authenticate(request)
-	return claims, err
-}
-
-// Token returns the authenticated token selected from the request's bearer
-// header and session cookie. It is intended for same-origin response headers.
-func (s *Service) Token(request *http.Request) (string, error) {
-	token, _, err := s.authenticate(request)
-	return token, err
-}
-
-func (s *Service) authenticate(request *http.Request) (string, *Claims, error) {
-	bearer := strings.TrimSpace(request.Header.Get("Authorization"))
-	if bearer != "" {
-		if !strings.HasPrefix(bearer, "Bearer ") {
-			return "", nil, ErrInvalidToken
-		}
-		bearerToken := strings.TrimSpace(strings.TrimPrefix(bearer, "Bearer "))
-		claims, err := s.Parse(bearerToken)
-		if err != nil {
-			return "", nil, err
-		}
-		return bearerToken, claims, nil
-	}
 	cookie, err := request.Cookie(CookieName)
 	if err != nil {
-		return "", nil, ErrInvalidToken
+		return nil, ErrInvalidToken
 	}
 	claims, err := s.Parse(cookie.Value)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	return cookie.Value, claims, nil
+	return claims, nil
 }
 
 func (s *Service) RefreshIfNeeded(claims *Claims) (string, bool, error) {
@@ -303,80 +236,12 @@ func (s *Service) RefreshIfNeeded(claims *Claims) (string, bool, error) {
 	if time.Unix(claims.ExpiresAt, 0).Sub(s.now()) > RefreshThreshold {
 		return "", false, nil
 	}
-	s.mu.Lock()
-	state := s.sessions[claims.ID]
-	if state == nil || !state.expiresAt.After(s.now()) {
-		s.mu.Unlock()
-		return "", false, ErrInvalidToken
-	}
-	state.expiresAt = s.now().Add(TokenLifetime)
-	s.mu.Unlock()
 	token, err := s.issueForSession(s.now(), claims.ID)
 	return token, err == nil, err
 }
 
-// VerifyRequest validates the signed headers for an authenticated request and
-// atomically consumes its nonce after all integrity checks pass.
-func (s *Service) VerifyRequest(request *http.Request, claims *Claims, body []byte) error {
-	if request.Header.Get(SignatureVersionHeader) != SignatureVersion || request.Header.Get(SignatureSessionHeader) != claims.ID {
-		return ErrInvalidRequestSignature
-	}
-	timestamp, err := strconv.ParseInt(request.Header.Get(SignatureTimestampHeader), 10, 64)
-	if err != nil {
-		return ErrInvalidRequestSignature
-	}
-	now := s.now()
-	issuedAt := time.UnixMilli(timestamp)
-	if issuedAt.Before(now.Add(-RequestWindow)) || issuedAt.After(now.Add(RequestWindow)) {
-		return ErrRequestTimestamp
-	}
-	nonce := request.Header.Get(SignatureNonceHeader)
-	providedBodyHash := request.Header.Get(SignatureBodyHashHeader)
-	providedSignature := request.Header.Get(SignatureHeader)
-	if !validNonce(nonce) || !validDigest(providedBodyHash) || !validDigest(providedSignature) {
-		return ErrInvalidRequestSignature
-	}
-	bodyHash := sha256.Sum256(body)
-	if subtle.ConstantTimeCompare([]byte(providedBodyHash), []byte(hex.EncodeToString(bodyHash[:]))) != 1 {
-		return ErrInvalidRequestSignature
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pruneSessions(now)
-	state := s.sessions[claims.ID]
-	if state == nil || !state.expiresAt.After(now) {
-		return ErrInvalidRequestSignature
-	}
-	canonical := canonicalRequest(request, claims.ID, timestamp, nonce, providedBodyHash)
-	mac := hmac.New(sha256.New, state.requestKey)
-	_, _ = mac.Write([]byte(canonical))
-	expectedSignature := hex.EncodeToString(mac.Sum(nil))
-	if subtle.ConstantTimeCompare([]byte(providedSignature), []byte(expectedSignature)) != 1 {
-		return ErrInvalidRequestSignature
-	}
-	for seenNonce, expiry := range state.nonces {
-		if !expiry.After(now) {
-			delete(state.nonces, seenNonce)
-		}
-	}
-	if _, used := state.nonces[nonce]; used || len(state.nonces) >= MaxRequestNonces {
-		return ErrInvalidRequestSignature
-	}
-	state.nonces[nonce] = now.Add(RequestWindow)
-	return nil
-}
-
-// Revoke invalidates the request key and replay state for a session.
-func (s *Service) Revoke(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, sessionID)
-}
-
 func (s *Service) SetCookie(writer http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(writer, &http.Cookie{Name: CookieName, Value: token, Path: "/", MaxAge: int(TokenLifetime.Seconds()), HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure})
-	writer.Header().Set(TokenHeader, token)
 }
 
 func (s *Service) ClearCookie(writer http.ResponseWriter, secure bool) {
@@ -384,16 +249,7 @@ func (s *Service) ClearCookie(writer http.ResponseWriter, secure bool) {
 }
 
 func (s *Service) issue(now time.Time) (string, error) {
-	id := uuid.NewString()
-	key := make([]byte, sha256.Size)
-	if _, err := rand.Read(key); err != nil {
-		return "", fmt.Errorf("auth: create request key: %w", err)
-	}
-	s.mu.Lock()
-	s.pruneSessions(now)
-	s.sessions[id] = &sessionState{requestKey: key, expiresAt: now.Add(TokenLifetime), nonces: make(map[string]time.Time)}
-	s.mu.Unlock()
-	return s.issueForSession(now, id)
+	return s.issueForSession(now, uuid.NewString())
 }
 
 func (s *Service) issueForSession(now time.Time, sessionID string) (string, error) {
@@ -410,25 +266,6 @@ func (s *Service) issueForSession(now time.Time, sessionID string) (string, erro
 	}
 	payload := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
 	return payload + "." + s.signature(payload), nil
-}
-
-func (s *Service) pruneSessions(now time.Time) {
-	for sessionID, state := range s.sessions {
-		if !state.expiresAt.After(now) {
-			delete(s.sessions, sessionID)
-		}
-	}
-}
-
-func canonicalRequest(request *http.Request, sessionID string, timestamp int64, nonce, bodyHash string) string {
-	target := request.URL.EscapedPath()
-	if target == "" {
-		target = "/"
-	}
-	if request.URL.RawQuery != "" {
-		target += "?" + request.URL.RawQuery
-	}
-	return strings.Join([]string{SignatureVersion, sessionID, strings.ToUpper(request.Method), target, strconv.FormatInt(timestamp, 10), nonce, bodyHash}, "\n")
 }
 
 func (s *Service) signature(payload string) string {
@@ -457,10 +294,6 @@ func validSalt(value string) bool {
 
 func validDigest(value string) bool {
 	return len(value) == sha256.Size*2 && isLowerHex(value)
-}
-
-func validNonce(value string) bool {
-	return len(value) == 32 && isLowerHex(value)
 }
 
 func isLowerHex(value string) bool {

@@ -1,11 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"net/http"
-	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/auth"
 	"github.com/gin-gonic/gin"
@@ -36,7 +33,7 @@ func (s *Server) login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
-	token, requestKey, proof, err := s.auth.LoginWithRequestKey(request.Username, request.Timestamp, request.Salt, request.Digest, request.ProofNonce)
+	token, proof, err := s.auth.LoginWithProof(request.Username, request.Timestamp, request.Salt, request.Digest, request.ProofNonce)
 	if errors.Is(err, auth.ErrProofRequired) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "proof_of_work_required", "proof_of_work": proof})
 		return
@@ -46,7 +43,6 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	s.auth.SetCookie(c.Writer, token, c.Request.TLS != nil)
-	c.Header(auth.RequestKeyHeader, requestKey)
 	c.JSON(http.StatusOK, gin.H{"username": request.Username})
 }
 
@@ -73,8 +69,6 @@ func (s *Server) authSession(c *gin.Context) {
 // @Security BearerAuth
 // @Router /auth/logout [post]
 func (s *Server) logout(c *gin.Context) {
-	claims := c.MustGet("auth.claims").(*auth.Claims)
-	s.auth.Revoke(claims.ID)
 	s.auth.ClearCookie(c.Writer, c.Request.TLS != nil)
 	c.Status(http.StatusNoContent)
 }
@@ -86,30 +80,12 @@ func (s *Server) requireAuthentication(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 256<<20))
-	if err != nil {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
-		c.Abort()
-		return
-	}
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-	if err := s.auth.VerifyRequest(c.Request, claims, body); err != nil {
-		if errors.Is(err, auth.ErrRequestTimestamp) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "request timestamp outside accepted window", "server_time": time.Now().UnixMilli()})
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "request signature required"})
-		}
-		c.Abort()
-		return
-	}
 	if token, refreshed, err := s.auth.RefreshIfNeeded(claims); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		c.Abort()
 		return
 	} else if refreshed {
 		s.auth.SetCookie(c.Writer, token, c.Request.TLS != nil)
-	} else if token, err := s.auth.Token(c.Request); err == nil {
-		c.Header(auth.TokenHeader, token)
 	}
 	c.Set("auth.claims", claims)
 	c.Next()
