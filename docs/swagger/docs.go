@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/auth/login": {
             "post": {
-                "description": "Exchanges SHA-256(password + timestamp + salt) for a JWT session. This endpoint is public.",
+                "description": "Creates an HttpOnly browser session. This endpoint is public.",
                 "consumes": [
                     "application/json"
                 ],
@@ -30,7 +30,7 @@ const docTemplate = `{
                 "summary": "Login",
                 "parameters": [
                     {
-                        "description": "Login proof",
+                        "description": "Login credentials",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -63,11 +63,6 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "tags": [
                     "auth"
                 ],
@@ -90,11 +85,6 @@ const docTemplate = `{
         },
         "/auth/session": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1690,7 +1680,7 @@ const docTemplate = `{
                     ]
                 },
                 "sourceConcierge": {
-                    "description": "SourceConcierge is the Concierge name used at creation time, kept\nfor reference only; it has no further business influence.",
+                    "description": "SourceConcierge is the active Concierge used to derive session settings\nand validate project availability.",
                     "type": "string"
                 },
                 "summary": {
@@ -2063,23 +2053,15 @@ const docTemplate = `{
         "internal_server.loginRequest": {
             "type": "object",
             "required": [
-                "digest",
-                "salt",
-                "timestamp",
+                "password",
                 "username"
             ],
             "properties": {
-                "digest": {
+                "password": {
                     "type": "string"
                 },
                 "proof_nonce": {
                     "type": "string"
-                },
-                "salt": {
-                    "type": "string"
-                },
-                "timestamp": {
-                    "type": "integer"
                 },
                 "username": {
                     "type": "string"
@@ -2237,14 +2219,6 @@ const docTemplate = `{
                     }
                 }
             }
-        }
-    },
-    "securityDefinitions": {
-        "BearerAuth": {
-            "description": "JWT bearer token. Browser clients may also authenticate with the HttpOnly session cookie.",
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
         }
     }
 }`

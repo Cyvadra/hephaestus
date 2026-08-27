@@ -6,6 +6,17 @@ const BASE = '/api/v1'
 export const attachmentDownloadURL = (sessionId: number, attachmentId: number) =>
   `${BASE}/sessions/${sessionId}/attachments/${attachmentId}/download`
 
+export async function downloadAttachment(sessionId: number, attachmentId: number, filename: string) {
+  const response = await authFetch(attachmentDownloadURL(sessionId, attachmentId))
+  if (!response.ok) throw new Error(response.statusText || 'Attachment download failed')
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await authFetch(url, init)
   if (!res.ok) {

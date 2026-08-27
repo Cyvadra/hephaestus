@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -79,12 +81,21 @@ func TestRefreshAndCookie(t *testing.T) {
 	svc := newTestService(t)
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return now }
-	refreshClaims := &Claims{Username: "admin", ExpiresAt: now.Add(RefreshThreshold).Unix()}
+	token, err := svc.issue(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshClaims, err := svc.Parse(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshClaims.ExpiresAt = now.Add(RefreshThreshold).Unix()
 	if token, refreshed, err := svc.RefreshIfNeeded(refreshClaims); err != nil || !refreshed || token == "" {
 		t.Fatalf("refresh = %q, %t, %v", token, refreshed, err)
 	}
-	noRefreshClaims := &Claims{Username: "admin", ExpiresAt: now.Add(RefreshThreshold + time.Second).Unix()}
-	if _, refreshed, err := svc.RefreshIfNeeded(noRefreshClaims); err != nil || refreshed {
+	noRefreshClaims := *refreshClaims
+	noRefreshClaims.ExpiresAt = now.Add(RefreshThreshold + time.Second).Unix()
+	if _, refreshed, err := svc.RefreshIfNeeded(&noRefreshClaims); err != nil || refreshed {
 		t.Fatalf("unexpected refresh: %t, %v", refreshed, err)
 	}
 	recorder := httptest.NewRecorder()
@@ -113,6 +124,33 @@ func TestAuthenticateRejectsBadBearerAndAcceptsCookie(t *testing.T) {
 	}
 }
 
+func TestVerifyRequestAcceptsOnceAndBindsBody(t *testing.T) {
+	svc := newTestService(t)
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	token, requestKey, _, err := svc.LoginWithRequestKey("admin", now.UnixMilli(), "0123456789abcdef0123456789abcdef", loginDigest("password", now.UnixMilli(), "0123456789abcdef0123456789abcdef"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := svc.Parse(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"message":"hello"}`)
+	request := signedRequest(t, http.MethodPost, "/api/v1/sessions?project=a%20b", body, claims.ID, requestKey, now.UnixMilli(), "0123456789abcdef0123456789abcdef")
+	if err := svc.VerifyRequest(request, claims, body); err != nil {
+		t.Fatalf("verify signed request: %v", err)
+	}
+	if err := svc.VerifyRequest(request, claims, body); err != ErrInvalidRequestSignature {
+		t.Fatalf("replayed request error = %v", err)
+	}
+
+	tampered := signedRequest(t, http.MethodPost, "/api/v1/sessions", body, claims.ID, requestKey, now.UnixMilli(), "abcdef0123456789abcdef0123456789")
+	if err := svc.VerifyRequest(tampered, claims, []byte(`{"message":"changed"}`)); err != ErrInvalidRequestSignature {
+		t.Fatalf("tampered body error = %v", err)
+	}
+}
+
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 	svc, err := New(Config{Username: "admin", Password: "password", Secret: "12345678901234567890123456789012"})
@@ -136,4 +174,29 @@ func solveProof(t *testing.T, proof ProofOfWork) string {
 			return value
 		}
 	}
+}
+
+func signedRequest(t *testing.T, method, target string, body []byte, sessionID, requestKey string, timestamp int64, nonce string) *http.Request {
+	t.Helper()
+	request := httptest.NewRequest(method, target, bytes.NewReader(body))
+	bodyHash := sha256.Sum256(body)
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	mac := hmac.New(sha256.New, mustDecodeHex(t, requestKey))
+	_, _ = mac.Write([]byte(canonicalRequest(request, sessionID, timestamp, nonce, bodyHashHex)))
+	request.Header.Set(SignatureVersionHeader, SignatureVersion)
+	request.Header.Set(SignatureSessionHeader, sessionID)
+	request.Header.Set(SignatureTimestampHeader, fmt.Sprintf("%d", timestamp))
+	request.Header.Set(SignatureNonceHeader, nonce)
+	request.Header.Set(SignatureBodyHashHeader, bodyHashHex)
+	request.Header.Set(SignatureHeader, hex.EncodeToString(mac.Sum(nil)))
+	return request
+}
+
+func mustDecodeHex(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoded
 }

@@ -3,7 +3,7 @@ import { Check, Copy, Download, FileText, GitFork, Pencil, RefreshCw, StepForwar
 import { useTranslation } from 'react-i18next'
 import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
-import { attachmentDownloadURL } from '../api/client'
+import { downloadAttachment } from '../api/client'
 import { siblings, descendToLeaf } from '../lib/tree'
 import { parseAttachmentPrefix } from '../lib/attachments'
 import { parseAskQuestionsHistory } from '../lib/askQuestionsHistory'
@@ -353,17 +353,17 @@ function AssistantAttachment({ attachment }: { attachment: ChatMessage['Attachme
   } as CSSProperties
 
   return (
-    <a
+    <button
       className={'assistant-attachment' + (scroll.distance > 0 ? ' overflowing' : '')}
-      download={attachment.Name}
-      href={attachmentDownloadURL(attachment.SessionID, attachment.ID)}
+      type="button"
+      onClick={() => void downloadAttachment(attachment.SessionID, attachment.ID, attachment.Name)}
       title={t('chat.files.download', { name: attachment.Name })}
     >
       <FileText aria-hidden="true" size={16} />
       <span ref={nameRef} style={style}><span>{attachment.Name}</span></span>
       <small>{formatAttachmentSize(attachment.Size)}</small>
       <Download aria-hidden="true" size={15} />
-    </a>
+    </button>
   )
 }
 

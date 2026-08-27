@@ -1,4 +1,7 @@
 const TOKEN_HEADER = 'X-Hephaestus-Token'
+const REQUEST_KEY_HEADER = 'X-Hephaestus-Request-Key'
+const SIGNATURE_VERSION = '1'
+const SESSION_STORAGE_KEY = 'hephaestus.auth.session'
 const SHA256_ROUND_CONSTANTS = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -13,6 +16,7 @@ const SHA256_ROUND_CONSTANTS = new Uint32Array([
 type AuthListener = () => void
 
 let token: string | null = null
+let requestKey: string | null = null
 const listeners = new Set<AuthListener>()
 
 function notify() {
@@ -20,7 +24,7 @@ function notify() {
 }
 
 export function isAuthenticated() {
-  return token !== null
+  return token !== null && requestKey !== null
 }
 
 export function subscribeAuthentication(listener: AuthListener) {
@@ -30,19 +34,58 @@ export function subscribeAuthentication(listener: AuthListener) {
   }
 }
 
-function setToken(nextToken: string | null) {
+function setSession(nextToken: string | null, nextRequestKey: string | null) {
   token = nextToken
+  requestKey = nextRequestKey
+  if (nextToken && nextRequestKey) sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ token: nextToken, requestKey: nextRequestKey }))
+  else sessionStorage.removeItem(SESSION_STORAGE_KEY)
   notify()
 }
 
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  if (!token || !requestKey) return fetch(input, { ...init, credentials: 'same-origin' })
   const headers = new Headers(init.headers)
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(input, { ...init, headers, credentials: 'same-origin' })
+  headers.set('Authorization', `Bearer ${token}`)
+  const request = new Request(input, { ...init, headers, credentials: 'same-origin' })
+  const body = new Uint8Array(await request.clone().arrayBuffer())
+  const timestamp = Date.now()
+  const nonce = randomSalt()
+  const sessionID = jwtSessionID(token)
+  if (!sessionID) {
+    setSession(null, null)
+    return fetch(input, { ...init, headers, credentials: 'same-origin' })
+  }
+  const bodyHash = sha256Bytes(body)
+  const target = requestURL(request)
+  const canonical = [SIGNATURE_VERSION, sessionID, request.method.toUpperCase(), target, String(timestamp), nonce, bodyHash].join('\n')
+  request.headers.set('X-Hephaestus-Signature-Version', SIGNATURE_VERSION)
+  request.headers.set('X-Hephaestus-Signature-Session', sessionID)
+  request.headers.set('X-Hephaestus-Signature-Timestamp', String(timestamp))
+  request.headers.set('X-Hephaestus-Signature-Nonce', nonce)
+  request.headers.set('X-Hephaestus-Signature-Body-SHA256', bodyHash)
+  request.headers.set('X-Hephaestus-Signature', hmacSHA256(requestKey, canonical))
+  const response = await fetch(request)
   const refreshedToken = response.headers.get(TOKEN_HEADER)
-  if (refreshedToken) setToken(refreshedToken)
-  if (response.status === 401 && token) setToken(null)
+  if (refreshedToken) setSession(refreshedToken, requestKey)
+  if (response.status === 401 && token) setSession(null, null)
   return response
+}
+
+function requestURL(request: Request) {
+  const url = new URL(request.url)
+  return `${url.pathname}${url.search}`
+}
+
+function jwtSessionID(value: string) {
+  const payload = value.split('.')[1]
+  if (!payload) return null
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const decoded = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '='))) as { jti?: unknown }
+    return typeof decoded.jti === 'string' && decoded.jti !== '' ? decoded.jti : null
+  } catch {
+    return null
+  }
 }
 
 function randomSalt() {
@@ -55,7 +98,10 @@ function rotateRight(value: number, amount: number) {
 }
 
 function sha256(value: string) {
-  const input = new TextEncoder().encode(value)
+  return sha256Bytes(new TextEncoder().encode(value))
+}
+
+function sha256Bytes(input: Uint8Array) {
   const paddedLength = Math.ceil((input.length + 9) / 64) * 64
   const padded = new Uint8Array(paddedLength)
   padded.set(input)
@@ -90,6 +136,32 @@ function sha256(value: string) {
     ]
   }
   return Array.from(hash, word => word.toString(16).padStart(8, '0')).join('')
+}
+
+function hmacSHA256(hexKey: string, value: string) {
+  const key = new Uint8Array(hexKey.match(/../g)?.map(byte => Number.parseInt(byte, 16)) ?? [])
+  if (key.length !== 32) throw new Error('Invalid session request key')
+  const block = new Uint8Array(64)
+  block.set(key)
+  const outer = new Uint8Array(64)
+  const inner = new Uint8Array(64)
+  for (let index = 0; index < block.length; index++) {
+    outer[index] = block[index] ^ 0x5c
+    inner[index] = block[index] ^ 0x36
+  }
+  const encoded = new TextEncoder().encode(value)
+  const innerInput = new Uint8Array(inner.length + encoded.length)
+  innerInput.set(inner)
+  innerInput.set(encoded, inner.length)
+  const innerHash = hexToBytes(sha256Bytes(innerInput))
+  const outerInput = new Uint8Array(outer.length + innerHash.length)
+  outerInput.set(outer)
+  outerInput.set(innerHash, outer.length)
+  return sha256Bytes(outerInput)
+}
+
+function hexToBytes(value: string) {
+  return new Uint8Array(value.match(/../g)?.map(byte => Number.parseInt(byte, 16)) ?? [])
 }
 
 function digest(password: string, timestamp: number, salt: string) {
@@ -151,16 +223,29 @@ export async function login(username: string, password: string) {
 	}
   if (!response.ok) throw new Error('Invalid username or password')
   const issuedToken = response.headers.get(TOKEN_HEADER)
-  if (!issuedToken) throw new Error('Login response did not include a session token')
-  setToken(issuedToken)
+  const issuedRequestKey = response.headers.get(REQUEST_KEY_HEADER)
+  if (!issuedToken || !issuedRequestKey) throw new Error('Login response did not include session credentials')
+  setSession(issuedToken, issuedRequestKey)
 }
 
 export async function restoreSession() {
+  if (!token || !requestKey) {
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY) ?? 'null') as { token?: unknown; requestKey?: unknown } | null
+      if (typeof stored?.token === 'string' && typeof stored.requestKey === 'string') {
+        token = stored.token
+        requestKey = stored.requestKey
+      }
+    } catch {
+      setSession(null, null)
+    }
+  }
+  if (!token || !requestKey) return false
   const response = await authFetch('/api/v1/auth/session')
   return response.ok
 }
 
 export async function logout() {
   await authFetch('/api/v1/auth/logout', { method: 'POST' }).catch(() => undefined)
-  setToken(null)
+  setSession(null, null)
 }
