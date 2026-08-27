@@ -222,8 +222,6 @@ func TestLoadUploadConfig(t *testing.T) {
 	t.Setenv("HEPHAESTUS_POSTGRES_DSN", "test-dsn")
 	t.Setenv("HEPHAESTUS_DEEPSEEK_API_KEY", "test-key")
 	t.Setenv("HEPHAESTUS_FIRECRAWL_API_KEY", "firecrawl-key")
-	t.Setenv("HEPHAESTUS_BAIDU_OCR_API_KEY", "ocr-key")
-	t.Setenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY", "ocr-secret")
 	t.Setenv("HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS", ".TXT, md, txt")
 	t.Setenv("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", "100")
 	t.Setenv("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", "200")
@@ -233,9 +231,6 @@ func TestLoadUploadConfig(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.BaiduOCRAPIKey != "ocr-key" || cfg.BaiduOCRSecretKey != "ocr-secret" {
-		t.Fatalf("unexpected OCR credentials: %+v", cfg)
 	}
 	if want := []string{"txt", "md"}; !reflect.DeepEqual(cfg.UploadTextExtensions, want) {
 		t.Fatalf("text extensions = %v, want %v", cfg.UploadTextExtensions, want)

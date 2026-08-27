@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cyvadra/ds4"
@@ -34,6 +35,8 @@ const (
 	compressionTriggerRatio = 0.8
 	continuationAttempts    = 3
 	continuationBridge      = "\n\n"
+	postSendWorkers         = 4
+	postSendQueueSize       = 32
 )
 
 // Pipeline runs turns for sessions.
@@ -49,6 +52,15 @@ type Pipeline struct {
 	projects      *project.Service
 	interactions  *interaction.Manager
 	notifications NotificationSource
+	postSendCtx   context.Context
+	postSendStop  context.CancelFunc
+	postSendQueue chan postSendTask
+	postSendWG    sync.WaitGroup
+}
+
+type postSendTask struct {
+	settings store.SessionSettings
+	turn     plugin.TurnContext
 }
 
 type NotificationSource interface {
@@ -72,17 +84,69 @@ func NewPipeline(
 	projects *project.Service,
 	interactions *interaction.Manager,
 ) *Pipeline {
-	return &Pipeline{
-		db:           db,
-		registries:   registries,
-		toolReg:      toolReg,
-		plugins:      plugins,
-		llm:          llmClient,
-		agent:        runner,
-		sessions:     sessions,
-		notify:       notifier,
-		projects:     projects,
-		interactions: interactions,
+	postSendCtx, postSendStop := context.WithCancel(context.Background())
+	pipeline := &Pipeline{
+		db:            db,
+		registries:    registries,
+		toolReg:       toolReg,
+		plugins:       plugins,
+		llm:           llmClient,
+		agent:         runner,
+		sessions:      sessions,
+		notify:        notifier,
+		projects:      projects,
+		interactions:  interactions,
+		postSendCtx:   postSendCtx,
+		postSendStop:  postSendStop,
+		postSendQueue: make(chan postSendTask, postSendQueueSize),
+	}
+	for range postSendWorkers {
+		pipeline.postSendWG.Add(1)
+		go pipeline.runPostSendWorker()
+	}
+	return pipeline
+}
+
+func (p *Pipeline) runPostSendWorker() {
+	defer p.postSendWG.Done()
+	for {
+		select {
+		case <-p.postSendCtx.Done():
+			return
+		case task := <-p.postSendQueue:
+			if p.postSendCtx.Err() != nil {
+				return
+			}
+			p.plugins.Run(p.postSendCtx, task.settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, task.turn)
+		}
+	}
+}
+
+// Shutdown stops queued post-send work and waits for running handlers until
+// ctx expires. A non-cooperative plugin may outlive the deadline, but it is
+// still bounded by the plugin registry's handler budget.
+func (p *Pipeline) Shutdown(ctx context.Context) error {
+	p.postSendStop()
+	done := make(chan struct{})
+	go func() {
+		p.postSendWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *Pipeline) enqueuePostSend(settings store.SessionSettings, turn plugin.TurnContext) {
+	select {
+	case <-p.postSendCtx.Done():
+		p.notify.Warn("chat: skip post-send hook for session %d during shutdown", turn.SessionID)
+	case p.postSendQueue <- postSendTask{settings: settings, turn: turn}:
+	default:
+		p.notify.Warn("chat: skip post-send hook for session %d because the queue is full", turn.SessionID)
 	}
 }
 
@@ -612,7 +676,7 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 			turn.Metadata = map[string]any{}
 		}
 		turn.Metadata["stale_active_leaf"] = true
-		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+		p.enqueuePostSend(settings, turn)
 		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
 	}
 	if err != nil {
@@ -626,7 +690,7 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 			turn.Metadata = map[string]any{}
 		}
 		turn.Metadata["incomplete"] = true
-		go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+		p.enqueuePostSend(settings, turn)
 		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, nil
 	}
 	if converseErr != nil {
@@ -634,7 +698,7 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 	}
 
 	turn.Messages[len(turn.Messages)-1] = final
-	go p.plugins.Run(context.WithoutCancel(ctx), settings.Plugins, plugin.HookAssistantMessageSent2User, plugin.PhaseAfter, turn)
+	p.enqueuePostSend(settings, turn)
 
 	return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, nil
 }

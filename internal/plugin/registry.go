@@ -8,16 +8,23 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
 
+const maxConcurrentHandlers = 32
+
 // Registry holds every Plugin the platform knows about, keyed by name.
 type Registry struct {
 	byName       map[string]Plugin
 	fixedPlugins []string
 	notify       *notify.Notifier
+	handlers     chan struct{}
 }
 
 // NewRegistry creates a Registry that reports failed/timed-out plugins to n.
 func NewRegistry(n *notify.Notifier) *Registry {
-	return &Registry{byName: map[string]Plugin{}, notify: n}
+	return &Registry{
+		byName:   map[string]Plugin{},
+		notify:   n,
+		handlers: make(chan struct{}, maxConcurrentHandlers),
+	}
 }
 
 // Register adds a Plugin, panicking on duplicate names since that indicates
@@ -91,11 +98,10 @@ func (r *Registry) IsFixed(name string) bool {
 // as left by the last plugin that succeeded.
 //
 // Handle runs in its own goroutine per invocation, raced against the
-// plugin's Timeout via pluginCtx.Done(): a plugin that ignores ctx
-// cancellation (which this platform must not assume is possible to force,
-// per design) is abandoned rather than allowed to stall the pipeline, and
-// each invocation gets its own cloned Messages/Metadata so a leaked,
-// still-running goroutine can only mutate its own copy.
+// plugin's Timeout via pluginCtx.Done(). A bounded handler budget limits
+// the damage a non-cooperative plugin can cause after it has timed out.
+// Each invocation gets cloned Messages/Metadata so a timed-out handler can
+// only mutate its own discarded copy.
 func (r *Registry) Run(ctx context.Context, names []string, hook Hook, phase Phase, turn TurnContext) TurnContext {
 	for _, name := range r.executionNames(names) {
 		p, ok := r.byName[name]
@@ -108,10 +114,18 @@ func (r *Registry) Run(ctx context.Context, names []string, hook Hook, phase Pha
 		}
 
 		pluginCtx, cancel := context.WithTimeout(ctx, p.Timeout())
+		select {
+		case r.handlers <- struct{}{}:
+		case <-pluginCtx.Done():
+			r.notify.Warn("plugin %q could not start before its %s timeout at %s/%s", name, p.Timeout(), hook, phase)
+			cancel()
+			continue
+		}
 		input := turn.clone()
 		resultCh := make(chan TurnContext, 1)
 		errCh := make(chan error, 1)
 		go func() {
+			defer func() { <-r.handlers }()
 			next, err := p.Handle(pluginCtx, hook, phase, input)
 			if err != nil {
 				errCh <- err

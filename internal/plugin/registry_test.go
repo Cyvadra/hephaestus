@@ -82,6 +82,40 @@ func TestRegistry_Run_EnforcesTimeoutAgainstNonCooperativePlugin(t *testing.T) {
 	}
 }
 
+func TestRegistry_Run_BoundsNonCooperativeHandlers(t *testing.T) {
+	reg := NewRegistry(notify.New(""))
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	started := make(chan struct{}, maxConcurrentHandlers)
+	reg.Register(stubPlugin{
+		name:    "blocks",
+		timeout: 20 * time.Millisecond,
+		handle: func(_ context.Context, _ Hook, _ Phase, turn TurnContext) (TurnContext, error) {
+			started <- struct{}{}
+			<-release
+			return turn, nil
+		},
+	})
+
+	for range maxConcurrentHandlers {
+		reg.Run(context.Background(), []string{"blocks"}, HookUserMessageIncoming, PhaseAfter, TurnContext{})
+	}
+	for range maxConcurrentHandlers {
+		<-started
+	}
+
+	start := time.Now()
+	reg.Run(context.Background(), []string{"blocks"}, HookUserMessageIncoming, PhaseAfter, TurnContext{})
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("Run waited for an exhausted handler budget, took %v", elapsed)
+	}
+	select {
+	case <-started:
+		t.Fatal("started a handler beyond the configured concurrency budget")
+	default:
+	}
+}
+
 // An unknown plugin name is warned about and skipped without affecting turn.
 func TestRegistry_Run_UnknownPluginSkipped(t *testing.T) {
 	reg := NewRegistry(notify.New(""))

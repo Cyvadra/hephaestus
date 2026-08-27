@@ -33,9 +33,6 @@ type Config struct {
 	// endpoint. When set, ds4 routes identities by their preferred model name.
 	LocalModelURL    string
 	LocalModelAPIKey string
-	// BaiduOCRAPIKey and BaiduOCRSecretKey authenticate optional image OCR.
-	BaiduOCRAPIKey    string
-	BaiduOCRSecretKey string
 	// QQ credentials and recipient configure optional proactive notifications.
 	QQAppID      string
 	QQAppSecret  string
@@ -107,8 +104,6 @@ func Load() (*Config, error) {
 		DeepSeekAPIKey:           os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
 		LocalModelURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_URL")), "/"),
 		LocalModelAPIKey:         strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_API_KEY")),
-		BaiduOCRAPIKey:           strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_API_KEY")),
-		BaiduOCRSecretKey:        strings.TrimSpace(os.Getenv("HEPHAESTUS_BAIDU_OCR_SECRET_KEY")),
 		QQAppID:                  strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_ID")),
 		QQAppSecret:              strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_SECRET")),
 		QQUserOpenID:             strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_USER_OPENID")),

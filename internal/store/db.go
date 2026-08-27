@@ -83,6 +83,22 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	return db, nil
 }
 
+// Close releases the underlying SQL connection pool after all services that
+// use the database have stopped.
+func Close(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("store: access database pool: %w", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		return fmt.Errorf("store: close database pool: %w", err)
+	}
+	return nil
+}
+
 func openDialector(databaseURL string) (gorm.Dialector, error) {
 	if sqlitePath, ok := strings.CutPrefix(databaseURL, "sqlite://"); ok {
 		if sqlitePath == "" {

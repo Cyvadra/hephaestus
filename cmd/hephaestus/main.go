@@ -279,6 +279,11 @@ func main() {
 			chatRunSvc.Shutdown()
 			subagentSvc.Shutdown()
 			jobSvc.Shutdown()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := pipeline.Shutdown(shutdownCtx); err != nil {
+				log.Printf("chat post-send shutdown: %v", err)
+			}
 		})
 	}
 	go func() {
@@ -297,6 +302,9 @@ func main() {
 		log.Printf("channel shutdown: %v", err)
 	}
 	schedulerWG.Wait()
+	if err := store.Close(db); err != nil {
+		log.Printf("store shutdown: %v", err)
+	}
 }
 
 // warnIfExposed logs a warning when the API binds to a non-loopback

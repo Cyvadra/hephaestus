@@ -58,4 +58,7 @@ func TestOpenSQLiteCreatesParentDirectory(t *testing.T) {
 	if err := db.Exec("SELECT 1").Error; err != nil {
 		t.Fatalf("query SQLite database: %v", err)
 	}
+	if err := Close(db); err != nil {
+		t.Fatalf("close SQLite database: %v", err)
+	}
 }
