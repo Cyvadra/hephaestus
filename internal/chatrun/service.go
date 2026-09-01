@@ -43,6 +43,7 @@ type ProgressEvent struct {
 	Sequence uint64         `json:"sequence"`
 	Type     string         `json:"type"`
 	Payload  datatypes.JSON `json:"payload"`
+	Run      *store.ChatRun `json:"-"`
 }
 
 // Subscription is a live progress subscription. Close releases the listener.
@@ -224,6 +225,7 @@ func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) error {
 func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) (store.ChatRunStatus, error) {
 	finished := time.Now()
 	update := map[string]any{"status": status, "finished_at": &finished}
+	terminal := &store.ChatRun{ID: runID, Status: status, FinishedAt: &finished}
 	snapshot, snapshotErr := s.snapshot(runID)
 	if snapshotErr == nil {
 		update["snapshot"] = datatypes.NewJSONType(snapshot)
@@ -238,18 +240,21 @@ func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result,
 				runErr = fmt.Errorf("chatrun: encode terminal result: %w", err)
 				status = store.ChatRunFailed
 				update["status"] = status
+				terminal.Status = status
 			} else {
 				update["result"] = datatypes.JSON(encoded)
+				terminal.Result = datatypes.JSON(encoded)
 			}
 		}
 	}
 	if runErr != nil {
 		update["error"] = runErr.Error()
+		terminal.Error = runErr.Error()
 	}
 	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(update).Error; err != nil {
 		return status, fmt.Errorf("chatrun: persist terminal state: %w", err)
 	}
-	s.publish(runID, ProgressEvent{Type: "done"})
+	s.publish(runID, ProgressEvent{Type: "done", Run: terminal})
 	return status, nil
 }
 

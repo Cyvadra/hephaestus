@@ -276,9 +276,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingActivities,
         onSessionUpdated,
         onDone: async () => {
-      if (!isCurrent()) return
-      clearStreamingPresentation()
-      await loadHistory(resolvedSessionId, undefined, epoch)
+          if (!isCurrent()) return
+          clearStreamingPresentation()
+          void loadHistory(resolvedSessionId, undefined, epoch).catch((cause: unknown) => {
+            if (isCurrent()) setError(String(cause))
+          })
         },
         onError: setError,
 			isCurrent,
@@ -634,10 +636,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           const uploads = data.metadata?.uploads as UploadResult | undefined
           setUploadWarnings(uploads?.warnings ?? [])
           if (!isCurrent()) return
-                       clearStreamingPresentation()
-          await loadHistory(targetSessionId!, undefined, epoch)
+          clearStreamingPresentation()
           completed = true
           if (data.message) setLocalLeafId(data.message.ID)
+          void loadHistory(targetSessionId!, undefined, epoch).catch((cause: unknown) => {
+            if (isCurrent()) setError(String(cause))
+          })
         },
         onError: setError,
 			isCurrent,
@@ -685,9 +689,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           if (!isCurrent()) return
           clearStreamingPresentation()
           setActiveMessageId(null)
-          await loadHistory(resolvedSessionId, undefined, epoch)
           completed = true
           if (data.message) setLocalLeafId(data.message.ID)
+          void loadHistory(resolvedSessionId, undefined, epoch).catch((cause: unknown) => {
+            if (isCurrent()) setError(String(cause))
+          })
         },
         onError: setError,
         isCurrent,

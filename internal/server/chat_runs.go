@@ -285,16 +285,11 @@ func (s *Server) streamChatRun(c *gin.Context) {
 			return
 		case event, ok := <-sub.Events:
 			if !ok {
-				final, getErr := s.chatRuns.Get(runID)
-				if getErr == nil {
-					emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, final)
-				}
 				return
 			}
 			if event.Type == "done" {
-				final, getErr := s.chatRuns.Get(runID)
-				if getErr == nil {
-					emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, final)
+				if event.Run != nil {
+					emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, event.Run)
 				}
 				return
 			}
