@@ -139,6 +139,11 @@ func (s *Service) handleInbound(ctx context.Context, message channels.InboundMes
 		return
 	}
 	s.mu.Lock()
+	if isPriorityCommand(message.Content) {
+		s.mu.Unlock()
+		s.processPriorityCommand(ctx, message)
+		return
+	}
 	if pending, ok := s.pending[key]; ok {
 		delete(s.pending, key)
 		s.mu.Unlock()
@@ -147,11 +152,6 @@ func (s *Service) handleInbound(ctx context.Context, message channels.InboundMes
 	}
 	if s.stopped {
 		s.mu.Unlock()
-		return
-	}
-	if isStopCommand(message.Content) {
-		s.mu.Unlock()
-		s.processStop(ctx, message)
 		return
 	}
 	queue := s.queues[key]
@@ -173,9 +173,20 @@ func isStopCommand(text string) bool {
 	return len(fields) > 0 && fields[0] == "/stop"
 }
 
+func isPriorityCommand(text string) bool {
+	fields := strings.Fields(text)
+	return len(fields) > 0 && (fields[0] == "/stop" || fields[0] == "/steer")
+}
+
 // processStop bypasses the per-chat message queue so it can interrupt the
 // turn currently occupying that queue.
 func (s *Service) processStop(ctx context.Context, message channels.InboundMessage) {
+	s.processPriorityCommand(ctx, message)
+}
+
+// processPriorityCommand bypasses the per-chat message queue so live run
+// controls can affect the turn currently occupying that queue.
+func (s *Service) processPriorityCommand(ctx context.Context, message channels.InboundMessage) {
 	external := s.findChannel(message.Channel)
 	if external == nil {
 		return
@@ -185,7 +196,7 @@ func (s *Service) processStop(ctx context.Context, message channels.InboundMessa
 		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: err.Error()})
 		return
 	}
-	response, err := s.commands.Execute(sessionID, "/stop")
+	response, err := s.commands.Execute(sessionID, message.Content)
 	if err != nil {
 		response = err.Error()
 	}

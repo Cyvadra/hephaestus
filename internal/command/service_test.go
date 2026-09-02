@@ -9,6 +9,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
+	"github.com/Cyvadra/hephaestus/internal/steering"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/glebarez/sqlite"
 	"gorm.io/datatypes"
@@ -35,6 +36,29 @@ func TestValidateKindNameRejectsUnknownConfiguredName(t *testing.T) {
 		if err := validateKindName(service, kind, "missing"); err == nil {
 			t.Fatalf("expected unknown %s to be rejected", kind)
 		}
+	}
+}
+
+func TestSteerCommandParsesModesAndCancel(t *testing.T) {
+	service := testService()
+	var gotText string
+	var gotMode steering.Mode
+	service.SetSteeringController(func(_ uint, text string, mode steering.Mode) (steering.Outcome, uint, error) {
+		gotText, gotMode = text, mode
+		return steering.OutcomeQueued, 5, nil
+	}, func(_ uint) (bool, error) { return true, nil })
+
+	result, err := service.ExecuteResult(7, "/steer follow the tests")
+	if err != nil || result.Response != "Steering queued." || gotText != "follow the tests" || gotMode != steering.ModeNormal {
+		t.Fatalf("normal steering = %#v, %v; got %q %q", result, err, gotText, gotMode)
+	}
+	result, err = service.ExecuteResult(7, "/steer aggressive stop now")
+	if err != nil || result.Response != "Steering queued." || gotText != "stop now" || gotMode != steering.ModeAggressive {
+		t.Fatalf("aggressive steering = %#v, %v; got %q %q", result, err, gotText, gotMode)
+	}
+	result, err = service.ExecuteResult(7, "/steer cancel")
+	if err != nil || result.Response != "Pending steering cancelled." {
+		t.Fatalf("cancel steering = %#v, %v", result, err)
 	}
 }
 

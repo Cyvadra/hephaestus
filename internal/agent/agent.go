@@ -70,11 +70,24 @@ type Request struct {
 	// ClaimNotifications atomically claims durable completion notifications
 	// before an outbound model request. Claimed notifications are at-most-once.
 	ClaimNotifications func() ([]Notification, error)
+	// ClaimSteering claims one human instruction for the current chat run. It
+	// is called only at a tool-call boundary and is ignored for workflow runs.
+	ClaimSteering func() (*Steering, error)
+	// ClaimNormalSteering claims a Normal instruction after a tool completes.
+	// Aggressive instructions remain pending for the next pre-execution gate.
+	ClaimNormalSteering func() (*Steering, error)
 }
 
 type Notification struct {
 	ID   uint
 	Text string
+}
+
+// Steering is a human instruction injected into one tool result.
+type Steering struct {
+	Token      uint64
+	Text       string
+	Aggressive bool
 }
 
 // Result is the outcome of an agent turn before any persistence.
@@ -93,6 +106,9 @@ type Result struct {
 	// NotificationIDs are completion events included in this turn. The caller
 	// acknowledges them only after the generated transcript is durable.
 	NotificationIDs []uint
+	// Steering contains human instructions injected into tool results. The
+	// caller acknowledges them only after the generated transcript is durable.
+	Steering []Steering
 }
 
 // Runner executes one agent turn: the first LLM call and, while the model
@@ -122,6 +138,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	var toPersist []store.ChatMessage
 	var deliveries []toolkit.FileDelivery
 	var notificationIDs []uint
+	var steering []Steering
 	// injected guards against a long turn re-claiming the same completion
 	// event at a later model boundary (the lease can expire mid-turn).
 	injected := map[uint]struct{}{}
@@ -181,7 +198,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	messages = turn.Messages
 	resp, err := callLLM()
 	if err != nil {
-		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, err
 	}
 	turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantFirstCallLLM, plugin.PhaseAfter, turn)
 	messages = turn.Messages
@@ -191,7 +208,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	for resp.FinishReason() == ds4.FinishReasonToolCalls {
 		assistantMsg, err := StoreMessageFromDS4(*resp.FirstMessage())
 		if err != nil {
-			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, err
 		}
 		messages = append(messages, assistantMsg)
 		toPersist = append(toPersist, assistantMsg)
@@ -200,7 +217,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		toolCalls := resp.ToolCalls()
 		for _, tc := range toolCalls {
 			if err := r.trackConsecutiveToolCall(ctx, req, &lastToolName, &consecutiveToolCalls, tc.Function.Name); err != nil {
-				return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+				return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, err
 			}
 			turn.ToolCall = &tc
 			turn.ToolResult = nil
@@ -209,17 +226,19 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		}
 
 		var batchDeliveries []toolkit.FileDelivery
-		messages, toPersist, turn, batchDeliveries = r.runToolCalls(ctx, req, callIndex, allowedTools, toolCalls, messages, toPersist, turn)
+		var batchSteering []Steering
+		messages, toPersist, turn, batchDeliveries, batchSteering = r.runToolCalls(ctx, req, callIndex, allowedTools, toolCalls, messages, toPersist, turn)
 		deliveries = appendUniqueDeliveries(deliveries, batchDeliveries)
+		steering = append(steering, batchSteering...)
 		if err := ctx.Err(); err != nil {
-			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, err
 		}
 
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseBefore, turn)
 		messages = turn.Messages
 		resp, err = callLLM()
 		if err != nil {
-			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+			return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, err
 		}
 		turn = r.plugins.Run(ctx, req.Plugins, plugin.HookAssistantContinuousCallLLM, plugin.PhaseAfter, turn)
 		messages = turn.Messages
@@ -227,7 +246,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 
 	final, err := StoreMessageFromDS4(*resp.FirstMessage())
 	if err != nil {
-		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, err
+		return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, err
 	}
 	toPersist = append(toPersist, final)
 
@@ -241,49 +260,81 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 		toPersist[len(toPersist)-1].Content = turn.Messages[n-1].Content
 	}
 
-	return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs}, nil
+	return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, nil
 }
 
 // runToolCalls executes a single model response's independent tool calls
 // concurrently, runs the after-phase ToolCall hook for each with its
 // outcome, and appends the resulting tool messages to messages/toPersist in
 // the model's original order for deterministic persistence.
-func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext, []toolkit.FileDelivery) {
+func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext, []toolkit.FileDelivery, []Steering) {
 	results := make([]*toolkit.ToolResult, len(toolCalls))
 	type toolExecution struct {
-		index  int
-		result *toolkit.ToolResult
+		index    int
+		result   *toolkit.ToolResult
+		steering *Steering
 	}
+	claimed := make([]*Steering, len(toolCalls))
 	completed := make(chan toolExecution, len(toolCalls))
 	for i, tc := range toolCalls {
+		var steering *Steering
+		var steeringErr error
+		if i == 0 && req.Scope == toolkit.ScopeSession && req.ClaimSteering != nil {
+			claimed, err := req.ClaimSteering()
+			if err != nil {
+				steeringErr = err
+			} else {
+				steering = claimed
+			}
+		}
 		go func(idx int, tc ds4.ToolCall) {
 			streamedBytes := 0
-			result := r.executeTool(ctx, req, allowedTools, tc, turn.History, func(chunk string) {
-				if req.OnDelta != nil {
-					chunk = transform.LimitToolExchangeContent(tc.Function.Arguments, chunk)
-					remaining := transform.MaxToolExchangeBytes - 1 - len(tc.Function.Arguments) - streamedBytes
-					chunk = transform.LimitTextBytes(chunk, remaining)
-					streamedBytes += len(chunk)
-					if chunk == "" {
-						return
+			var result *toolkit.ToolResult
+			if steeringErr != nil {
+				result = toolkit.ErrorResult(fmt.Sprintf("agent: claim steering: %v", steeringErr))
+			} else if steering != nil && steering.Aggressive {
+				result = toolkit.NewToolResult(formatSteering(steering))
+			} else {
+				result = r.executeTool(ctx, req, allowedTools, tc, turn.History, func(chunk string) {
+					if req.OnDelta != nil {
+						chunk = transform.LimitToolExchangeContent(tc.Function.Arguments, chunk)
+						remaining := transform.MaxToolExchangeBytes - 1 - len(tc.Function.Arguments) - streamedBytes
+						chunk = transform.LimitTextBytes(chunk, remaining)
+						streamedBytes += len(chunk)
+						if chunk == "" {
+							return
+						}
+						req.OnDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
+							CallIndex: callIndex,
+							Index:     idx,
+							ID:        tc.ID,
+							Name:      tc.Function.Name,
+							Result:    chunk,
+							Status:    "calling",
+						}})
 					}
-					req.OnDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
-						CallIndex: callIndex,
-						Index:     idx,
-						ID:        tc.ID,
-						Name:      tc.Function.Name,
-						Result:    chunk,
-						Status:    "calling",
-					}})
+				})
+				if steering == nil && req.Scope == toolkit.ScopeSession && req.ClaimNormalSteering != nil {
+					claimed, err := req.ClaimNormalSteering()
+					if err != nil {
+						result = toolkit.ErrorResult(fmt.Sprintf("agent: claim normal steering: %v", err))
+					} else {
+						steering = claimed
+					}
 				}
-			})
-			completed <- toolExecution{index: idx, result: result}
+				if steering != nil {
+					result.ForLLM = appendSteering(result.ContentForLLM(), formatSteering(steering))
+					result.ArtifactTags = nil
+				}
+			}
+			completed <- toolExecution{index: idx, result: result, steering: steering}
 		}(i, tc)
 	}
 	for remaining := len(toolCalls); remaining > 0; remaining-- {
 		select {
 		case execution := <-completed:
 			results[execution.index] = execution.result
+			claimed[execution.index] = execution.steering
 		case <-ctx.Done():
 			for index := range results {
 				if results[index] == nil {
@@ -295,8 +346,12 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 	}
 
 	var deliveries []toolkit.FileDelivery
+	var claimedSteering []Steering
 	for toolIndex, tc := range toolCalls {
 		result := results[toolIndex]
+		if claimed[toolIndex] != nil {
+			claimedSteering = append(claimedSteering, *claimed[toolIndex])
+		}
 		if !result.IsError {
 			deliveries = appendUniqueDeliveries(deliveries, result.Deliveries)
 		}
@@ -327,7 +382,21 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 		toPersist = append(toPersist, toolMsg)
 		turn.Messages = messages
 	}
-	return messages, toPersist, turn, deliveries
+	return messages, toPersist, turn, deliveries, claimedSteering
+}
+
+func formatSteering(steering *Steering) string {
+	if steering.Aggressive {
+		return "<user-steering mode=\"aggressive\" tool-execution=\"skipped\">\n" + steering.Text + "\n</user-steering>"
+	}
+	return "<user-steering mode=\"normal\">\n" + steering.Text + "\n</user-steering>"
+}
+
+func appendSteering(content, steering string) string {
+	if content == "" {
+		return steering
+	}
+	return content + "\n\n" + steering
 }
 
 func appendUniqueDeliveries(existing, additions []toolkit.FileDelivery) []toolkit.FileDelivery {

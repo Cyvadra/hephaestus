@@ -12,6 +12,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
+	"github.com/Cyvadra/hephaestus/internal/steering"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/upload"
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,18 @@ type chatRunDone struct {
 
 type questionResponseRequest struct {
 	Answers []interaction.Answer `json:"answers"`
+}
+
+type steeringRequest struct {
+	Text string        `json:"text"`
+	Mode steering.Mode `json:"mode"`
+}
+
+type steeringResponse struct {
+	Status string        `json:"status"`
+	RunID  uint          `json:"run_id"`
+	Text   string        `json:"text,omitempty"`
+	Mode   steering.Mode `json:"mode,omitempty"`
 }
 
 func newChatRunResponse(run *store.ChatRun) chatRunResponse {
@@ -179,6 +192,81 @@ func (s *Server) getActiveChatRun(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newChatRunResponse(run))
+}
+
+func (s *Server) getSteering(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	pending, ok, err := s.chatRuns.GetSteering(sessionID)
+	if errors.Is(err, chatrun.ErrRunNotFound) {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+		return
+	}
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	if !ok {
+		c.Status(http.StatusNoContent)
+		return
+	}
+	c.JSON(http.StatusOK, steeringResponse{Status: "queued", RunID: pending.RunID, Text: pending.Text, Mode: pending.Mode})
+}
+
+func (s *Server) putSteering(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	var req steeringRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	req.Text = strings.TrimSpace(req.Text)
+	if req.Mode == "" {
+		req.Mode = steering.ModeNormal
+	}
+	outcome, runID, err := s.chatRuns.PutSteering(sessionID, req.Text, req.Mode)
+	if err != nil {
+		if errors.Is(err, chatrun.ErrRunNotFound) {
+			c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+			return
+		}
+		if errors.Is(err, chatrun.ErrRunFinished) || strings.Contains(err.Error(), "already claimed") {
+			c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, steeringResponse{Status: string(outcome), RunID: runID, Text: req.Text, Mode: req.Mode})
+}
+
+func (s *Server) cancelSteering(c *gin.Context) {
+	sessionID, err := parseSessionID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	cancelled, err := s.chatRuns.CancelSteering(sessionID)
+	if errors.Is(err, chatrun.ErrRunNotFound) {
+		c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+		return
+	}
+	if err != nil {
+		internalError(c, err)
+		return
+	}
+	if !cancelled {
+		c.JSON(http.StatusConflict, errorResponse{Error: "no replaceable steering is pending"})
+		return
+	}
+	c.JSON(http.StatusOK, steeringResponse{Status: "cancelled"})
 }
 
 func (s *Server) getChatRun(c *gin.Context) {

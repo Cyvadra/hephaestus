@@ -52,6 +52,7 @@ type Pipeline struct {
 	projects      *project.Service
 	interactions  *interaction.Manager
 	notifications NotificationSource
+	steering      SteeringSource
 	postSendCtx   context.Context
 	postSendStop  context.CancelFunc
 	postSendQueue chan postSendTask
@@ -69,7 +70,18 @@ type NotificationSource interface {
 	ReleaseNotifications([]uint) error
 }
 
+// SteeringSource owns runtime human instructions without making the chat
+// pipeline depend on a concrete chat-run implementation.
+type SteeringSource interface {
+	ClaimSteering(uint) (*agent.Steering, error)
+	ClaimNormalSteering(uint) (*agent.Steering, error)
+	AcknowledgeSteering(uint, agent.Steering)
+	ReleaseSteering(uint, agent.Steering)
+}
+
 func (p *Pipeline) SetNotificationSource(source NotificationSource) { p.notifications = source }
+
+func (p *Pipeline) SetSteeringSource(source SteeringSource) { p.steering = source }
 
 // NewPipeline wires together every dependency a turn needs.
 func NewPipeline(
@@ -639,12 +651,19 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 // already-persisted user message (Regenerate's case).
 func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, parentID, expectedLeaf *uint, newInputMessages []store.ChatMessage, claimedNotificationIDs []uint, onDelta func(StreamEvent)) (*TurnResult, error) {
 	turn.Identity = identity
-	toPersist, deliveries, notificationIDs, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
+	toPersist, deliveries, notificationIDs, claimedSteering, turn, converseErr := p.converse(ctx, settings, identity, toolset, turn, onDelta)
 	notificationIDs = append(claimedNotificationIDs, notificationIDs...)
 	acknowledged := false
 	defer func() {
 		if !acknowledged && p.notifications != nil {
 			_ = p.notifications.ReleaseNotifications(notificationIDs)
+		}
+		if !acknowledged && p.steering != nil {
+			if runID, ok := toolkit.ChatRunIDFromContext(ctx); ok {
+				for _, value := range claimedSteering {
+					p.steering.ReleaseSteering(runID, value)
+				}
+			}
 		}
 	}()
 	if converseErr != nil {
@@ -670,6 +689,7 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 			return nil, detachErr
 		}
 		acknowledged = true
+		p.acknowledgeSteering(ctx, claimedSteering)
 		final := detached[len(detached)-1]
 		turn.Messages[len(turn.Messages)-1] = final
 		if turn.Metadata == nil {
@@ -683,6 +703,7 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 		return nil, err
 	}
 	acknowledged = true
+	p.acknowledgeSteering(ctx, claimedSteering)
 	final := saved[len(saved)-1]
 	if converseErr != nil && final.Role == ds4.RoleAssistant {
 		turn.Messages[len(turn.Messages)-1] = final
@@ -923,22 +944,32 @@ func estimateMessageLength(m store.ChatMessage) int {
 // ran (carrying any Metadata plugins attached, and any content mutation the
 // completion hook made to the final assistant message). The reusable loop
 // lives in internal/agent; this wrapper adapts the session's turn state.
-func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, []toolkit.FileDelivery, []uint, plugin.TurnContext, error) {
+func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings, identity registry.Identity, toolset []toolkit.Tool, turn plugin.TurnContext, onDelta func(StreamEvent)) ([]store.ChatMessage, []toolkit.FileDelivery, []uint, []agent.Steering, plugin.TurnContext, error) {
 	var claimNotifications func() ([]agent.Notification, error)
 	if p.notifications != nil {
 		claimNotifications = func() ([]agent.Notification, error) {
 			return p.notifications.ClaimNotifications(turn.SessionID)
 		}
 	}
+	var claimSteering func() (*agent.Steering, error)
+	var claimNormalSteering func() (*agent.Steering, error)
+	if p.steering != nil {
+		if runID, ok := toolkit.ChatRunIDFromContext(ctx); ok {
+			claimSteering = func() (*agent.Steering, error) { return p.steering.ClaimSteering(runID) }
+			claimNormalSteering = func() (*agent.Steering, error) { return p.steering.ClaimNormalSteering(runID) }
+		}
+	}
 	result, err := p.agent.Run(ctx, agent.Request{
-		Identity:           identity,
-		Toolset:            toolset,
-		Plugins:            settings.Plugins,
-		Turn:               turn,
-		Scope:              toolkit.ScopeSession,
-		Audit:              agent.AuditOwner{SessionID: &turn.SessionID},
-		OwnerID:            turn.SessionID,
-		ClaimNotifications: claimNotifications,
+		Identity:            identity,
+		Toolset:             toolset,
+		Plugins:             settings.Plugins,
+		Turn:                turn,
+		Scope:               toolkit.ScopeSession,
+		Audit:               agent.AuditOwner{SessionID: &turn.SessionID},
+		OwnerID:             turn.SessionID,
+		ClaimNotifications:  claimNotifications,
+		ClaimSteering:       claimSteering,
+		ClaimNormalSteering: claimNormalSteering,
 		OnDelta: func(event StreamEvent) {
 			if onDelta != nil {
 				onDelta(event)
@@ -951,9 +982,9 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		},
 	})
 	if err != nil {
-		return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, err
+		return result.Messages, result.Deliveries, result.NotificationIDs, result.Steering, result.Turn, err
 	}
-	return result.Messages, result.Deliveries, result.NotificationIDs, result.Turn, nil
+	return result.Messages, result.Deliveries, result.NotificationIDs, result.Steering, result.Turn, nil
 }
 
 // RespondQuestions delivers structured user answers to the pending session
@@ -971,6 +1002,19 @@ func (p *Pipeline) notificationCommit(ids []uint) func(*gorm.DB) error {
 	}
 	return func(tx *gorm.DB) error {
 		return p.notifications.AcknowledgeNotificationsTx(tx, ids)
+	}
+}
+
+func (p *Pipeline) acknowledgeSteering(ctx context.Context, values []agent.Steering) {
+	if p.steering == nil {
+		return
+	}
+	runID, ok := toolkit.ChatRunIDFromContext(ctx)
+	if !ok {
+		return
+	}
+	for _, value := range values {
+		p.steering.AcknowledgeSteering(runID, value)
 	}
 }
 

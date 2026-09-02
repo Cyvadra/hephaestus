@@ -176,6 +176,107 @@ func TestRun_NormalCompletion(t *testing.T) {
 	}
 }
 
+func TestRun_NormalSteeringAppendsToFirstToolResult(t *testing.T) {
+	var execs []string
+	fake := &fakeLLM{responses: []*ds4.ChatResponse{
+		respWith([]ds4.ToolCall{toolCall("call-1", "echo", "")}, ""),
+		respWith(nil, "done"),
+	}}
+	runner := testRunner(fake, nil)
+	turn := plugin.TurnContext{SessionID: 7, Scope: toolkit.ScopeSession, Messages: []store.ChatMessage{{Role: ds4.RoleUser, Content: "hi"}}, Metadata: map[string]any{}}
+	req := sessionRequest(fake, []toolkit.Tool{echoTool{name: "echo", execs: &execs}}, turn)
+	req.ClaimSteering = func() (*Steering, error) {
+		return &Steering{Text: "focus on tests"}, nil
+	}
+
+	result, err := runner.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := strings.Join(execs, ","); got != "echo" {
+		t.Fatalf("executed %q, want echo", got)
+	}
+	if len(result.Messages) < 2 {
+		t.Fatalf("messages = %+v", result.Messages)
+	}
+	content := result.Messages[1].Content
+	if !strings.Contains(content, "ran echo") || !strings.Contains(content, `<user-steering mode="normal">`) || !strings.Contains(content, "focus on tests") {
+		t.Fatalf("tool result %q does not contain normal steering", content)
+	}
+}
+
+func TestRun_AggressiveSteeringSkipsFirstTool(t *testing.T) {
+	var execs []string
+	fake := &fakeLLM{responses: []*ds4.ChatResponse{
+		respWith([]ds4.ToolCall{toolCall("call-1", "echo", "")}, ""),
+		respWith(nil, "done"),
+	}}
+	runner := testRunner(fake, nil)
+	turn := plugin.TurnContext{SessionID: 7, Scope: toolkit.ScopeSession, Messages: []store.ChatMessage{{Role: ds4.RoleUser, Content: "hi"}}, Metadata: map[string]any{}}
+	req := sessionRequest(fake, []toolkit.Tool{echoTool{name: "echo", execs: &execs}}, turn)
+	req.ClaimSteering = func() (*Steering, error) {
+		return &Steering{Text: "stop the command", Aggressive: true}, nil
+	}
+
+	result, err := runner.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(execs) != 0 {
+		t.Fatalf("aggressive steering executed tools: %v", execs)
+	}
+	if len(result.Messages) < 2 {
+		t.Fatalf("messages = %+v", result.Messages)
+	}
+	content := result.Messages[1].Content
+	if strings.Contains(content, "ran echo") || !strings.Contains(content, `mode="aggressive"`) || !strings.Contains(content, `tool-execution="skipped"`) {
+		t.Fatalf("tool result %q does not contain only aggressive steering", content)
+	}
+}
+
+func TestRun_NormalSteeringSubmittedDuringToolExecutionAppendsToResult(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	fake := &fakeLLM{responses: []*ds4.ChatResponse{
+		respWith([]ds4.ToolCall{toolCall("call-1", "blocking", "")}, ""),
+		respWith(nil, "done"),
+	}}
+	runner := testRunner(fake, nil)
+	turn := plugin.TurnContext{SessionID: 7, Scope: toolkit.ScopeSession, Messages: []store.ChatMessage{{Role: ds4.RoleUser, Content: "hi"}}, Metadata: map[string]any{}}
+	var normalSteering *Steering
+	req := sessionRequest(fake, []toolkit.Tool{blockingTool{started: started, release: release}}, turn)
+	req.ClaimSteering = func() (*Steering, error) { return nil, nil }
+	req.ClaimNormalSteering = func() (*Steering, error) {
+		claimed := normalSteering
+		normalSteering = nil
+		return claimed, nil
+	}
+
+	type outcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := runner.Run(context.Background(), req)
+		done <- outcome{result: result, err: err}
+	}()
+	<-started
+	normalSteering = &Steering{Text: "Marco!"}
+	close(release)
+	completed := <-done
+	if completed.err != nil {
+		t.Fatalf("Run: %v", completed.err)
+	}
+	if len(completed.result.Messages) < 2 {
+		t.Fatalf("messages = %+v", completed.result.Messages)
+	}
+	content := completed.result.Messages[1].Content
+	if !strings.Contains(content, "finished") || !strings.Contains(content, `<user-steering mode="normal">`) || !strings.Contains(content, "Marco!") {
+		t.Fatalf("tool result %q does not include submitted steering", content)
+	}
+}
+
 func TestRun_ToolCallCycle(t *testing.T) {
 	var execs []string
 	fake := &fakeLLM{responses: []*ds4.ChatResponse{

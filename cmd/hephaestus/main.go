@@ -211,6 +211,7 @@ func main() {
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
 	pipeline.SetNotificationSource(subagentSvc)
 	chatRunSvc := chatrun.New(db)
+	pipeline.SetSteeringSource(chatRunSvc)
 	if err := chatRunSvc.Reconcile(); err != nil {
 		log.Fatalf("chat runs: reconcile stale runs: %v", err)
 	}
@@ -222,9 +223,25 @@ func main() {
 	// idle (or that were rebuilt by subagent Reconcile above).
 	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
 	subagentSvc.SetOnCompletion(dispatcher.Deliver)
+	steeringFallback := func(sessionID uint) func(string) chatrun.Execute {
+		return func(text string) chatrun.Execute {
+			return func(turnCtx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
+				result, runErr := pipeline.Run(turnCtx, sessionID, text, chat.TurnOptions{OnDelta: onDelta})
+				if result == nil || result.Message == nil {
+					return nil, runErr
+				}
+				return &chatrun.Result{FinalMessageID: &result.Message.ID, Response: map[string]any{"content": result.Message.Content}}, runErr
+			}
+		}
+	}
 	chatRunSvc.SetOnRunEnded(func(chatRunID, sessionID uint, status store.ChatRunStatus) {
 		if status == store.ChatRunCancelled || status == store.ChatRunInterrupted {
 			subagentSvc.CancelByParentChatRun(chatRunID)
+		}
+		if sessionRow, err := sessions.Get(sessionID); err != nil {
+			log.Printf("steering: load session %d for fallback: %v", sessionID, err)
+		} else if _, _, err := chatRunSvc.StartSteeringFallback(chatRunID, sessionID, sessionRow.ProjectID, map[string]any{"steering_fallback": true}, steeringFallback(sessionID)); err != nil {
+			log.Printf("steering: start fallback for run %d: %v", chatRunID, err)
 		}
 		dispatcher.Deliver(sessionID)
 	})
@@ -233,6 +250,7 @@ func main() {
 	}
 	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
 	commands.SetRunCanceler(chatRunSvc.CancelSession)
+	commands.SetSteeringController(chatRunSvc.PutSteering, chatRunSvc.CancelSteering)
 	var configuredChannels []channels.Channel
 	if cfg.QQAppID != "" {
 		qqChannel, err := channels.New("qq", channelqq.Config{

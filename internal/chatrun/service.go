@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/agent"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/runctrl"
+	"github.com/Cyvadra/hephaestus/internal/steering"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -54,8 +56,9 @@ type Subscription struct {
 
 // Service runs chat turns outside individual HTTP request lifetimes.
 type Service struct {
-	db   *gorm.DB
-	ctrl *runctrl.Controller
+	db       *gorm.DB
+	ctrl     *runctrl.Controller
+	steering *steering.Manager
 
 	mu           sync.Mutex
 	subs         map[uint]map[chan ProgressEvent]struct{}
@@ -76,7 +79,94 @@ func (s *Service) SetOnRunEnded(fn func(runID, sessionID uint, status store.Chat
 }
 
 func New(db *gorm.DB) *Service {
-	return &Service{db: db, ctrl: runctrl.New(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}}
+	return &Service{db: db, ctrl: runctrl.New(), steering: steering.NewManager(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}}
+}
+
+// PutSteering creates or replaces the pending instruction for the session's
+// currently active run.
+func (s *Service) PutSteering(sessionID uint, text string, mode steering.Mode) (steering.Outcome, uint, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, err := s.ActiveForSession(sessionID)
+	if err != nil {
+		return "", 0, err
+	}
+	if run.Status == store.ChatRunCancelling {
+		return "", 0, ErrRunFinished
+	}
+	outcome, err := s.steering.Put(run.ID, sessionID, text, mode)
+	return outcome, run.ID, err
+}
+
+// GetSteering returns the replaceable instruction for the active run.
+func (s *Service) GetSteering(sessionID uint) (steering.Pending, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, err := s.ActiveForSession(sessionID)
+	if err != nil {
+		return steering.Pending{}, false, err
+	}
+	pending, ok := s.steering.Get(run.ID)
+	return pending, ok, nil
+}
+
+// CancelSteering removes the active run's unclaimed instruction.
+func (s *Service) CancelSteering(sessionID uint) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, err := s.ActiveForSession(sessionID)
+	if err != nil {
+		return false, err
+	}
+	return s.steering.Cancel(run.ID), nil
+}
+
+// ClaimSteering adapts a run-scoped lease to the reusable agent API.
+func (s *Service) ClaimSteering(runID uint) (*agent.Steering, error) {
+	lease, ok := s.steering.Claim(runID)
+	if !ok {
+		return nil, nil
+	}
+	return &agent.Steering{Token: lease.Token, Text: lease.Text, Aggressive: lease.Mode == steering.ModeAggressive}, nil
+}
+
+// ClaimNormalSteering claims a Normal instruction after a tool completes.
+func (s *Service) ClaimNormalSteering(runID uint) (*agent.Steering, error) {
+	lease, ok := s.steering.ClaimNormal(runID)
+	if !ok {
+		return nil, nil
+	}
+	return &agent.Steering{Token: lease.Token, Text: lease.Text}, nil
+}
+
+// AcknowledgeSteering confirms that the tool result carrying the instruction
+// was durably persisted in the transcript.
+func (s *Service) AcknowledgeSteering(runID uint, value agent.Steering) {
+	s.steering.Acknowledge(steering.Lease{Pending: steering.Pending{RunID: runID}, Token: value.Token})
+}
+
+// ReleaseSteering returns an unpersisted claimed instruction to the pending
+// slot, preserving it for a later tool boundary or fallback turn.
+func (s *Service) ReleaseSteering(runID uint, value agent.Steering) {
+	s.steering.Release(steering.Lease{Pending: steering.Pending{RunID: runID}, Token: value.Token})
+}
+
+// StartSteeringFallback atomically hands unresolved steering from a terminal
+// run to its successor. The instruction remains available when creating the
+// successor fails, so callers can retry rather than silently losing input.
+func (s *Service) StartSteeringFallback(sourceRunID, sessionID, projectID uint, request map[string]any, execute func(string) Execute) (*store.ChatRun, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending, ok := s.steering.Get(sourceRunID)
+	if !ok {
+		return nil, false, nil
+	}
+	run, err := s.startLocked(sessionID, projectID, nil, store.ChatRunMessage, request, execute(pending.Text))
+	if err != nil {
+		return nil, false, err
+	}
+	s.steering.Finish(sourceRunID)
+	return run, true, nil
 }
 
 // Start creates one pending run and executes it in a background goroutine.
@@ -92,11 +182,14 @@ func (s *Service) StartSubagent(sessionID, projectID, subagentRunID uint, reques
 
 func (s *Service) start(sessionID, projectID uint, subagentRunID *uint, kind store.ChatRunKind, request map[string]any, execute Execute) (*store.ChatRun, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.startLocked(sessionID, projectID, subagentRunID, kind, request, execute)
+}
+
+func (s *Service) startLocked(sessionID, projectID uint, subagentRunID *uint, kind store.ChatRunKind, request map[string]any, execute Execute) (*store.ChatRun, error) {
 	if s.shuttingDown {
-		s.mu.Unlock()
 		return nil, ErrShuttingDown
 	}
-	defer s.mu.Unlock()
 
 	run := &store.ChatRun{
 		SessionID:     sessionID,

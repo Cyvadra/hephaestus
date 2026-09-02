@@ -20,6 +20,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
+	"github.com/Cyvadra/hephaestus/internal/steering"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/transform"
@@ -57,15 +58,17 @@ const (
 // Service dispatches slash commands against the platform's static registry
 // and runtime store.
 type Service struct {
-	registries   *registry.Store
-	toolReg      *toolkit.Registry
-	pluginReg    *plugin.Registry
-	sessions     *session.Service
-	notifier     *notify.Notifier
-	db           *gorm.DB
-	projects     *project.Service
-	interactions *interaction.Manager
-	runCanceler  func(uint) error
+	registries     *registry.Store
+	toolReg        *toolkit.Registry
+	pluginReg      *plugin.Registry
+	sessions       *session.Service
+	notifier       *notify.Notifier
+	db             *gorm.DB
+	projects       *project.Service
+	interactions   *interaction.Manager
+	runCanceler    func(uint) error
+	putSteering    func(uint, string, steering.Mode) (steering.Outcome, uint, error)
+	cancelSteering func(uint) (bool, error)
 
 	mu       sync.Mutex
 	lastList map[uint]map[Kind][]string
@@ -137,6 +140,15 @@ func (s *Service) SetRunCanceler(cancel func(uint) error) {
 	s.mu.Unlock()
 }
 
+// SetSteeringController registers the active-run steering operations used by
+// the transport-neutral /steer command.
+func (s *Service) SetSteeringController(put func(uint, string, steering.Mode) (steering.Outcome, uint, error), cancel func(uint) (bool, error)) {
+	s.mu.Lock()
+	s.putSteering = put
+	s.cancelSteering = cancel
+	s.mu.Unlock()
+}
+
 func (s *Service) currentRegistry() *registry.Registry {
 	return s.registries.Current()
 }
@@ -156,6 +168,7 @@ var commandDefinitions = []commandDefinition{
 	{name: "help", help: "show this help"},
 	{name: "ping", help: "platform health"},
 	{name: "stop", help: "stop the current task"},
+	{name: "steer", help: "send an instruction to the running task"},
 	{name: "status", help: "session info, context usage, recent warnings"},
 	{name: "list", help: "list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)"},
 	{name: "detail", help: "show details of one option"},
@@ -235,6 +248,8 @@ func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text
 		response = "pong"
 	case "/stop":
 		response = s.stop(sessionID)
+	case "/steer":
+		response, err = s.steer(sessionID, args)
 	case "/status":
 		response, err = s.status(sessionID)
 	case "/list":
@@ -263,6 +278,44 @@ func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text
 		err = fmt.Errorf("command: unknown command %q", name)
 	}
 	return Result{Response: response, SessionTarget: target, ReplayedMessages: replayed, Edit: edit}, err
+}
+
+func (s *Service) steer(sessionID uint, args []string) (string, error) {
+	s.mu.Lock()
+	put := s.putSteering
+	cancel := s.cancelSteering
+	s.mu.Unlock()
+	if put == nil || cancel == nil {
+		return "", fmt.Errorf("command: steering is unavailable")
+	}
+	if len(args) == 1 && args[0] == "cancel" {
+		cancelled, err := cancel(sessionID)
+		if err != nil {
+			return "", err
+		}
+		if !cancelled {
+			return "", fmt.Errorf("command: no replaceable steering is pending")
+		}
+		return "Pending steering cancelled.", nil
+	}
+
+	mode := steering.ModeNormal
+	if len(args) > 0 && (args[0] == string(steering.ModeNormal) || args[0] == string(steering.ModeAggressive)) {
+		mode = steering.Mode(args[0])
+		args = args[1:]
+	}
+	text := strings.TrimSpace(strings.Join(args, " "))
+	if text == "" {
+		return "", fmt.Errorf("command: usage: /steer [normal|aggressive] <text> | /steer cancel")
+	}
+	outcome, _, err := put(sessionID, text, mode)
+	if err != nil {
+		return "", err
+	}
+	if outcome == steering.OutcomeReplaced {
+		return "Steering updated; the previous pending instruction was replaced.", nil
+	}
+	return "Steering queued.", nil
 }
 
 func (s *Service) edit(sessionID uint, args []string) (*EditRequest, error) {
