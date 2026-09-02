@@ -1,4 +1,4 @@
-import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
+import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, SteeringMode, SteeringResponse, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
 import { authFetch } from './auth'
 
 const BASE = '/api/v1'
@@ -98,6 +98,26 @@ export const getSubagentRun = (runId: number, signal?: AbortSignal) =>
 
 export const getActiveChatRun = (sessionId: number) =>
   fetchJSON<ChatRun>(`${BASE}/sessions/${sessionId}/chat-run`)
+
+export const getSteering = async (sessionId: number): Promise<SteeringResponse | null> => {
+  const res = await authFetch(`${BASE}/sessions/${sessionId}/chat-run/steering`)
+  if (res.status === 204) return null
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(body.error ?? res.statusText)
+  }
+  return res.json() as Promise<SteeringResponse>
+}
+
+export const putSteering = (sessionId: number, text: string, mode: SteeringMode) =>
+  fetchJSON<SteeringResponse>(`${BASE}/sessions/${sessionId}/chat-run/steering`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, mode }),
+  })
+
+export const cancelSteering = (sessionId: number) =>
+  fetchJSON<SteeringResponse>(`${BASE}/sessions/${sessionId}/chat-run/steering`, { method: 'DELETE' })
 
 export const startChatRun = (sessionId: number, kind: ChatRunKind, text: string, options: GenerationOptions, messageId?: number, activeLeafMessageId?: number | null) =>
   fetchJSON<ChatRun | SendMessageResponse>(`${BASE}/sessions/${sessionId}/chat-runs`, {

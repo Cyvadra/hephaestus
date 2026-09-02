@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cancelActiveChatRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSubagentRun, listConcierges, respondToInteraction, respondToQuestions, setAutomaticApproval, updateSession } from '../api/client'
+import { cancelActiveChatRun, cancelSteering, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, setAutomaticApproval, updateSession } from '../api/client'
 import { authFetch } from '../api/auth'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
-import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
+import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, SteeringMode, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
 import Composer, { type AuthorizationMode } from './Composer'
@@ -26,6 +26,13 @@ interface UserMessageNavigationItem {
   id: number
   summary: string
   index: number
+}
+
+interface PendingSteering {
+  sessionId: number
+  runId: number
+  text: string
+  mode: SteeringMode
 }
 
 function authorizationPreferenceStorageKey(project: string): string {
@@ -137,6 +144,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [streaming, setStreaming] = useState(false)
   const [streamingText, setStreamingText] = useState('')
   const [streamingActivities, setStreamingActivities] = useState<StreamActivity[]>([])
+  const [steeringMode, setSteeringMode] = useState<SteeringMode>('normal')
+  const [pendingSteering, setPendingSteering] = useState<PendingSteering | null>(null)
   const [optimisticUserMessage, setOptimisticUserMessage] = useState<ChatMessage | null>(null)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<number | null>(null)
   const [continuingMessageId, setContinuingMessageId] = useState<number | null>(null)
@@ -256,6 +265,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setReplayedMessages([])
     setError(null)
     setUploadWarnings([])
+    setPendingSteering(null)
     return () => controller.abort()
   }, [resolvedSessionId, loadHistory])
 
@@ -267,7 +277,15 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const epoch = viewEpochRef.current
     const isCurrent = () => !disposed && !controller.signal.aborted && epoch === viewEpochRef.current && currentSessionRef.current === resolvedSessionId
     void getActiveChatRun(resolvedSessionId).then(async run => {
-    if (!isCurrent()) return
+      if (!isCurrent()) return
+      const steering = await getSteering(resolvedSessionId).catch((cause: unknown) => {
+        if (isCurrent()) setError(String(cause))
+        return null
+      })
+      if (!isCurrent()) return
+      setPendingSteering(steering?.run_id == null || steering.text == null || steering.mode == null
+        ? null
+        : { sessionId: resolvedSessionId, runId: steering.run_id, text: steering.text, mode: steering.mode })
       setStreaming(true)
       streamAbortRef.current = controller
       streamSessionRef.current = resolvedSessionId
@@ -562,7 +580,40 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setDraftPlugins(newSessionConcierge.default_plugins)
   }, [newSessionConcierge, resolvedSessionId])
 
+  const stopActiveRun = useCallback(async () => {
+    if (resolvedSessionId == null) return
+    try {
+      streamAbortRef.current?.abort()
+      setStreaming(false)
+      setPendingSteering(null)
+      setStreamingText('')
+      setStreamingActivities([])
+      setOptimisticUserMessage(null)
+      await cancelActiveChatRun(resolvedSessionId)
+    } catch (cause) {
+      setError(String(cause))
+    }
+  }, [resolvedSessionId])
+
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
+    const isCommand = text.trimStart().startsWith('/')
+    if (streaming && resolvedSessionId != null && text.trim() === '/stop') {
+      await stopActiveRun()
+      return
+    }
+    if (streaming && resolvedSessionId != null && !isCommand) {
+      const targetSessionId = resolvedSessionId
+      const epoch = viewEpochRef.current
+      try {
+        const response = await putSteering(targetSessionId, text, steeringMode)
+        if (currentSessionRef.current !== targetSessionId || epoch !== viewEpochRef.current || response.run_id == null) return
+        setPendingSteering({ sessionId: targetSessionId, runId: response.run_id, text: response.text ?? text, mode: response.mode ?? steeringMode })
+        setPendingFiles([])
+      } catch (cause) {
+        if (currentSessionRef.current === targetSessionId && epoch === viewEpochRef.current) setError(String(cause))
+      }
+      return
+    }
     if (resolvedSessionId == null && text.trimStart().startsWith('/stop')) {
       return
     }
@@ -654,12 +705,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       if (!completed && !switchedSession && targetSessionId != null && currentSessionRef.current === targetSessionId) await loadHistory(targetSessionId)
       if (currentSessionRef.current === targetSessionId) {
         setStreaming(false)
+		setPendingSteering(null)
         setStreamingText('')
         setStreamingActivities([])
         setOptimisticUserMessage(null)
       }
     }
-  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, t])
+  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, t])
 
   const runExistingSessionStream = useCallback(async (
     messageId: number,
@@ -705,6 +757,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       if (currentSessionRef.current === resolvedSessionId) {
         if (!completed) await loadHistory(resolvedSessionId)
         setStreaming(false)
+		setPendingSteering(null)
         setStreamingText('')
         setStreamingActivities([])
         setActiveMessageId(null)
@@ -757,18 +810,30 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   }, [resolvedSessionId, localLeafId, loadHistory])
 
   const handleStop = useCallback(async () => {
-    if (resolvedSessionId == null) return
+    await stopActiveRun()
+  }, [stopActiveRun])
+
+  const handleCancelSteering = useCallback(async () => {
+    if (pendingSteering == null || resolvedSessionId !== pendingSteering.sessionId) return
+    const { sessionId: targetSessionId, runId } = pendingSteering
+    const epoch = viewEpochRef.current
     try {
-    streamAbortRef.current?.abort()
-    setStreaming(false)
-    setStreamingText('')
-    setStreamingActivities([])
-    setOptimisticUserMessage(null)
-      await cancelActiveChatRun(resolvedSessionId)
+      await cancelSteering(targetSessionId)
+      if (currentSessionRef.current === targetSessionId && epoch === viewEpochRef.current) setPendingSteering(null)
     } catch (cause) {
-      setError(String(cause))
+      try {
+        const current = await getSteering(targetSessionId)
+        if (currentSessionRef.current === targetSessionId && epoch === viewEpochRef.current) {
+          setPendingSteering(current?.run_id === runId && current.text != null && current.mode != null
+            ? { sessionId: targetSessionId, runId, text: current.text, mode: current.mode }
+            : null)
+        }
+      } catch {
+        // Preserve the original failure when state refresh is unavailable.
+      }
+      if (currentSessionRef.current === targetSessionId && epoch === viewEpochRef.current) setError(String(cause))
     }
-  }, [resolvedSessionId])
+  }, [pendingSteering, resolvedSessionId])
 
   const handleForkAtMessage = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null || streaming || forking) return
@@ -1056,6 +1121,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onCommandHelpRequest={handleCommandHelpRequest}
         disabled={streaming}
         onStop={handleStop}
+    steeringMode={steeringMode}
+    onSteeringModeChange={setSteeringMode}
+    pendingSteering={pendingSteering?.text ?? null}
+    onCancelSteering={handleCancelSteering}
         files={pendingFiles}
         onFilesChange={handleFilesChange}
         generationOptions={generationOptions}

@@ -137,6 +137,15 @@ export interface ChatRunDone {
   response: SendMessageResponse
 }
 
+export type SteeringMode = 'normal' | 'aggressive'
+
+export interface SteeringResponse {
+  status: 'queued' | 'replaced' | 'cancelled'
+  run_id?: number
+  text?: string
+  mode?: SteeringMode
+}
+
 export interface PermissionInteractionRequest {
   id: number
   session_id: number

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowUp, Blocks, Check, ShieldCheck, Wrench, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { GenerationOptions, ReasoningEffort } from '../api/types'
+import type { GenerationOptions, ReasoningEffort, SteeringMode } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
 
 export type AuthorizationMode = 'timeoutDeny' | 'askEachTime' | 'allowAll'
@@ -13,6 +13,10 @@ interface Props {
   commandHelpLoading: boolean
   onCommandHelpRequest: () => void
   onStop: () => void
+  steeringMode: SteeringMode
+  onSteeringModeChange: (mode: SteeringMode) => void
+  pendingSteering: string | null
+  onCancelSteering: () => void
   disabled: boolean
   files: File[]
   onFilesChange: (files: File[]) => void
@@ -47,7 +51,7 @@ function getStoredSendShortcut(): SendShortcut {
   return sendShortcutChoices.includes(stored as SendShortcut) ? stored as SendShortcut : 'enter'
 }
 
-export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, authorizationDisabled, onAuthorizationModeChange }: Props) {
+export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, steeringMode, onSteeringModeChange, pendingSteering, onCancelSteering, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, authorizationDisabled, onAuthorizationModeChange }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -92,7 +96,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
 
   const submit = () => {
     const t = text.trim()
-    if (!t || disabled) return
+    if (!t) return
     onSend(t, files)
     setText('')
     onFilesChange([])
@@ -157,6 +161,15 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
             ))}
           </div>
         )}
+        {disabled && pendingSteering && (
+          <div className="composer-steering-pending" aria-live="polite">
+            <span className="composer-steering-pending-label">{t('chat.compose.steeringPending')}</span>
+            <span className="composer-steering-pending-text" title={pendingSteering}>{pendingSteering}</span>
+            <button type="button" onClick={onCancelSteering} title={t('chat.compose.steeringCancel')} aria-label={t('chat.compose.steeringCancel')}>
+              <X aria-hidden="true" size={14} />
+            </button>
+          </div>
+        )}
         {isCommand && (
           <div className="command-suggestions" role="listbox" aria-label={t('chat.command.suggestions')}>
             {commandHelpLoading ? <span className="command-suggestions-status">{t('chat.command.loading')}</span> : commandSuggestions.length > 0 ? (
@@ -192,7 +205,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
             value={text}
             onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}
-            disabled={disabled && !text.startsWith('/')}
+            disabled={false}
             placeholder={disabled ? t('chat.compose.generating') : t('chat.compose.placeholder')}
             rows={3}
             className="composer-textarea"
@@ -282,11 +295,25 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                 />
               )}
             </div>
+            {text.trim() && (
             <div className="composer-submit-controls">
               {disabled ? (
-                <button type="button" onClick={onStop} className="composer-stop-btn">
-                  {t('chat.compose.stop')}
-                </button>
+                <>
+                  <div className="composer-steering-modes" role="group" aria-label={t('chat.compose.steeringMode')}>
+                    <button type="button" className={steeringMode === 'normal' ? 'active' : ''} aria-pressed={steeringMode === 'normal'} onClick={() => onSteeringModeChange('normal')}>
+                      {t('chat.compose.steeringNormal')}
+                    </button>
+                    <button type="button" className={steeringMode === 'aggressive' ? 'active' : ''} aria-pressed={steeringMode === 'aggressive'} onClick={() => onSteeringModeChange('aggressive')}>
+                      {t('chat.compose.steeringAggressive')}
+                    </button>
+                  </div>
+                  <button type="button" onClick={submit} disabled={!text.trim()} className="composer-send-btn composer-send-icon-btn" aria-label={t('chat.compose.send')} title={t('chat.compose.send')}>
+                    <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
+                  </button>
+                  <button type="button" onClick={onStop} className="composer-stop-btn">
+                    {t('chat.compose.stop')}
+                  </button>
+                </>
               ) : (
                 <>
                 <input ref={fileInputRef} type="file" multiple hidden onChange={event => onFilesChange([...files, ...Array.from(event.target.files ?? [])])} />
@@ -329,6 +356,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                 </>
               )}
             </div>
+            )}
           </div>
         </div>
       </div>
