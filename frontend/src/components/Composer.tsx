@@ -295,10 +295,10 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                 />
               )}
             </div>
-            {text.trim() && (
             <div className="composer-submit-controls">
               {disabled ? (
                 <>
+                  {text.trim() && (
                   <div className="composer-steering-modes" role="group" aria-label={t('chat.compose.steeringMode')}>
                     <button type="button" className={steeringMode === 'normal' ? 'active' : ''} aria-pressed={steeringMode === 'normal'} onClick={() => onSteeringModeChange('normal')}>
                       {t('chat.compose.steeringNormal')}
@@ -307,6 +307,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                       {t('chat.compose.steeringAggressive')}
                     </button>
                   </div>
+                  )}
                   <button type="button" onClick={submit} disabled={!text.trim()} className="composer-send-btn composer-send-icon-btn" aria-label={t('chat.compose.send')} title={t('chat.compose.send')}>
                     <ArrowUp aria-hidden="true" size={18} strokeWidth={2.5} />
                   </button>
@@ -356,7 +357,6 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                 </>
               )}
             </div>
-            )}
           </div>
         </div>
       </div>
