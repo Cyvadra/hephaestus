@@ -1,4 +1,4 @@
-import { startChatRun, startChatRunWithFiles } from './client'
+import { startChatRun, startChatRunWithFiles, startConfigurationCompletion, type ConfigurationCompletionRequest } from './client'
 import { authFetch } from './auth'
 import type { ChatRun, ChatRunDone, GenerationOptions, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
 
@@ -14,6 +14,11 @@ export type StreamEvent =
   | { sequence: number; type: 'done'; data: ChatRunDone }
   | { sequence: number; type: 'error'; data: string }
   | { sequence: number; type: 'snapshot'; data: ChatRun }
+
+export type ConfigurationCompletionEvent =
+  | { sequence: number; type: 'delta'; data: string }
+  | { sequence: number; type: 'done' }
+  | { sequence: number; type: 'error'; data: string }
 
 interface EventEnvelope {
   sequence: number
@@ -77,6 +82,48 @@ export async function* streamContinue(sessionId: number, messageId: number, opti
 
 export async function* streamRun(runId: number, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   yield* streamResponse(`/api/v1/chat-runs/${runId}/stream`, { signal })
+}
+
+export async function* streamConfigurationCompletion(request: ConfigurationCompletionRequest, signal?: AbortSignal): AsyncGenerator<ConfigurationCompletionEvent> {
+  yield* streamConfigurationResponse(startConfigurationCompletion(request, signal), signal)
+}
+
+async function* streamConfigurationResponse(responsePromise: Promise<Response>, signal?: AbortSignal): AsyncGenerator<ConfigurationCompletionEvent> {
+  const res = await responsePromise
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(body.error ?? res.statusText)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let eventName = ''
+  let data = ''
+  let sequence = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      const normalized = line.endsWith('\r') ? line.slice(0, -1) : line
+      if (normalized === '') {
+        if (eventName) {
+          const envelope = JSON.parse(data) as { sequence: number; data: { text?: string; status?: string } | string }
+          if (envelope.sequence !== sequence) throw new Error(`Out-of-order SSE event: expected ${sequence}, received ${envelope.sequence}`)
+          if (eventName === 'delta' && typeof envelope.data !== 'string') yield { sequence, type: 'delta', data: envelope.data.text ?? '' }
+          else if (eventName === 'error') yield { sequence, type: 'error', data: typeof envelope.data === 'string' ? envelope.data : '' }
+          else if (eventName === 'done') yield { sequence, type: 'done' }
+          sequence++
+        }
+        eventName = ''
+        data = ''
+      } else if (normalized.startsWith('event:')) eventName = normalized.slice(6).trim()
+      else if (normalized.startsWith('data:')) data += (data ? '\n' : '') + normalized.slice(5).replace(/^ /, '')
+    }
+  }
+  if (signal?.aborted) return
 }
 
 async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {

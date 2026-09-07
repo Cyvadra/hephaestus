@@ -1,4 +1,4 @@
-import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, SteeringMode, SteeringResponse, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
+import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConfigurationMessage, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, SteeringMode, SteeringResponse, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
 import { authFetch } from './auth'
 
 const BASE = '/api/v1'
@@ -226,6 +226,22 @@ export const deleteConfiguration = async (kind: ConfigurationKind, name: string)
     throw new Error(body.error ?? res.statusText)
   }
 }
+
+export interface ConfigurationCompletionRequest {
+  kind: Extract<ConfigurationKind, 'identities' | 'impressions'>
+  identity?: ConfigurationByKind['identities']
+  base_identity?: ConfigurationByKind['identities']
+  messages: ConfigurationMessage[]
+  user_message: string
+}
+
+export const startConfigurationCompletion = (request: ConfigurationCompletionRequest, signal?: AbortSignal) =>
+  authFetch(`${BASE}/configurations/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
 
 // --- 工作流 / 任务 运行（在线测试与运行记录） ---
 

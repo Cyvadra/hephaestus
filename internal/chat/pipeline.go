@@ -362,6 +362,48 @@ type TurnOptions struct {
 	NotificationIDs   []uint
 }
 
+// CompleteConfiguration generates a reference assistant response for a
+// configuration editor without creating a session turn or running tools.
+func (p *Pipeline) CompleteConfiguration(ctx context.Context, identity registry.Identity, messages []registry.Message, userText string, onDelta func(string)) (string, error) {
+	if strings.TrimSpace(userText) == "" {
+		return "", errors.New("chat: completion user message is empty")
+	}
+	rendered, err := p.registries.Current().RenderIdentity(identity, registry.TimePromptVars(time.Now()))
+	if err != nil {
+		return "", err
+	}
+	contextMessages := make([]store.ChatMessage, 0, len(messages)+1)
+	for index, message := range messages {
+		if !validConfigurationMessageRole(message.Role) {
+			return "", fmt.Errorf("chat: completion message %d has invalid role %q", index+1, message.Role)
+		}
+		renderedContent, renderErr := p.registries.Current().RenderPrompt(message.Content, registry.TimePromptVars(time.Now()))
+		if renderErr != nil {
+			return "", fmt.Errorf("chat: render completion message %d: %w", index+1, renderErr)
+		}
+		contextMessages = append(contextMessages, store.ChatMessage{Role: message.Role, Content: renderedContent})
+	}
+	contextMessages = append(contextMessages, store.ChatMessage{Role: ds4.RoleUser, Content: userText})
+	response, err := p.llm.CallStream(ctx, rendered, contextMessages, nil, func(delta llm.StreamDelta) {
+		if onDelta != nil && delta.Content != "" {
+			onDelta(delta.Content)
+		}
+	})
+	if err != nil {
+		return "", err
+	}
+	return response.Content(), nil
+}
+
+func validConfigurationMessageRole(role string) bool {
+	switch role {
+	case ds4.RoleSystem, ds4.RoleUser, ds4.RoleAssistant:
+		return true
+	default:
+		return false
+	}
+}
+
 func applyTurnOptions(identity registry.Identity, toolset []toolkit.Tool, opts TurnOptions) (registry.Identity, []toolkit.Tool) {
 	if opts.ReasoningEffort != "" {
 		identity.ReasoningEffort = opts.ReasoningEffort

@@ -8,9 +8,92 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/gin-gonic/gin"
 )
+
+type configurationCompletionRequest struct {
+	Kind         registry.Kind       `json:"kind" binding:"required"`
+	Identity     registry.Identity   `json:"identity"`
+	Impression   registry.Impression `json:"impression"`
+	BaseIdentity *registry.Identity  `json:"base_identity"`
+	Messages     []registry.Message  `json:"messages"`
+	UserMessage  string              `json:"user_message" binding:"required"`
+}
+
+// completeConfiguration godoc
+//
+//	@Summary		Complete a configuration message
+//	@Description	Streams a non-persistent assistant reference response using the submitted configuration snapshot.
+//	@Tags		configurations
+//	@Accept		json
+//	@Produce		text/event-stream
+//	@Param		request	body	configurationCompletionRequest	true	"Configuration completion payload"
+//	@Success		200	{string}	string
+//	@Failure		400	{object}	errorResponse
+//	@Router		/configurations/complete [post]
+func (s *Server) completeConfiguration(c *gin.Context) {
+	var req configurationCompletionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if req.Kind != registry.KindIdentity && req.Kind != registry.KindImpression {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "kind must be identities or impressions"})
+		return
+	}
+	identity := req.Identity
+	messages := req.Messages
+	if req.Kind == registry.KindImpression {
+		if req.BaseIdentity == nil || req.BaseIdentity.Name == "" {
+			c.JSON(http.StatusBadRequest, errorResponse{Error: "base_identity is required for impressions"})
+			return
+		}
+		identity = *req.BaseIdentity
+		messages = append([]registry.Message(nil), req.Messages...)
+	}
+	if identity.Name == "" {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "identity is required"})
+		return
+	}
+	if err := validateCompletionMessages(messages); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache, no-transform")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	c.Writer.Flush()
+	sequence := uint64(0)
+	emit := func(event string, data any) {
+		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
+		sequence++
+		c.Writer.Flush()
+	}
+	_, err := s.pipeline.CompleteConfiguration(c.Request.Context(), identity, messages, req.UserMessage, func(delta string) {
+		emit("delta", gin.H{"text": delta})
+	})
+	if err != nil {
+		emit("error", err.Error())
+		return
+	}
+	emit("done", gin.H{"status": "succeeded"})
+}
+
+func validateCompletionMessages(messages []registry.Message) error {
+	for index, message := range messages {
+		switch message.Role {
+		case ds4.RoleSystem, ds4.RoleUser, ds4.RoleAssistant:
+		default:
+			return fmt.Errorf("completion message %d has invalid role %q", index+1, message.Role)
+		}
+	}
+	return nil
+}
 
 // configurationCatalog godoc
 //

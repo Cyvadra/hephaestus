@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Eye, PenLine, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Eye, LoaderCircle, PenLine, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { listProjects } from '../../api/client'
+import { getConfiguration, listProjects } from '../../api/client'
+import { streamConfigurationCompletion } from '../../api/stream'
 import type {
   Configuration,
   ConfigurationByKind,
@@ -54,14 +55,14 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
           <Field label="Top P" htmlFor="top-p"><NumberInput id="top-p" nullable min={0} max={1} step={0.05} value={identity.top_p} onChange={top_p => set({ ...identity, top_p })} /></Field>
         </Section>
         <Section title={t('configuration.form.systemPromptSection')} description={t('configuration.form.markdownSupport')}><Field label={t('configuration.form.systemPrompt')} error={errors.systemPrompt} wide><MarkdownMessageEditor className="configuration-identity-system-prompt" showVariables value={identity.system_prompt} onChange={system_prompt => set({ ...identity, system_prompt })} onNotify={onNotify} ariaLabel={t('configuration.form.systemPrompt')} placeholder={t('configuration.form.messagePlaceholder')} /></Field></Section>
-        <Section title={t('configuration.form.injectedMessages')} description={t('configuration.form.injectedMessagesDescription')}><Field label={t('configuration.form.messages')} error={errors.injectedMessages} wide><MessageEditor values={identity.injected_messages} onChange={injected_messages => set({ ...identity, injected_messages })} onNotify={onNotify} /></Field></Section>
+        <Section title={t('configuration.form.injectedMessages')} description={t('configuration.form.injectedMessagesDescription')}><Field label={t('configuration.form.messages')} error={errors.injectedMessages} wide><MessageEditor kind="identities" identity={identity} values={identity.injected_messages} identities={catalog.identities} onChange={injected_messages => set({ ...identity, injected_messages })} onNotify={onNotify} /></Field></Section>
       </>
     }
     case 'impressions': {
       const impression = value as ConfigurationByKind['impressions']
       return <>
         <Section title={t('configuration.form.basic')}>{name}<Field label={t('configuration.form.enabledStatus')}><Toggle id="impression-enabled" checked={impression.enabled} onChange={enabled => set({ ...impression, enabled })} /></Field><Field label={t('configuration.form.description')} wide><TextArea id="impression-description" value={impression.description} onChange={description => set({ ...impression, description })} /></Field></Section>
-        <Section title={t('configuration.form.messageSequence')}><Field label={t('configuration.form.messages')} error={errors.messages} wide><MessageEditor values={impression.messages} onChange={messages => set({ ...impression, messages })} onNotify={onNotify} /></Field></Section>
+        <Section title={t('configuration.form.messageSequence')}><Field label={t('configuration.form.messages')} error={errors.messages} wide><MessageEditor kind="impressions" identities={catalog.identities} values={impression.messages} onChange={messages => set({ ...impression, messages })} onNotify={onNotify} /></Field></Section>
       </>
     }
     case 'tool-groups': {
@@ -107,7 +108,7 @@ export default function ConfigurationForm({ kind, value, errors, isNew, catalog 
   }
 }
 
-function MessageEditor({ values, onChange, onNotify }: { values: ConfigurationMessage[] | null; onChange: (values: ConfigurationMessage[]) => void; onNotify: Props['onNotify'] }) {
+function MessageEditor({ kind, identity, identities, values, onChange, onNotify }: { kind: 'identities' | 'impressions'; identity?: ConfigurationByKind['identities']; identities: string[]; values: ConfigurationMessage[] | null; onChange: (values: ConfigurationMessage[]) => void; onNotify: Props['onNotify'] }) {
   const { t } = useTranslation()
   const messages = values ?? []
   const blocks = messageBlocks(messages)
@@ -126,7 +127,7 @@ function MessageEditor({ values, onChange, onNotify }: { values: ConfigurationMe
       const [message, answer] = block.messages
       const order = <MessageOrderControls index={blockIndex} total={blocks.length} onMove={move} />
 
-      if (answer) return <QuestionAnswerEditor key={block.start} question={message} answer={answer} number={blockIndex + 1} order={order} onQuestionChange={content => update(block.start, { content })} onAnswerChange={content => update(block.start + 1, { content })} onRemove={() => remove(block.start, 2)} />
+      if (answer) return <QuestionAnswerEditor key={block.start} kind={kind} identity={identity} identities={identities} precedingMessages={messages.slice(0, block.start)} question={message} answer={answer} number={blockIndex + 1} order={order} onQuestionChange={content => update(block.start, { content })} onAnswerChange={content => update(block.start + 1, { content })} onNotify={onNotify} onRemove={() => remove(block.start, 2)} />
 
       return <article className="configuration-instruction-row" key={block.start}>
         <header><span>{message.role === 'system' ? t('configuration.form.instruction') : t('configuration.form.message', { count: block.start + 1 })}</span><select aria-label={t('configuration.form.messageRole', { count: block.start + 1 })} value={message.role} onChange={event => update(block.start, { role: event.target.value })}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option><option value="tool">tool</option></select>{order}<button type="button" aria-label={t('configuration.form.deleteMessage')} title={t('configuration.form.deleteMessage')} onClick={() => remove(block.start)}><Trash2 size={15} /></button></header>
@@ -176,10 +177,55 @@ function MessageOrderControls({ index, total, onMove }: { index: number; total: 
   </div>
 }
 
-function QuestionAnswerEditor({ question, answer, number, order, onQuestionChange, onAnswerChange, onRemove }: { question: ConfigurationMessage; answer: ConfigurationMessage; number: number; order: React.ReactNode; onQuestionChange: (content: string) => void; onAnswerChange: (content: string) => void; onRemove: () => void }) {
+function QuestionAnswerEditor({ kind, identity, identities, precedingMessages, question, answer, number, order, onQuestionChange, onAnswerChange, onNotify, onRemove }: { kind: 'identities' | 'impressions'; identity?: ConfigurationByKind['identities']; identities: string[]; precedingMessages: ConfigurationMessage[]; question: ConfigurationMessage; answer: ConfigurationMessage; number: number; order: React.ReactNode; onQuestionChange: (content: string) => void; onAnswerChange: (content: string) => void; onNotify: Props['onNotify']; onRemove: () => void }) {
   const { t } = useTranslation()
+  const [baseIdentity, setBaseIdentity] = useState('')
+  const [completing, setCompleting] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => abortRef.current?.abort(), [])
+  const complete = async () => {
+    if (completing) return
+    let selectedIdentity = identity
+    if (kind === 'impressions') {
+      if (!baseIdentity) {
+        onNotify('error', t('configuration.form.completionIdentityRequired'))
+        return
+      }
+      try {
+        selectedIdentity = await getConfiguration('identities', baseIdentity)
+      } catch (reason) {
+        onNotify('error', reason instanceof Error ? reason.message : t('configuration.form.completionFailed'))
+        return
+      }
+    }
+    if (!selectedIdentity) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    setCompleting(true)
+    let received = false
+    let completionText = ''
+    try {
+      const request = kind === 'identities'
+        ? { kind, identity: { ...selectedIdentity, injected_messages: [] }, messages: precedingMessages, user_message: question.content }
+        : { kind, base_identity: selectedIdentity, messages: precedingMessages, user_message: question.content }
+      for await (const event of streamConfigurationCompletion(request, controller.signal)) {
+        if (event.type === 'delta') {
+          if (!received) { completionText = ''; received = true }
+          completionText += event.data
+          onAnswerChange(completionText)
+        } else if (event.type === 'error') {
+          throw new Error(event.data || t('configuration.form.completionFailed'))
+        }
+      }
+    } catch (reason) {
+      if (!controller.signal.aborted) onNotify('error', reason instanceof Error ? reason.message : t('configuration.form.completionFailed'))
+    } finally {
+      abortRef.current = null
+      setCompleting(false)
+    }
+  }
   return <article className="configuration-qa-row">
-    <header><span>{t('configuration.form.conversation', { count: number })}</span>{order}<button type="button" aria-label={t('configuration.form.deleteConversation')} title={t('configuration.form.deleteConversation')} onClick={onRemove}><Trash2 size={15} /></button></header>
+    <header><span>{t('configuration.form.conversation', { count: number })}</span>{order}{kind === 'impressions' && <select className="configuration-completion-identity" aria-label={t('configuration.form.completionIdentity')} value={baseIdentity} onChange={event => setBaseIdentity(event.target.value)} disabled={completing}><option value="">{t('configuration.form.selectCompletionIdentity')}</option>{identities.map(name => <option key={name} value={name}>{name}</option>)}</select>}<button type="button" aria-label={completing ? t('configuration.form.cancelCompletion') : t('configuration.form.completeAnswer')} title={completing ? t('configuration.form.cancelCompletion') : t('configuration.form.completeAnswer')} onClick={() => completing ? abortRef.current?.abort() : void complete()}>{completing ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}</button><button type="button" aria-label={t('configuration.form.deleteConversation')} title={t('configuration.form.deleteConversation')} onClick={onRemove}><Trash2 size={15} /></button></header>
     <label className="configuration-qa-question"><span>User</span><AutoResizeTextArea aria-label={t('configuration.form.userQuestion', { count: number })} value={question.content} onChange={onQuestionChange} placeholder={t('configuration.form.userQuestionPlaceholder')} /></label>
     <MarkdownMessageEditor className="configuration-qa-answer" label="Assistant" value={answer.content} onChange={onAnswerChange} ariaLabel={t('configuration.form.assistantAnswer', { count: number })} placeholder={t('configuration.form.assistantAnswerPlaceholder')} />
   </article>
