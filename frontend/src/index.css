@@ -8843,6 +8843,7 @@ body[data-ds-dark-theme] {
 .configuration-overview-heading p { max-width: 580px; margin: 0; color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px }
 .configuration-overview-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0; margin-top: 48px; border-top: 1px solid var(--dsw-alias-border-l1); border-left: 1px solid var(--dsw-alias-border-l1) }
 .configuration-overview-item { display: grid; align-content: start; gap: 8px; min-height: 126px; padding: 16px; border-right: 1px solid var(--dsw-alias-border-l1); border-bottom: 1px solid var(--dsw-alias-border-l1); cursor: pointer }
+.configuration-overview-item.expanded { grid-template-rows: auto auto auto minmax(0,1fr); height: 302px; min-height: 0; box-sizing: border-box; overflow: hidden }
 .configuration-overview-item:focus-visible { z-index: 1; outline: 2px solid color-mix(in srgb,var(--dsw-alias-button-primary-fill) 48%,transparent); outline-offset: -2px }
 .configuration-overview-group { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 4px; color: var(--dsw-alias-label-primary); background: transparent; border: 0; border-radius: 5px; font: inherit; text-align: left; cursor: pointer }
 .configuration-overview-group:hover,.configuration-overview-group:focus-visible { background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 7%,transparent); outline: none }
@@ -8854,7 +8855,7 @@ body[data-ds-dark-theme] {
 .configuration-overview-item > p { min-height: 34px; margin: 0; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 17px }
 .configuration-overview-create { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: max-content; height: 28px; padding: 0 8px; color: var(--dsw-alias-label-secondary); background: transparent; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font: inherit; font-size: 10px; cursor: pointer }
 .configuration-overview-create:hover,.configuration-overview-create:focus-visible { color: var(--dsw-alias-button-primary-fill); border-color: var(--dsw-alias-button-primary-fill); outline: none }
-.configuration-overview-records { display: grid; gap: 3px; max-height: 170px; padding-top: 4px; overflow-y: auto; border-top: 1px solid var(--dsw-alias-border-l1) }
+.configuration-overview-records { display: grid; grid-auto-rows: max-content; align-content: start; min-width: 0; min-height: 0; gap: 3px; padding-top: 4px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--dsw-alias-border-l1) }
 .configuration-overview-records > span { padding: 7px 5px }
 .configuration-overview-records button { overflow: hidden; width: 100%; padding: 7px 8px; color: var(--dsw-alias-label-primary); background: transparent; border: 0; border-radius: 5px; font: inherit; font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer }
 .configuration-overview-records button:hover,.configuration-overview-records button:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none }
