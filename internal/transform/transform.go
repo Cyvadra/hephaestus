@@ -35,6 +35,10 @@ func LimitToolExchangeContent(arguments, content string) string {
 	if remaining <= 0 {
 		return ""
 	}
+	// Tool output (e.g. a shell command run against a binary file) can
+	// contain raw NUL bytes, which Postgres text columns reject outright
+	// (SQLSTATE 22021). Strip them before this content is ever persisted.
+	content = strings.ReplaceAll(content, "\x00", "")
 	return LimitTextBytes(content, remaining)
 }
 

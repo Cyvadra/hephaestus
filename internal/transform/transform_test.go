@@ -70,6 +70,16 @@ func TestLimitToolExchangeContentUsesStrictCombinedLimit(t *testing.T) {
 	}
 }
 
+func TestLimitToolExchangeContentStripsNulBytes(t *testing.T) {
+	got := LimitToolExchangeContent("", "a\x00b\x00c")
+	if strings.Contains(got, "\x00") {
+		t.Fatalf("result = %q, must not contain NUL bytes", got)
+	}
+	if got != "abc" {
+		t.Fatalf("result = %q, want %q", got, "abc")
+	}
+}
+
 func TestLimitToolExchangeContentOmitsResultWhenArgumentsFillBudget(t *testing.T) {
 	if got := LimitToolExchangeContent(strings.Repeat("a", MaxToolExchangeBytes-1), "result"); got != "" {
 		t.Fatalf("result = %q, want empty", got)
