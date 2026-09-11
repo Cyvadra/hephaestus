@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cancelActiveChatRun, cancelSteering, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, setAutomaticApproval, updateSession } from '../api/client'
@@ -183,6 +184,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const createdSessionRef = useRef<number | null>(null)
   const cancelledTitleEditRef = useRef(false)
   const lockedUserMessageIdRef = useRef<number | null>(null)
+  const highlightedMessageRef = useRef<number | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const clearStreamingPresentation = useCallback(() => {
     setStreaming(false)
@@ -217,7 +220,10 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setContinuingMessageId(null)
     initializedOptionsSessionRef.current = null
     createdSessionRef.current = null
-    shouldAutoScrollRef.current = true
+    // A pending ?highlight= scrolls to a specific message once messages load,
+    // so the default jump-to-bottom must not fight it on this session's first render.
+    shouldAutoScrollRef.current = new URLSearchParams(window.location.search).get('highlight') == null
+    highlightedMessageRef.current = null
     lockedUserMessageIdRef.current = null
     setPreviousUserMessage(null)
     setShowBackToBottom(false)
@@ -338,10 +344,29 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   // 历史加载 / 切换会话 / 编辑完成：整段内容被替换，直接瞬间跳到最新位置，
   // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。
   useLayoutEffect(() => {
+    if (searchParams.get('highlight') != null && highlightedMessageRef.current == null) return
     if (!shouldAutoScrollRef.current) return
     const pane = messagesPaneRef.current
     if (pane) pane.scrollTop = pane.scrollHeight
-  }, [messages])
+  }, [messages, searchParams])
+
+  // Scroll to and briefly highlight a message deep-linked via ?highlight=,
+  // e.g. from a chat history search result. Guarded by a ref (rather than
+  // just clearing the param) so re-renders while the id is still in flight
+  // don't re-highlight, and clearing the param doesn't need to race removal
+  // of the highlight class.
+  useEffect(() => {
+    const raw = searchParams.get('highlight')
+    const highlightId = raw ? Number(raw) : null
+    if (highlightId == null || Number.isNaN(highlightId) || highlightedMessageRef.current === highlightId) return
+    const el = document.getElementById(`message-${highlightId}`)
+    if (!el) return
+    highlightedMessageRef.current = highlightId
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.classList.add('message-highlighted')
+    window.setTimeout(() => el.classList.remove('message-highlighted'), 2000)
+    setSearchParams(params => { params.delete('highlight'); return params }, { replace: true })
+  }, [messages, searchParams, setSearchParams])
 
   // 流式输出过程中：增量内容很短，平滑跟随到底部更符合直觉。
   useEffect(() => {

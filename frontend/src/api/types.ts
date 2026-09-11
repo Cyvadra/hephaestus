@@ -184,6 +184,15 @@ export interface QuestionAnswer {
   custom_text?: string
 }
 
+export interface MessageSearchResult {
+  message_id: number
+  session_id: number
+  session_title: string
+  role: 'user' | 'assistant' | 'tool' | 'system'
+  timestamp: string
+  snippet: string
+}
+
 export interface HistoryResponse {
   session: Session
   messages: ChatMessage[]

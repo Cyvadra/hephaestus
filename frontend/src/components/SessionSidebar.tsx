@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronRight, Pencil, Pin, Plus, Trash2, Undo2 } from 'lucide-react'
+import { Check, ChevronRight, Pencil, Pin, Plus, Search, Trash2, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { deleteSession, listSessions, updateSession } from '../api/client'
 import type { Session, SubagentRunSummary } from '../api/types'
@@ -9,6 +9,7 @@ import { sessionSubagentRuns, subagentSessionTarget, subagentStatusKey } from '.
 import ProjectSwitcher from './ProjectSwitcher'
 import ConfigurationSidebar, { type ConfigurationLists } from './ConfigurationSidebar'
 import SidebarSettingsMenu from './SidebarSettingsMenu'
+import SearchDialog from './SearchDialog'
 
 interface Props {
   mode: 'chat' | 'configurations'
@@ -19,7 +20,7 @@ interface Props {
   project: string | null
   onProjectChange: (project: string) => void
   onProjectsLoaded: (defaultProject: string) => void
-  onSelect: (id: number) => void
+  onSelect: (id: number, highlightMessageId?: number) => void
   onOpenNewSession: () => void
   onOpenConfigurations: () => void
   onCloseConfigurations: () => void
@@ -39,6 +40,7 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
   const [renamingId, setRenamingId] = useState<number | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<Session | null>(null)
   const [archivedExpanded, setArchivedExpanded] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [expandedSessions, setExpandedSessions] = useState<Set<number>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const reloadControllerRef = useRef<AbortController | null>(null)
@@ -163,7 +165,26 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
       <div className="sidebar-brand">
         <img className="sidebar-brand-icon" src="/deepseek-logo.svg" alt="" />
         <strong>Hephaestus</strong>
+        {mode === 'chat' && project && (
+          <button
+            type="button"
+            className="sidebar-brand-search-btn app-icon-button"
+            aria-label={t('search.title')}
+            title={t('search.title')}
+            onClick={() => setSearchOpen(true)}
+          >
+            <Search aria-hidden="true" size={16} />
+          </button>
+        )}
       </div>
+      {searchOpen && project && (
+        <SearchDialog
+          project={project}
+          onClose={() => setSearchOpen(false)}
+          onSelectSession={id => { setSearchOpen(false); onSelect(id) }}
+          onSelectMessage={(sessionId, messageId) => { setSearchOpen(false); onSelect(sessionId, messageId) }}
+        />
+      )}
       {mode === 'configurations' ? <ConfigurationSidebar
         activeKind={configurationKind}
         activeName={configurationName}

@@ -108,8 +108,11 @@ export default function App() {
     setConfigurationSidebarOpen(false)
   }, [navigate])
 
-  const handleSessionSelect = useCallback((id: number) => {
-    if (project) navigate(routes.chat(project, id))
+  const handleSessionSelect = useCallback((id: number, highlightMessageId?: number) => {
+    if (project) {
+      const path = routes.chat(project, id)
+      navigate(highlightMessageId ? `${path}?highlight=${highlightMessageId}` : path)
+    }
     setSessionSidebarOpen(false)
   }, [navigate, project])
 

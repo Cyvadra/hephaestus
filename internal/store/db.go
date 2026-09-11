@@ -46,6 +46,9 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	if err := recreateActiveChatRunIndex(db); err != nil {
 		return nil, err
 	}
+	if err := ensureSearchIndexes(db); err != nil {
+		return nil, err
+	}
 	for _, model := range []any{
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
@@ -93,6 +96,33 @@ func recreateActiveChatRunIndex(db *gorm.DB) error {
 	}
 	if err := db.Migrator().CreateIndex(&ChatRun{}, index); err != nil {
 		return fmt.Errorf("store: create active chat-run index: %w", err)
+	}
+	return nil
+}
+
+// ensureSearchIndexes enables trigram similarity search and creates GIN
+// indexes backing ILIKE-based chat history search (session title/summary and
+// message content). Trigram matching is chosen over tsvector/ts_rank because
+// it stays consistent with the substring semantics of the existing
+// chat_history_search tool and, unlike Postgres's default text-search
+// configs, works uniformly for non-whitespace-delimited languages such as
+// Chinese. It is a no-op on SQLite, which has no GIN/trigram support and is
+// only used for local/dev/test databases.
+func ensureSearchIndexes(db *gorm.DB) error {
+	if db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).Error; err != nil {
+		return fmt.Errorf("store: enable pg_trgm: %w", err)
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_sessions_title_trgm ON sessions USING gin (title gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_summary_trgm ON sessions USING gin (summary gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_messages_content_trgm ON chat_messages USING gin (content gin_trgm_ops)`,
+	} {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("store: create search index: %w", err)
+		}
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConfigurationMessage, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, Project, SendMessageResponse, Session, SteeringMode, SteeringResponse, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
+import type { ChatRun, ChatRunKind, ConfigurationByKind, ConfigurationCatalog, ConfigurationKind, ConfigurationMessage, ConciergeItem, GenerationOptions, HistoryResponse, JobRun, JobRunDetail, MessageSearchResult, Project, SendMessageResponse, Session, SteeringMode, SteeringResponse, SubagentRunDetail, WorkflowRun, WorkflowRunDetail } from './types'
 import { authFetch } from './auth'
 
 const BASE = '/api/v1'
@@ -30,6 +30,18 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 export const listSessions = (project?: string, signal?: AbortSignal) => {
   const query = project ? `?project=${encodeURIComponent(project)}` : ''
   return fetchJSON<Session[]>(`${BASE}/sessions${query}`, { signal })
+}
+
+export const searchSessions = (project: string, q: string, signal?: AbortSignal) => {
+  const params = new URLSearchParams({ project, q })
+  return fetchJSON<Session[]>(`${BASE}/search/sessions?${params.toString()}`, { signal })
+}
+
+export const searchMessages = (project: string, q: string, limit = 20, offset = 0, signal?: AbortSignal) => {
+  const params = new URLSearchParams({ project, q })
+  if (limit !== 20) params.set('limit', String(limit))
+  if (offset > 0) params.set('offset', String(offset))
+  return fetchJSON<MessageSearchResult[]>(`${BASE}/search/messages?${params.toString()}`, { signal })
 }
 
 export const listProjects = () =>

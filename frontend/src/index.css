@@ -5082,6 +5082,153 @@ body {
     height: 23px
 }
 
+.sidebar-brand-search-btn {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    margin-left: auto;
+}
+
+.search-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    width: min(560px, 100%);
+    max-height: min(70vh, 640px);
+    padding: 16px;
+    color: var(--dsw-alias-label-primary);
+    background: var(--dsw-alias-bg-layer-2);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.15);
+    transform: translate(-50%, -50%);
+}
+
+.search-dialog-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 12px;
+    color: var(--dsw-alias-label-tertiary);
+    background: var(--dsw-alias-bg-base);
+    border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 8px;
+    flex: none;
+}
+
+.search-dialog-input:focus-within {
+    border-color: var(--dsw-alias-button-primary-fill);
+    box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 12%,transparent);
+}
+
+.search-dialog-input input {
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    color: var(--dsw-alias-label-primary);
+    background: transparent;
+    border: 0;
+    outline: 0;
+    font: inherit;
+    font-size: 14px;
+}
+
+.search-dialog-close {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+    flex: none;
+}
+
+.search-dialog-close:hover,.search-dialog-close:focus-visible { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); outline: none }
+
+.search-dialog-results {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 12px;
+    overflow-y: auto;
+}
+
+.search-dialog-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    color: var(--dsw-alias-label-tertiary);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+}
+
+.search-dialog-fulltext-btn {
+    height: 22px;
+    padding: 0 8px;
+    color: var(--dsw-alias-label-secondary);
+    background: transparent;
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 6px;
+    font: inherit;
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: 0;
+    cursor: pointer;
+}
+
+.search-dialog-fulltext-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover) }
+.search-dialog-fulltext-btn:disabled { cursor: not-allowed; opacity: .55 }
+
+.search-dialog-empty {
+    padding: 10px 4px;
+    color: var(--dsw-alias-label-tertiary);
+    font-size: 13px;
+}
+
+.search-result-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 8px 10px;
+    margin-bottom: 2px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.search-result-item:hover,.search-result-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none }
+
+.search-result-title {
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.search-result-snippet {
+    overflow: hidden;
+    color: var(--dsw-alias-label-tertiary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .project-switcher {
     position: relative;
     margin: 2px 0 6px
@@ -5512,6 +5659,8 @@ body {
     padding: 16px;
     background: rgba(0,0,0,.36)
 }
+
+.search-dialog-backdrop { background: transparent }
 
 .session-dialog {
     box-sizing: border-box;
@@ -6092,6 +6241,16 @@ body {
 
 .command-block {
     white-space: pre-wrap
+}
+
+.message-highlighted .message-card,
+.message-highlighted .stored-tool-result {
+    animation: message-highlight-flash 2s ease-out;
+}
+
+@keyframes message-highlight-flash {
+    0% { box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary); background-color: var(--dsw-alias-button-ghost-active-fill); }
+    100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 .message-body {

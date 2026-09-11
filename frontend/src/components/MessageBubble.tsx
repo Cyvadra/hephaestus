@@ -105,7 +105,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
 
   if (isUser) {
     return (
-      <div className="message-row user" data-user-message-id={msg.ID}>
+      <div id={`message-${msg.ID}`} className="message-row user" data-user-message-id={msg.ID}>
         <div className={'message-stack user' + (editing ? ' editing' : '')} style={editing && userEditWidth != null ? { width: `min(100%, ${userEditWidth}px)` } : undefined}>
           {editing ? (
             <div className="message-editor">
@@ -166,7 +166,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
     const canEdit = !Array.isArray(msg.ToolCalls) || msg.ToolCalls.length === 0
 
     return (
-      <div className="message-row assistant">
+      <div id={`message-${msg.ID}`} className="message-row assistant">
         <div className="message-stack">
           {editing ? (
             <div className="message-editor assistant-message-editor">
@@ -277,7 +277,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
 
   if (msg.Role === 'tool') {
     return (
-      <div className="message-row assistant">
+      <div id={`message-${msg.ID}`} className="message-row assistant">
         <details className="stored-tool-result">
           <summary>{t('chat.message.toolResult')}</summary>
           <pre>{msg.Content}</pre>
@@ -288,7 +288,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
 
   if (msg.Role === 'system') {
     return (
-      <div className="message-row assistant">
+      <div id={`message-${msg.ID}`} className="message-row assistant">
         <div className="message-stack">
           <CollapsibleContextPanel
             title={t('chat.message.systemMessage')}
@@ -307,7 +307,7 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   }
 
   return (
-    <div className="message-row assistant">
+    <div id={`message-${msg.ID}`} className="message-row assistant">
       <div className="message-card system">[{msg.Role}] {msg.Content}</div>
     </div>
   )

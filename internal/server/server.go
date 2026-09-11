@@ -71,6 +71,8 @@ func New(authService *auth.Service, registries *registry.Store, sessions *sessio
 	api.GET("/auth/session", s.authSession)
 	api.POST("/auth/logout", s.logout)
 	api.GET("/sessions", s.listSessions)
+	api.GET("/search/sessions", s.searchSessions)
+	api.GET("/search/messages", s.searchMessages)
 	api.POST("/sessions", s.createSession)
 	api.PATCH("/sessions/:id", s.updateSession)
 	api.DELETE("/sessions/:id", s.deleteSession)
