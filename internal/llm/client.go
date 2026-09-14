@@ -23,6 +23,8 @@ import (
 
 const continuationMaxTokens = 8192
 
+var errStreamFinished = errors.New("llm: stream finished")
+
 // Client wraps a ds4.Client with Identity-aware request building.
 type Client struct {
 	ds4 *ds4.Client
@@ -166,6 +168,7 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 	finishReason := ""
 
 	err := builder.StreamWithContext(ctx, func(chunk ds4.ChatStreamChunk) error {
+		finished := false
 		for _, choice := range chunk.Choices {
 			content.WriteString(choice.Delta.Content)
 			reasoning.WriteString(choice.Delta.ReasoningContent)
@@ -199,10 +202,20 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 			}
 			if choice.FinishReason != nil {
 				finishReason = *choice.FinishReason
+				finished = true
 			}
+		}
+		// finish_reason is the protocol-level terminal signal. Do not wait for
+		// a trailing [DONE] marker or EOF: some OpenAI-compatible servers leave
+		// the SSE connection open after sending the complete final chunk.
+		if finished {
+			return errStreamFinished
 		}
 		return nil
 	})
+	if errors.Is(err, errStreamFinished) {
+		err = nil
+	}
 	sort.Ints(toolCallOrder)
 	calls := make([]ds4.ToolCall, 0, len(toolCallOrder))
 	for _, idx := range toolCallOrder {

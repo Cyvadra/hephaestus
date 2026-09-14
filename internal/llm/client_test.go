@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/registry"
@@ -17,6 +18,40 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"gorm.io/datatypes"
 )
+
+func TestCallStreamReturnsOnFinishReasonWithoutDoneOrEOF(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started := time.Now()
+	response, err := client.CallStream(ctx, registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("CallStream() error = %v", err)
+	}
+	if response.Content() != "done" || response.FinishReason() != ds4.FinishReasonStop {
+		t.Fatalf("response = content %q, finish %q", response.Content(), response.FinishReason())
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("CallStream() waited for SSE close after finish_reason: %v", elapsed)
+	}
+}
 
 // exampleTool exercises the toolkit.Example capability: buildChat must append
 // the example to the tool's description when it is registered to a request.
