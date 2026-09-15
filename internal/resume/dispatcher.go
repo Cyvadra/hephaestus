@@ -67,6 +67,15 @@ func (d *Dispatcher) Deliver(sessionID uint) {
 		release()
 		return
 	}
+	// A turn already in flight consumes these through its steer path, so
+	// yield to it rather than letting the insert below fail on the active-run
+	// index. That conflict is still handled as the race fallback, but taking
+	// it as the ordinary path logged the whole notification payload at ERROR
+	// on every spawn-plus-await.
+	if _, err := d.chatRuns.ActiveForSession(sessionID); err == nil {
+		release()
+		return
+	}
 
 	text := subagent.FormatNotifications(notifications)
 	request := map[string]any{"text": text}

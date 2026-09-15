@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,11 @@ import (
 )
 
 const runTimeout = 30 * time.Minute
+
+// snapshotTimeout bounds the terminal-snapshot rebuild so that finalizing a
+// run always reaches a terminal status. The snapshot is a diagnostic
+// aggregate: losing it is strictly better than leaving the row 'running'.
+const snapshotTimeout = 2 * time.Minute
 
 var (
 	ErrRunNotFound  = errors.New("chatrun: run not found")
@@ -319,9 +325,13 @@ func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result,
 	finished := time.Now()
 	update := map[string]any{"status": status, "finished_at": &finished}
 	terminal := &store.ChatRun{ID: runID, Status: status, FinishedAt: &finished}
-	snapshot, snapshotErr := s.snapshot(runID)
+	snapshotCtx, cancelSnapshot := context.WithTimeout(context.Background(), snapshotTimeout)
+	snapshot, snapshotErr := s.snapshot(snapshotCtx, runID)
+	cancelSnapshot()
 	if snapshotErr == nil {
 		update["snapshot"] = datatypes.NewJSONType(snapshot)
+	} else {
+		log.Printf("chatrun: snapshot run %d: %v", runID, snapshotErr)
 	}
 	if result != nil {
 		if result.FinalMessageID != nil {
@@ -351,13 +361,18 @@ func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result,
 	return status, nil
 }
 
-func (s *Service) snapshot(runID uint) (store.ChatRunSnapshot, error) {
+func (s *Service) snapshot(ctx context.Context, runID uint) (store.ChatRunSnapshot, error) {
 	var events []store.ChatRunEvent
-	if err := s.db.Where("run_id = ?", runID).Order("sequence").Find(&events).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("run_id = ?", runID).Order("sequence").Find(&events).Error; err != nil {
 		return store.ChatRunSnapshot{}, err
 	}
 	var snapshot store.ChatRunSnapshot
+	var content, reasoning strings.Builder
+	calls := newToolCallAccumulator()
 	for _, event := range events {
+		if err := ctx.Err(); err != nil {
+			return store.ChatRunSnapshot{}, err
+		}
 		var delta chat.StreamEvent
 		if err := json.Unmarshal(event.Payload, &delta); err != nil {
 			continue
@@ -365,28 +380,104 @@ func (s *Service) snapshot(runID uint) (store.ChatRunSnapshot, error) {
 		snapshot.Sequence = event.Sequence
 		switch delta.Type {
 		case "delta":
-			snapshot.Content += delta.Text
+			content.WriteString(delta.Text)
 		case "reasoning":
-			snapshot.ReasoningContent += delta.Text
+			reasoning.WriteString(delta.Text)
 		case "tool_call", "tool_output", "tool_result":
-			snapshot.ToolCalls = appendJSON(snapshot.ToolCalls, delta.ToolCall)
+			calls.merge(delta.Type, delta.ToolCall)
 		case "ask_permission", "ask_questions":
 			snapshot.Interaction = marshalJSON(delta.Interaction)
 		case "session_updated":
 			snapshot.SessionUpdate = marshalJSON(delta.Session)
 		}
 	}
+	snapshot.Content = content.String()
+	snapshot.ReasoningContent = reasoning.String()
+	snapshot.ToolCalls = calls.encode()
 	return snapshot, nil
 }
 
-func appendJSON(current datatypes.JSON, value any) datatypes.JSON {
-	var values []json.RawMessage
-	_ = json.Unmarshal(current, &values)
-	encoded, err := json.Marshal(value)
-	if err == nil {
-		values = append(values, encoded)
+// toolCallKey identifies one tool invocation within a run. call_index
+// numbers the assistant iteration and index the position within that
+// iteration's parallel tool batch, so the pair is stable across the
+// tool_call, tool_output and tool_result events describing one call.
+type toolCallKey struct {
+	callIndex int
+	index     int
+}
+
+// toolCallEntry accumulates the streamed fragments of a single tool call.
+type toolCallEntry struct {
+	call      chat.StreamToolCall
+	arguments strings.Builder
+	output    strings.Builder
+}
+
+// toolCallAccumulator coalesces a run's tool-call event fragments into one
+// entry per invocation. The stream emits arguments and output token by
+// token, so a tool-heavy run produces tens of thousands of fragments for a
+// few hundred calls; merging them here keeps the snapshot both linear to
+// build and readable once stored.
+type toolCallAccumulator struct {
+	order   []toolCallKey
+	entries map[toolCallKey]*toolCallEntry
+}
+
+func newToolCallAccumulator() *toolCallAccumulator {
+	return &toolCallAccumulator{entries: map[toolCallKey]*toolCallEntry{}}
+}
+
+func (a *toolCallAccumulator) merge(eventType string, call *chat.StreamToolCall) {
+	if call == nil {
+		return
 	}
-	encoded, _ = json.Marshal(values)
+	key := toolCallKey{callIndex: call.CallIndex, index: call.Index}
+	entry := a.entries[key]
+	if entry == nil {
+		entry = &toolCallEntry{}
+		a.entries[key] = entry
+		a.order = append(a.order, key)
+	}
+	entry.call.CallIndex = call.CallIndex
+	entry.call.Index = call.Index
+	if call.ID != "" {
+		entry.call.ID = call.ID
+	}
+	if call.Name != "" {
+		entry.call.Name = call.Name
+	}
+	if call.Status != "" {
+		entry.call.Status = call.Status
+	}
+	switch eventType {
+	case "tool_call":
+		entry.arguments.WriteString(call.Arguments)
+	case "tool_output":
+		entry.output.WriteString(call.Result)
+	case "tool_result":
+		// tool_result carries the complete, limit-applied content and
+		// supersedes the chunks streamed as tool_output.
+		entry.output.Reset()
+		entry.output.WriteString(call.Result)
+	}
+}
+
+func (a *toolCallAccumulator) encode() datatypes.JSON {
+	if len(a.order) == 0 {
+		return nil
+	}
+	calls := make([]chat.StreamToolCall, 0, len(a.order))
+	for _, key := range a.order {
+		entry := a.entries[key]
+		call := entry.call
+		call.Arguments = entry.arguments.String()
+		call.Result = entry.output.String()
+		calls = append(calls, call)
+	}
+	encoded, err := json.Marshal(calls)
+	if err != nil {
+		return nil
+	}
 	return encoded
 }
 
@@ -510,7 +601,7 @@ func (s *Service) Reconcile() error {
 	for index := range runs {
 		run := &runs[index]
 		if err := s.db.Transaction(func(tx *gorm.DB) error {
-			snapshot, err := (&Service{db: tx}).snapshot(run.ID)
+			snapshot, err := (&Service{db: tx}).snapshot(context.Background(), run.ID)
 			if err != nil {
 				return err
 			}
