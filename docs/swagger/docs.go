@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/auth/login": {
             "post": {
-                "description": "Creates an HttpOnly browser session. This endpoint is public.",
+                "description": "Exchanges SHA-256(password + timestamp + salt) for a JWT session. This endpoint is public.",
                 "consumes": [
                     "application/json"
                 ],
@@ -30,7 +30,7 @@ const docTemplate = `{
                 "summary": "Login",
                 "parameters": [
                     {
-                        "description": "Login credentials",
+                        "description": "Login proof",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -63,6 +63,11 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "tags": [
                     "auth"
                 ],
@@ -85,6 +90,11 @@ const docTemplate = `{
         },
         "/auth/session": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -156,6 +166,46 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/configurations/complete": {
+            "post": {
+                "description": "Streams a non-persistent assistant reference response using the submitted configuration snapshot.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "configurations"
+                ],
+                "summary": "Complete a configuration message",
+                "parameters": [
+                    {
+                        "description": "Configuration completion payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.configurationCompletionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/internal_server.errorResponse"
                         }
@@ -409,6 +459,29 @@ const docTemplate = `{
                 }
             }
         },
+        "/healthz": {
+            "get": {
+                "description": "Reports process liveness and build version. This endpoint is public and touches no database.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "meta"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/job-runs": {
             "get": {
                 "description": "Lists job runs, newest first, with optional job-name filter and bounded pagination.",
@@ -579,6 +652,118 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/search/messages": {
+            "get": {
+                "description": "Slow tier of chat history search: case-insensitive substring match against message content, scoped to one Project, paginated.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Full-text search chat messages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project name (defaults to the default project)",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Result offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_session.MessageSearchResult"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/search/sessions": {
+            "get": {
+                "description": "Fast tier of chat history search: case-insensitive substring match against Title/Summary, scoped to one Project.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Search session titles and summaries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project name (defaults to the default project)",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.Session"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/internal_server.errorResponse"
                         }
@@ -1453,6 +1638,119 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Cyvadra_hephaestus_internal_registry.Identity": {
+            "type": "object",
+            "properties": {
+                "context_window_tokens": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "injected_messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Message"
+                    }
+                },
+                "max_tokens": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "preferred_model": {
+                    "type": "string"
+                },
+                "reasoning_effort": {
+                    "type": "string"
+                },
+                "system_prompt": {
+                    "type": "string"
+                },
+                "temperature": {
+                    "type": "number"
+                },
+                "top_p": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_registry.Impression": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Message"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_registry.Kind": {
+            "type": "string",
+            "enum": [
+                "identities",
+                "impressions",
+                "tool-groups",
+                "concierges",
+                "workflows",
+                "jobs",
+                "constants"
+            ],
+            "x-enum-varnames": [
+                "KindIdentity",
+                "KindImpression",
+                "KindToolGroup",
+                "KindConcierge",
+                "KindWorkflow",
+                "KindJob",
+                "KindConstant"
+            ]
+        },
+        "github_com_Cyvadra_hephaestus_internal_registry.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Cyvadra_hephaestus_internal_session.MessageSearchResult": {
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "type": "integer"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "integer"
+                },
+                "session_title": {
+                    "type": "string"
+                },
+                "snippet": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_Cyvadra_hephaestus_internal_store.ChatMessage": {
             "type": "object",
             "properties": {
@@ -1959,6 +2257,36 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_server.configurationCompletionRequest": {
+            "type": "object",
+            "required": [
+                "kind",
+                "user_message"
+            ],
+            "properties": {
+                "base_identity": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Identity"
+                },
+                "identity": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Identity"
+                },
+                "impression": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Impression"
+                },
+                "kind": {
+                    "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Kind"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_registry.Message"
+                    }
+                },
+                "user_message": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_server.createSessionRequest": {
             "type": "object",
             "required": [
@@ -2053,15 +2381,23 @@ const docTemplate = `{
         "internal_server.loginRequest": {
             "type": "object",
             "required": [
-                "password",
+                "digest",
+                "salt",
+                "timestamp",
                 "username"
             ],
             "properties": {
-                "password": {
+                "digest": {
                     "type": "string"
                 },
                 "proof_nonce": {
                     "type": "string"
+                },
+                "salt": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "integer"
                 },
                 "username": {
                     "type": "string"
@@ -2220,12 +2556,20 @@ const docTemplate = `{
                 }
             }
         }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "JWT bearer token. Browser clients may also authenticate with the HttpOnly session cookie.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
     }
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.1",
+	Version:          "0.4.0",
 	Host:             "",
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
