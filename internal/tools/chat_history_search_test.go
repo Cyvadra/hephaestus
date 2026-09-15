@@ -49,7 +49,7 @@ func TestSessionsContainingKeywordsWorksWithSQLite(t *testing.T) {
 
 func TestMatchedSnippetCentersLongMessageOnMatch(t *testing.T) {
 	content := strings.Repeat("before ", 200) + "NEEDLE" + strings.Repeat(" after", 200)
-	got := matchedSnippet(content, []string{"needle"}, nil, 120)
+	got := matchedSnippet(content, messageMatcher([]string{"needle"}, nil), 120)
 	if !strings.Contains(got, "NEEDLE") {
 		t.Fatalf("matchedSnippet omitted match: %q", got)
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/fsutil"
+	"github.com/Cyvadra/hephaestus/internal/sshutil"
 )
 
 // Config holds environment-derived settings needed to start the process.
@@ -210,7 +211,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SHELL_BACKEND must be local or ssh")
 	}
 	if cfg.ShellEnabled && cfg.ShellBackend == "ssh" {
-		if !validSSHDestination(cfg.ShellSSHDestination) {
+		if !sshutil.ValidDestination(cfg.ShellSSHDestination) {
 			return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SHELL_SSH_DESTINATION is required and must not start with - or contain whitespace")
 		}
 		if !strings.HasPrefix(cfg.ShellSSHProjectsRoot, "/") {
@@ -308,12 +309,6 @@ func getenvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func validSSHDestination(destination string) bool {
-	return destination != "" && !strings.HasPrefix(destination, "-") && strings.IndexFunc(destination, func(r rune) bool {
-		return r <= ' ' || r == 0x7f
-	}) == -1
 }
 
 func splitCommaSeparated(value string) []string {

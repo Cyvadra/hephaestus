@@ -18,7 +18,6 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var (
@@ -477,10 +476,8 @@ func (s *Service) ClaimNotifications(sessionID uint) ([]agent.Notification, erro
 	var events []store.SubagentEvent
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		expired := time.Now().Add(-notificationLease)
-		query := tx.Where("parent_session_id = ? AND consumed_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)", sessionID, expired).Order("id")
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
-		}
+		query := store.ForUpdate(tx, "SKIP LOCKED").
+			Where("parent_session_id = ? AND consumed_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)", sessionID, expired).Order("id")
 		if err := query.Find(&events).Error; err != nil {
 			return err
 		}

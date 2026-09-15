@@ -7,16 +7,16 @@ package project
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -182,12 +182,12 @@ func (s *Service) ValidateNames(projectNames []string) error {
 		return nil
 	}
 	var count int64
-	if err := s.db.Model(&store.Project{}).Where("name IN ?", mapKeys(desired)).Count(&count).Error; err != nil {
+	if err := s.db.Model(&store.Project{}).Where("name IN ?", slices.Collect(maps.Keys(desired))).Count(&count).Error; err != nil {
 		return fmt.Errorf("project: validate names: %w", err)
 	}
 	if count != int64(len(desired)) {
 		var projects []store.Project
-		if err := s.db.Select("name").Where("name IN ?", mapKeys(desired)).Find(&projects).Error; err != nil {
+		if err := s.db.Select("name").Where("name IN ?", slices.Collect(maps.Keys(desired))).Find(&projects).Error; err != nil {
 			return fmt.Errorf("project: list validated names: %w", err)
 		}
 		found := make(map[string]struct{}, len(projects))
@@ -228,11 +228,7 @@ func (s *Service) Delete(name string, deleteDirectory bool) error {
 	var quarantined string
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var p store.Project
-		query := tx.Where("name = ?", name)
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		if err := query.First(&p).Error; err != nil {
+		if err := store.ForUpdate(tx).Where("name = ?", name).First(&p).Error; err != nil {
 			return err
 		}
 		var sessionCount int64
@@ -310,23 +306,9 @@ func removeName(values []string, name string) []string {
 }
 
 func sortedNames(values []string) []string {
-	seen := normalizedNames(values)
-	result := make([]string, 0, len(seen))
-	for value := range seen {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
+	return slices.Sorted(maps.Keys(normalizedNames(values)))
 }
 
 func sameNames(left, right []string) bool {
 	return strings.Join(sortedNames(left), "\x00") == strings.Join(sortedNames(right), "\x00")
-}
-
-func mapKeys(values map[string]struct{}) []string {
-	keys := make([]string, 0, len(values))
-	for value := range values {
-		keys = append(keys, value)
-	}
-	return keys
 }

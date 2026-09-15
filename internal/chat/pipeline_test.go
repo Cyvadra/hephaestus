@@ -139,9 +139,9 @@ func TestRenderSessionIdentityRendersSwitchedIdentity(t *testing.T) {
 		},
 	}
 
-	identity, err := renderSessionIdentity(reg, store.SessionSettings{Identity: "Rose"})
+	identity, err := reg.RenderIdentity(reg.Identities["Rose"])
 	if err != nil {
-		t.Fatalf("renderSessionIdentity: %v", err)
+		t.Fatalf("RenderIdentity: %v", err)
 	}
 	if identity.Name != "Rose" || identity.SystemPrompt != "You know Jason." {
 		t.Fatalf("rendered switched identity = %+v", identity)

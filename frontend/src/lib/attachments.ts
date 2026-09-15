@@ -27,6 +27,6 @@ export function pendingAttachmentPrefix(files: File[]): string {
   )).join('')
 }
 
-function formatSize(size: number): string {
+export function formatSize(size: number): string {
   return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`
 }

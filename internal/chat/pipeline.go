@@ -235,7 +235,7 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 	prep.vars["workspace"] = prep.workspace
 	prep.vars["session_id"] = strconv.FormatUint(uint64(prep.sess.ID), 10)
 	prep.vars["session_title"] = prep.sess.Title
-	prep.identity, err = renderSessionIdentity(prep.registry, settings, prep.vars)
+	prep.identity, err = prep.registry.RenderIdentity(prep.registry.Identities[settings.Identity], prep.vars)
 	if err != nil {
 		return prep, fmt.Errorf("chat: %w", err)
 	}
@@ -266,10 +266,6 @@ func filterChildSessionTools(sess store.Session, toolset []toolkit.Tool) []toolk
 	})
 }
 
-func renderSessionIdentity(reg *registry.Registry, settings store.SessionSettings, vars ...registry.PromptVars) (registry.Identity, error) {
-	return reg.RenderIdentity(reg.Identities[settings.Identity], vars...)
-}
-
 // resolveSettings sanitizes a session's settings against the current
 // registry, self-healing stale references: a missing identity falls back to
 // the registry's default, and unknown impressions, tool groups and plugins
@@ -290,7 +286,7 @@ func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, 
 	}
 	settings.Impressions = keepRegistered(settings.Impressions, reg.Impressions, &dirty)
 	settings.ToolGroups = keepRegistered(settings.ToolGroups, reg.ToolGroups, &dirty)
-	settings.Plugins = keepKnownPlugins(settings.Plugins, p.plugins, &dirty)
+	settings.Plugins = keepIf(settings.Plugins, p.plugins.Has, &dirty)
 	if concierge, ok := reg.Concierges[sess.SourceConcierge]; ok {
 		settings.ToolGroups = keepAllowed(settings.ToolGroups, concierge.ToolGroups, &dirty)
 		settings.Plugins = keepAllowed(settings.Plugins, concierge.Plugins, &dirty)
@@ -308,44 +304,30 @@ func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, 
 	return settings, nil
 }
 
+// keepIf returns the names accepted by keep, setting dirty when any were
+// dropped.
+func keepIf(names []string, keep func(string) bool, dirty *bool) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if keep(name) {
+			out = append(out, name)
+		} else {
+			*dirty = true
+		}
+	}
+	return out
+}
+
 func keepAllowed(names, available []string, dirty *bool) []string {
 	allowed := make(map[string]struct{}, len(available))
 	for _, name := range available {
 		allowed[name] = struct{}{}
 	}
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		if _, ok := allowed[name]; ok {
-			out = append(out, name)
-		} else {
-			*dirty = true
-		}
-	}
-	return out
+	return keepIf(names, func(name string) bool { _, ok := allowed[name]; return ok }, dirty)
 }
 
 func keepRegistered[T any](names []string, known map[string]T, dirty *bool) []string {
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		if _, ok := known[name]; ok {
-			out = append(out, name)
-		} else {
-			*dirty = true
-		}
-	}
-	return out
-}
-
-func keepKnownPlugins(names []string, reg *plugin.Registry, dirty *bool) []string {
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		if reg.Has(name) {
-			out = append(out, name)
-		} else {
-			*dirty = true
-		}
-	}
-	return out
+	return keepIf(names, func(name string) bool { _, ok := known[name]; return ok }, dirty)
 }
 
 // TurnOptions carries optional per-turn settings, an optional branch to
@@ -432,7 +414,7 @@ func filterTools(toolset []toolkit.Tool, disabled map[string]struct{}) []toolkit
 // prepareTurn performs the shared per-turn setup every entry point needs:
 // loading the session and its settings and binding the session's workspace.
 // The caller then applies its own leaf checks and turn-specific context.
-func (p *Pipeline) prepareTurn(ctx context.Context, sessionID uint, opts TurnOptions) (turnPrep, context.Context, error) {
+func (p *Pipeline) prepareTurn(ctx context.Context, sessionID uint) (turnPrep, context.Context, error) {
 	prep, err := p.prepare(sessionID)
 	if err != nil {
 		return prep, ctx, err
@@ -452,7 +434,7 @@ func (p *Pipeline) prepareTurn(ctx context.Context, sessionID uint, opts TurnOpt
 // assistant content deltas are streamed as they arrive
 // while persistence still only happens once the turn completes.
 func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opts TurnOptions) (*TurnResult, error) {
-	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
+	prep, ctx, err := p.prepareTurn(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +536,7 @@ func (p *Pipeline) awaitSessionSummary(ctx context.Context, done <-chan struct{}
 // result is persisted as a complete-content sibling of the prefix, preserving
 // the original response as a selectable branch.
 func (p *Pipeline) Continue(ctx context.Context, sessionID, messageID uint, opts TurnOptions) (*TurnResult, error) {
-	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
+	prep, ctx, err := p.prepareTurn(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +621,7 @@ func (p *Pipeline) continueResponse(ctx context.Context, identity registry.Ident
 // unanswered user message, this is equivalent to answering it fresh. With
 // opts.OnDelta set, assistant content deltas are streamed as they arrive.
 func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOptions) (*TurnResult, error) {
-	prep, ctx, err := p.prepareTurn(ctx, sessionID, opts)
+	prep, ctx, err := p.prepareTurn(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -722,24 +704,12 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 
 	commit := p.notificationCommit(notificationIDs)
 	saved, err := p.sessions.AppendMessagesAtLeafWithDeliveries(sessionID, projectID, parentID, expectedLeaf, persistMessages, deliveries, commit)
-	if errors.Is(err, session.ErrStaleActiveLeaf) {
+	staleLeaf := errors.Is(err, session.ErrStaleActiveLeaf)
+	if staleLeaf {
 		// The active branch moved under us mid-turn. Keep the already
 		// generated output as a reachable-but-inactive branch instead of
 		// discarding it, and tell the caller the branch was not activated.
-		detached, detachErr := p.sessions.AppendMessagesDetachedWithDeliveries(sessionID, projectID, parentID, persistMessages, deliveries, commit)
-		if detachErr != nil {
-			return nil, detachErr
-		}
-		acknowledged = true
-		p.acknowledgeSteering(ctx, claimedSteering)
-		final := detached[len(detached)-1]
-		turn.Messages[len(turn.Messages)-1] = final
-		if turn.Metadata == nil {
-			turn.Metadata = map[string]any{}
-		}
-		turn.Metadata["stale_active_leaf"] = true
-		p.enqueuePostSend(settings, turn)
-		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
+		saved, err = p.sessions.AppendMessagesDetachedWithDeliveries(sessionID, projectID, parentID, persistMessages, deliveries, commit)
 	}
 	if err != nil {
 		return nil, err
@@ -747,23 +717,28 @@ func (p *Pipeline) runFrom(ctx context.Context, sessionID, projectID uint, setti
 	acknowledged = true
 	p.acknowledgeSteering(ctx, claimedSteering)
 	final := saved[len(saved)-1]
-	if converseErr != nil && final.Role == ds4.RoleAssistant {
-		turn.Messages[len(turn.Messages)-1] = final
+	markTurn := func(key string) {
 		if turn.Metadata == nil {
 			turn.Metadata = map[string]any{}
 		}
-		turn.Metadata["incomplete"] = true
-		p.enqueuePostSend(settings, turn)
-		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, nil
+		turn.Metadata[key] = true
 	}
-	if converseErr != nil {
-		return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
+	returnErr := converseErr
+	switch {
+	case staleLeaf:
+		markTurn("stale_active_leaf")
+	case converseErr != nil:
+		if final.Role != ds4.RoleAssistant {
+			return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, converseErr
+		}
+		// The partial assistant reply was persisted; surface it as a
+		// completed-but-incomplete turn rather than as a failure.
+		markTurn("incomplete")
+		returnErr = nil
 	}
-
 	turn.Messages[len(turn.Messages)-1] = final
 	p.enqueuePostSend(settings, turn)
-
-	return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, nil
+	return &TurnResult{Message: &final, Metadata: turn.Metadata, turn: turn}, returnErr
 }
 
 func incompleteMessages(messages []store.ChatMessage, cause error) []store.ChatMessage {
@@ -1012,6 +987,8 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 		ClaimNotifications:  claimNotifications,
 		ClaimSteering:       claimSteering,
 		ClaimNormalSteering: claimNormalSteering,
+		// Always stream so the agent takes the CallStream path even when
+		// no listener is attached.
 		OnDelta: func(event StreamEvent) {
 			if onDelta != nil {
 				onDelta(event)
@@ -1023,10 +1000,7 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 			}
 		},
 	})
-	if err != nil {
-		return result.Messages, result.Deliveries, result.NotificationIDs, result.Steering, result.Turn, err
-	}
-	return result.Messages, result.Deliveries, result.NotificationIDs, result.Steering, result.Turn, nil
+	return result.Messages, result.Deliveries, result.NotificationIDs, result.Steering, result.Turn, err
 }
 
 // RespondQuestions delivers structured user answers to the pending session

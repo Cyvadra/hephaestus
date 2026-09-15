@@ -211,9 +211,10 @@ func deleteSessionTree(tx *gorm.DB, sessionID uint) error {
 				return err
 			}
 		}
-		if err := tx.Where("run_id = ?", run.ID).Delete(&store.SubagentEvent{}).Error; err != nil {
-			return err
-		}
+	}
+	subagentRunIDs := tx.Model(&store.SubagentRun{}).Select("id").Where("parent_session_id = ?", sessionID)
+	if err := tx.Where("run_id IN (?)", subagentRunIDs).Delete(&store.SubagentEvent{}).Error; err != nil {
+		return err
 	}
 	if err := tx.Where("parent_session_id = ?", sessionID).Delete(&store.SubagentRun{}).Error; err != nil {
 		return err
@@ -221,14 +222,9 @@ func deleteSessionTree(tx *gorm.DB, sessionID uint) error {
 	if err := tx.Where("session_id = ?", sessionID).Delete(&store.ChannelBinding{}).Error; err != nil {
 		return fmt.Errorf("session: delete channel bindings: %w", err)
 	}
-	var chatRuns []store.ChatRun
-	if err := tx.Select("id").Where("session_id = ?", sessionID).Find(&chatRuns).Error; err != nil {
+	chatRunIDs := tx.Model(&store.ChatRun{}).Select("id").Where("session_id = ?", sessionID)
+	if err := tx.Where("run_id IN (?)", chatRunIDs).Delete(&store.ChatRunEvent{}).Error; err != nil {
 		return err
-	}
-	for _, run := range chatRuns {
-		if err := tx.Where("run_id = ?", run.ID).Delete(&store.ChatRunEvent{}).Error; err != nil {
-			return err
-		}
 	}
 	for _, model := range []any{&store.ChatRun{}, &store.MessageAttachment{}, &store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
 		if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
@@ -248,34 +244,6 @@ func SettingsFromConcierge(concierge registry.Concierge) store.SessionSettings {
 	}
 }
 
-// AppendMessage inserts msg as a child of parentID (nil for the first
-// message of a session), advances the session's active leaf to it, and
-// returns the persisted row.
-func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMessage) (*store.ChatMessage, error) {
-	msg.SessionID = sessionID
-	msg.ParentMessageID = parentID
-	if msg.Status == "" {
-		msg.Status = store.MessageStatusComplete
-	}
-	if msg.Timestamp.IsZero() {
-		msg.Timestamp = time.Now()
-	}
-
-	return &msg, s.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := store.LockSession(tx, sessionID); err != nil {
-			return err
-		}
-		if err := tx.Create(&msg).Error; err != nil {
-			return fmt.Errorf("session: append message: %w", err)
-		}
-		if err := tx.Model(&store.Session{}).Where("id = ?", sessionID).
-			Updates(map[string]any{"active_leaf_message_id": msg.ID, "last_message_time": msg.Timestamp}).Error; err != nil {
-			return fmt.Errorf("session: advance active leaf: %w", err)
-		}
-		return nil
-	})
-}
-
 // AppendMessages inserts msgs in order as a single chain, the first msg
 // becoming a child of parentID, each subsequent one a child of the
 // previous, then advances the session's active leaf to the last one. All
@@ -283,14 +251,7 @@ func (s *Service) AppendMessage(sessionID uint, parentID *uint, msg store.ChatMe
 // whole turn is recorded or none of it is, so completed and incomplete turn
 // snapshots remain internally consistent.
 func (s *Service) AppendMessages(sessionID uint, parentID *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
-	return s.appendMessages(sessionID, parentID, nil, false, msgs)
-}
-
-// AppendMessagesAtLeaf atomically verifies that expectedLeaf is still the
-// active branch, appends msgs below parentID, and advances the active leaf.
-// It prevents concurrent continuations from silently overwriting each other.
-func (s *Service) AppendMessagesAtLeaf(sessionID uint, parentID, expectedLeaf *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
-	return s.appendMessages(sessionID, parentID, expectedLeaf, true, msgs)
+	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, nil, true, false, msgs, nil, nil)
 }
 
 // AppendMessagesAtLeafWithDeliveries is AppendMessagesAtLeaf with explicit
@@ -303,10 +264,6 @@ func (s *Service) AppendMessagesAtLeafWithDeliveries(sessionID, projectID uint, 
 // final-message attachments without changing the active leaf.
 func (s *Service) AppendMessagesDetachedWithDeliveries(sessionID, projectID uint, parentID *uint, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery, commit func(*gorm.DB) error) ([]store.ChatMessage, error) {
 	return s.appendMessagesWithDeliveries(sessionID, projectID, parentID, nil, false, false, msgs, deliveries, commit)
-}
-
-func (s *Service) appendMessages(sessionID uint, parentID, expectedLeaf *uint, checkActiveLeaf bool, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
-	return s.appendMessagesWithDeliveries(sessionID, 0, parentID, expectedLeaf, true, checkActiveLeaf, msgs, nil, nil)
 }
 
 func (s *Service) appendMessagesWithDeliveries(sessionID, projectID uint, parentID, expectedLeaf *uint, advanceActiveLeaf, checkActiveLeaf bool, msgs []store.ChatMessage, deliveries []toolkit.FileDelivery, commit func(*gorm.DB) error) ([]store.ChatMessage, error) {
@@ -402,27 +359,6 @@ func attachMessageUploads(tx *gorm.DB, sessionID, projectID uint, messages []sto
 		message.Attachments = attachments
 	}
 	return nil
-}
-
-// AppendMessagesDetached inserts msgs as a single chain below parentID
-// without touching the session's active leaf. It lets a turn whose branch
-// lost a leaf race persist its output as a reachable-but-inactive branch
-// instead of discarding generated tokens.
-func (s *Service) AppendMessagesDetached(sessionID uint, parentID *uint, msgs []store.ChatMessage) ([]store.ChatMessage, error) {
-	if len(msgs) == 0 {
-		return nil, nil
-	}
-	out := make([]store.ChatMessage, len(msgs))
-	copy(out, msgs)
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		if _, err := store.LockSession(tx, sessionID); err != nil {
-			return err
-		}
-		return insertChain(tx, sessionID, parentID, out)
-	}); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // insertChain persists msgs as a chain whose first element is a child of

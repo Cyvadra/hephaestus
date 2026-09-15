@@ -10,6 +10,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
@@ -109,9 +110,11 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 		}
 		re = compiled
 	}
-	if len(args.Keywords) == 0 && re == nil {
+	matcher := messageMatcher(args.Keywords, re)
+	if matcher == nil {
 		return toolkit.ErrorResult("chat_history_search: at least one of keywords or regex is required")
 	}
+	lowered := literalKeywords(args.Keywords, re)
 
 	sessions, err := t.targetSessions(ctx, args.IncludeArchived == nil || *args.IncludeArchived, args.SessionIDs)
 	if err != nil {
@@ -141,7 +144,7 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 			continue
 		}
 
-		matched := matchedIndices(path, args.Keywords, re)
+		matched := matchedIndices(path, matcher, lowered)
 		totalMatched += len(matched)
 		if len(matched) == 0 {
 			continue
@@ -157,7 +160,7 @@ func (t ChatHistorySearchTool) Execute(ctx context.Context, rawArgs map[string]a
 		}
 		totalShown += len(shown)
 
-		writeSessionMatches(&out, sess, path, shown, len(matched), *args.NumNeighbourMessages, args.Keywords, re)
+		writeSessionMatches(&out, sess, path, shown, len(matched), *args.NumNeighbourMessages, matcher)
 	}
 
 	if totalMatched == 0 {
@@ -185,6 +188,13 @@ func parseChatHistorySearchArgs(raw map[string]any) (chatHistorySearchArgs, erro
 	if err := json.Unmarshal(encoded, &args); err != nil {
 		return args, fmt.Errorf("parse arguments: %w", err)
 	}
+	keywords := args.Keywords[:0]
+	for _, keyword := range args.Keywords {
+		if keyword != "" {
+			keywords = append(keywords, keyword)
+		}
+	}
+	args.Keywords = keywords
 	if args.NumNeighbourMessages == nil {
 		defaultNeighbours := 2
 		args.NumNeighbourMessages = &defaultNeighbours
@@ -268,29 +278,60 @@ func chatHistoryKeywordPredicate(dialect string) string {
 	return "strpos(lower(content), lower(?)) > 0"
 }
 
+// messageMatcher compiles the user regex and literal keywords into a single
+// case-insensitive pattern, so each message is scanned once and the leftmost
+// match across all terms falls out of the regexp engine.
+func messageMatcher(keywords []string, re *regexp.Regexp) *regexp.Regexp {
+	var alternatives []string
+	if re != nil {
+		alternatives = append(alternatives, "(?:"+re.String()+")")
+	}
+	for _, keyword := range keywords {
+		if keyword != "" {
+			alternatives = append(alternatives, regexp.QuoteMeta(keyword))
+		}
+	}
+	if len(alternatives) == 0 {
+		return nil
+	}
+	return regexp.MustCompile("(?i)" + strings.Join(alternatives, "|"))
+}
+
+// literalKeywords pre-lowers the keywords for the scan fast path, or returns
+// nil when a user regex forces every message through the regexp engine. The
+// combined matcher is "(?i)"-prefixed, which defeats RE2's literal fast path
+// and scans several times slower than ToLower + Contains.
+func literalKeywords(keywords []string, re *regexp.Regexp) []string {
+	if re != nil {
+		return nil
+	}
+	lowered := make([]string, len(keywords))
+	for i, keyword := range keywords {
+		lowered[i] = strings.ToLower(keyword)
+	}
+	return lowered
+}
+
 // matchedIndices returns the indices of messages in path that match the
 // query. Tool-role messages are searched too, since past tool output is a
 // legitimate recall target.
-func matchedIndices(path []store.ChatMessage, keywords []string, re *regexp.Regexp) []int {
+func matchedIndices(path []store.ChatMessage, matcher *regexp.Regexp, lowered []string) []int {
 	var out []int
 	for i, m := range path {
-		if matchesMessage(m, keywords, re) {
+		if m.Content != "" && matchesContent(m.Content, matcher, lowered) {
 			out = append(out, i)
 		}
 	}
 	return out
 }
 
-func matchesMessage(m store.ChatMessage, keywords []string, re *regexp.Regexp) bool {
-	if m.Content == "" {
-		return false
+func matchesContent(content string, matcher *regexp.Regexp, lowered []string) bool {
+	if lowered == nil {
+		return matcher.MatchString(content)
 	}
-	if re != nil && re.MatchString(m.Content) {
-		return true
-	}
-	lower := strings.ToLower(m.Content)
-	for _, kw := range keywords {
-		if kw != "" && strings.Contains(lower, strings.ToLower(kw)) {
+	content = strings.ToLower(content)
+	for _, keyword := range lowered {
+		if strings.Contains(content, keyword) {
 			return true
 		}
 	}
@@ -300,7 +341,7 @@ func matchesMessage(m store.ChatMessage, keywords []string, re *regexp.Regexp) b
 // writeSessionMatches renders one session's matches as a compact transcript.
 // Overlapping context windows of adjacent matches are merged into contiguous
 // ranges so no message is printed twice.
-func writeSessionMatches(out *strings.Builder, sess store.Session, path []store.ChatMessage, shown []int, total, neighbours int, keywords []string, re *regexp.Regexp) {
+func writeSessionMatches(out *strings.Builder, sess store.Session, path []store.ChatMessage, shown []int, total, neighbours int, matcher *regexp.Regexp) {
 	fmt.Fprintf(out, "## Session %d — %s\n", sess.ID, sessionTitle(sess))
 	if total > len(shown) {
 		fmt.Fprintf(out, "(%d matches in this session, showing first %d)\n", total, len(shown))
@@ -316,7 +357,7 @@ func writeSessionMatches(out *strings.Builder, sess store.Session, path []store.
 			out.WriteString("...\n")
 		}
 		for i := r.lo; i < r.hi; i++ {
-			writeMessageLine(out, path[i], isMatch[i], keywords, re)
+			writeMessageLine(out, path[i], isMatch[i], matcher)
 		}
 		if r.hi < len(path) {
 			out.WriteString("...\n")
@@ -345,7 +386,7 @@ func mergeWindows(indices []int, neighbours, length int) []indexRange {
 	return out
 }
 
-func writeMessageLine(out *strings.Builder, m store.ChatMessage, matched bool, keywords []string, re *regexp.Regexp) {
+func writeMessageLine(out *strings.Builder, m store.ChatMessage, matched bool, matcher *regexp.Regexp) {
 	marker := " "
 	limit := neighbourSnippetLen
 	if matched {
@@ -358,16 +399,16 @@ func writeMessageLine(out *strings.Builder, m store.ChatMessage, matched bool, k
 	}
 	formatted := snippet(content, limit)
 	if matched {
-		formatted = matchedSnippet(content, keywords, re, limit)
+		formatted = matchedSnippet(content, matcher, limit)
 	}
 	fmt.Fprintf(out, "%s [#%d %s %s] %s\n",
 		marker, m.ID, m.Role, m.Timestamp.Format("2006-01-02 15:04"),
 		formatted)
 }
 
-func matchedSnippet(content string, keywords []string, re *regexp.Regexp, limit int) string {
+func matchedSnippet(content string, matcher *regexp.Regexp, limit int) string {
 	flat := strings.Join(strings.Fields(content), " ")
-	location := firstMatchLocation(flat, keywords, re)
+	location := matcher.FindStringIndex(flat)
 	if location == nil {
 		return snippet(flat, limit)
 	}
@@ -387,30 +428,13 @@ func matchedSnippet(content string, keywords []string, re *regexp.Regexp, limit 
 	return result
 }
 
-func firstMatchLocation(content string, keywords []string, re *regexp.Regexp) []int {
-	var first []int
-	if re != nil {
-		first = re.FindStringIndex(content)
-	}
-	for _, keyword := range keywords {
-		if keyword == "" {
-			continue
-		}
-		location := regexp.MustCompile("(?i)" + regexp.QuoteMeta(keyword)).FindStringIndex(content)
-		if location != nil && (first == nil || location[0] < first[0]) {
-			first = location
-		}
-	}
-	return first
-}
-
 // snippet flattens whitespace and truncates content to at most limit runes,
 // marking elided text.
 func snippet(s string, limit int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	runes := []rune(s)
-	if len(runes) <= limit {
+	head, dropped := transform.TruncateRunes(s, limit)
+	if dropped == 0 {
 		return s
 	}
-	return string(runes[:limit]) + fmt.Sprintf(" …(+%d chars)", len(runes)-limit)
+	return head + fmt.Sprintf(" …(+%d chars)", dropped)
 }

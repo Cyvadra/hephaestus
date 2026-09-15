@@ -430,7 +430,6 @@ func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[
 	auditID := r.beginToolAudit(req.Audit, t, tc, args)
 	toolCtx := toolkit.WithSessionID(ctx, req.OwnerID)
 	toolCtx = toolkit.WithTurnMessages(toolCtx, turnMessages)
-	toolCtx = toolkit.WithToolCall(toolCtx, tc)
 	if reportOutput != nil {
 		toolCtx = toolkit.WithOutputReporter(toolCtx, reportOutput)
 	}

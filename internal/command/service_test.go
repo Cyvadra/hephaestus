@@ -353,14 +353,6 @@ func TestMarkActiveItemsMarksAllEnabledNamesWithoutChangingOrdinals(t *testing.T
 	}
 }
 
-func TestKeysOfSortsNamesForStableListReferences(t *testing.T) {
-	got := keysOf(map[string]struct{}{"third": {}, "first": {}, "second": {}})
-	want := []string{"first", "second", "third"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("keysOf() = %v, want %v", got, want)
-	}
-}
-
 func TestSwitchSessionIsNotAdvertisedOrSupported(t *testing.T) {
 	if strings.Contains(helpText, "identity|concierge|session|project") {
 		t.Fatal("help still advertises a server-side session switch")

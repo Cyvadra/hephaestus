@@ -36,44 +36,33 @@ type configurationCompletionRequest struct {
 func (s *Server) completeConfiguration(c *gin.Context) {
 	var req configurationCompletionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	if req.Kind != registry.KindIdentity && req.Kind != registry.KindImpression {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "kind must be identities or impressions"})
+		badRequestf(c, "kind must be identities or impressions")
 		return
 	}
 	identity := req.Identity
 	messages := req.Messages
 	if req.Kind == registry.KindImpression {
 		if req.BaseIdentity == nil || req.BaseIdentity.Name == "" {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "base_identity is required for impressions"})
+			badRequestf(c, "base_identity is required for impressions")
 			return
 		}
 		identity = *req.BaseIdentity
 		messages = append([]registry.Message(nil), req.Messages...)
 	}
 	if identity.Name == "" {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "identity is required"})
+		badRequestf(c, "identity is required")
 		return
 	}
 	if err := validateCompletionMessages(messages); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache, no-transform")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-	c.Writer.Flush()
-	sequence := uint64(0)
-	emit := func(event string, data any) {
-		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
-		sequence++
-		c.Writer.Flush()
-	}
+	emit := beginSSE(c)
 	_, err := s.pipeline.CompleteConfiguration(c.Request.Context(), identity, messages, req.UserMessage, func(delta string) {
 		emit("delta", gin.H{"text": delta})
 	})
@@ -304,13 +293,8 @@ type conciergeConfigurationPayload struct {
 func decodeConfiguration(c *gin.Context, kind registry.Kind) (any, []string, error) {
 	if kind == registry.KindConcierge {
 		var payload conciergeConfigurationPayload
-		decoder := json.NewDecoder(c.Request.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&payload); err != nil {
-			return nil, nil, fmt.Errorf("invalid configuration payload: %w", err)
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return nil, nil, fmt.Errorf("invalid configuration payload: expected one JSON value")
+		if err := decodeStrictJSON(c.Request.Body, &payload); err != nil {
+			return nil, nil, err
 		}
 		return &payload.Concierge, payload.AvailableProjects, nil
 	}
@@ -318,15 +302,24 @@ func decodeConfiguration(c *gin.Context, kind registry.Kind) (any, []string, err
 	if err != nil {
 		return nil, nil, err
 	}
-	decoder := json.NewDecoder(c.Request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		return nil, nil, fmt.Errorf("invalid configuration payload: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, nil, fmt.Errorf("invalid configuration payload: expected one JSON value")
+	if err := decodeStrictJSON(c.Request.Body, value); err != nil {
+		return nil, nil, err
 	}
 	return value, nil, nil
+}
+
+// decodeStrictJSON decodes exactly one JSON value into v, rejecting unknown
+// fields and trailing content.
+func decodeStrictJSON(r io.Reader, v any) error {
+	decoder := json.NewDecoder(r)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		return fmt.Errorf("invalid configuration payload: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("invalid configuration payload: expected one JSON value")
+	}
+	return nil
 }
 
 func (s *Server) withConciergeAvailability(kind registry.Kind, value any) (any, error) {
@@ -363,15 +356,15 @@ func (s *Server) withConciergeAvailability(kind registry.Kind, value any) (any, 
 func configurationError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, registry.ErrInvalidKind):
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 	case errors.Is(err, registry.ErrNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 	case errors.Is(err, registry.ErrExists):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case errors.Is(err, registry.ErrConflict):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case strings.HasPrefix(err.Error(), "registry:") || strings.HasPrefix(err.Error(), "project:") || strings.HasPrefix(err.Error(), "invalid configuration") || strings.HasPrefix(err.Error(), "configuration name"):
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 	default:
 		internalError(c, err)
 	}

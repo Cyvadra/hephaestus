@@ -48,31 +48,22 @@ func (s *Server) createSession(c *gin.Context) {
 	reg := s.registries.Current()
 	var req createSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
 	concierge, ok := reg.Concierges[req.Concierge]
 	if !ok {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "concierge not found: " + req.Concierge})
+		notFound(c, "concierge not found: "+req.Concierge)
 		return
 	}
 
-	projectName := strings.TrimSpace(req.Project)
-	if projectName == "" {
-		projectName = project.DefaultName
-	}
-	boundProject, err := s.projects.GetByName(projectName)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
-			return
-		}
-		internalError(c, err)
+	boundProject, ok := s.requireProject(c, req.Project)
+	if !ok {
 		return
 	}
 	if !s.projects.IsConciergeAvailable(*boundProject, concierge.Name) {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "concierge is not available for project: " + projectName})
+		badRequestf(c, "concierge is not available for project: %s", boundProject.Name)
 		return
 	}
 
@@ -82,12 +73,12 @@ func (s *Server) createSession(c *gin.Context) {
 	}
 	toolGroups, err := selectedConciergeCapabilities(req.ToolGroups, concierge.ToolGroups, "tool group")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	plugins, err := selectedConciergeCapabilities(req.Plugins, concierge.Plugins, "plugin")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	settings := session.SettingsFromConcierge(concierge)
@@ -140,22 +131,22 @@ func selectedConciergeCapabilities(selected, allowed []string, kind string) ([]s
 func (s *Server) forkSessionAtMessage(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
-	messageID, err := strconv.ParseUint(c.Param("messageID"), 10, 64)
-	if err != nil || messageID == 0 {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "message ID must be a positive integer"})
+	messageID, err := parseUintParam(c, "messageID", "message id")
+	if err != nil {
+		badRequest(c, err)
 		return
 	}
 
-	fork, err := s.sessions.ForkAt(sessionID, uint(messageID))
+	fork, err := s.sessions.ForkAt(sessionID, messageID)
 	if err != nil {
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound), errors.Is(err, session.ErrMessageNotFound):
-			c.JSON(http.StatusNotFound, errorResponse{Error: "session or assistant message not found"})
+			notFound(c, "session or assistant message not found")
 		case errors.Is(err, session.ErrNotAssistant):
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "message must be an assistant message"})
+			badRequestf(c, "message must be an assistant message")
 		default:
 			internalError(c, err)
 		}
@@ -185,13 +176,13 @@ func (s *Server) getHistory(c *gin.Context) {
 	reg := s.registries.Current()
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
 	sess, err := s.sessions.Get(sessionID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return
 	}
 
@@ -235,17 +226,17 @@ func (s *Server) getHistory(c *gin.Context) {
 func (s *Server) downloadAttachment(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	attachmentID, err := parseUintParam(c, "attachmentID", "attachment id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	sess, attachment, err := s.sessions.Attachment(sessionID, attachmentID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return
 	}
 	boundProject, err := s.projects.Get(sess.ProjectID)
@@ -259,7 +250,7 @@ func (s *Server) downloadAttachment(c *gin.Context) {
 			c.JSON(http.StatusGone, errorResponse{Error: "attachment source file is no longer available"})
 			return
 		}
-		c.JSON(http.StatusNotFound, errorResponse{Error: "attachment is no longer available"})
+		notFound(c, "attachment is no longer available")
 		return
 	}
 	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name}))
@@ -372,18 +363,18 @@ type editAssistantMessageRequest struct {
 func (s *Server) editAssistantMessage(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	messageID, err := parseUintParam(c, "messageID", "message id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
 	var req editAssistantMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
@@ -398,12 +389,12 @@ func (s *Server) editAssistantMessage(c *gin.Context) {
 		case errors.Is(err, session.ErrStaleActiveLeaf):
 			writeStaleLeaf(c)
 		case errors.Is(err, session.ErrMessageNotFound), errors.Is(err, gorm.ErrRecordNotFound):
-			c.JSON(http.StatusNotFound, errorResponse{Error: "session or message not found"})
+			notFound(c, "session or message not found")
 		case errors.Is(err, session.ErrNotAssistant),
 			errors.Is(err, session.ErrToolCallMessage),
 			errors.Is(err, session.ErrMessageNotOnPath),
 			errors.Is(err, session.ErrEmptyContent):
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 		default:
 			internalError(c, err)
 		}
@@ -473,7 +464,7 @@ func commitUpload(result *upload.Result) {
 func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *upload.Result, bool) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return 0, sendMessageRequest{}, nil, false
 	}
 	var req sendMessageRequest
@@ -487,26 +478,17 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 		c.JSON(status, errorResponse{Error: err.Error()})
 		return 0, sendMessageRequest{}, nil, false
 	}
-	if err := validateGenerationOptions(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return 0, sendMessageRequest{}, nil, false
-	}
-	if err := validateBranchSelection(req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return 0, sendMessageRequest{}, nil, false
-	}
-	if strings.TrimSpace(req.Text) == "" {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "text is required"})
+	if !validateMessageRequest(c, &req, req.Text) {
 		return 0, sendMessageRequest{}, nil, false
 	}
 	if command.IsCommand(req.Text) {
 		if len(files) > 0 {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "attachments cannot be sent with slash commands"})
+			badRequestf(c, "attachments cannot be sent with slash commands")
 			return 0, sendMessageRequest{}, nil, false
 		}
 		result, err := s.commands.ExecuteResult(sessionID, req.Text)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 		} else {
 			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget, ReplayedMessages: result.ReplayedMessages})
 		}
@@ -521,7 +503,7 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 	}
 	sess, err := s.sessions.Get(sessionID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return 0, sendMessageRequest{}, nil, false
 	}
 	boundProject, err := s.projects.Get(sess.ProjectID)
@@ -540,6 +522,25 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 	}
 	req.Text = result.Prefix + req.Text
 	return sessionID, req, &result, true
+}
+
+// validateMessageRequest checks the generation options, branch selection and
+// message text shared by every message entry point, writing the 400 response
+// itself when a check fails.
+func validateMessageRequest(c *gin.Context, req *sendMessageRequest, text string) bool {
+	if err := validateGenerationOptions(req); err != nil {
+		badRequest(c, err)
+		return false
+	}
+	if err := validateBranchSelection(*req); err != nil {
+		badRequest(c, err)
+		return false
+	}
+	if strings.TrimSpace(text) == "" {
+		badRequestf(c, "text is required")
+		return false
+	}
+	return true
 }
 
 func turnOptions(req sendMessageRequest, uploadResult *upload.Result, onDelta func(chat.StreamEvent)) chat.TurnOptions {
@@ -613,23 +614,23 @@ func mergeMetadata(metadata map[string]any, result *upload.Result) map[string]an
 func (s *Server) regenerate(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
 	var req sendMessageRequest
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 			return
 		}
 	}
 	if err := validateGenerationOptions(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	if err := validateBranchSelection(req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
@@ -667,9 +668,9 @@ func writeTurnError(c *gin.Context, err error) {
 	case errors.Is(err, session.ErrStaleActiveLeaf):
 		writeStaleLeaf(c)
 	case errors.Is(err, session.ErrInvalidParent):
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "active leaf message does not belong to session"})
+		badRequestf(c, "active leaf message does not belong to session")
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 	default:
 		internalError(c, err)
 	}
@@ -678,6 +679,57 @@ func writeTurnError(c *gin.Context, err error) {
 func internalError(c *gin.Context, err error) {
 	log.Printf("server: %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
 	c.JSON(http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+}
+
+func badRequest(c *gin.Context, err error) {
+	c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+}
+
+// badRequestf reports a 400 whose message is composed here rather than
+// carried by an error value.
+func badRequestf(c *gin.Context, format string, args ...any) {
+	c.JSON(http.StatusBadRequest, errorResponse{Error: fmt.Sprintf(format, args...)})
+}
+
+func notFound(c *gin.Context, message string) {
+	c.JSON(http.StatusNotFound, errorResponse{Error: message})
+}
+
+// requireProject resolves a project by name, falling back to the default
+// project when the name is blank and writing the HTTP error response itself
+// when the lookup fails.
+func (s *Server) requireProject(c *gin.Context, name string) (*store.Project, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = project.DefaultName
+	}
+	boundProject, err := s.projects.GetByName(name)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			notFound(c, "project not found: "+name)
+		} else {
+			internalError(c, err)
+		}
+		return nil, false
+	}
+	return boundProject, true
+}
+
+// beginSSE writes the event-stream preamble and returns an emitter that
+// wraps each payload in a sequenced streamEventEnvelope.
+func beginSSE(c *gin.Context) func(event string, data any) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache, no-transform")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	c.Writer.Flush()
+	sequence := uint64(0)
+	return func(event string, data any) {
+		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
+		sequence++
+		c.Writer.Flush()
+	}
 }
 
 type errValidation string
@@ -711,17 +763,8 @@ type sessionListResponse struct {
 }
 
 func (s *Server) listSessions(c *gin.Context) {
-	projectName := strings.TrimSpace(c.Query("project"))
-	if projectName == "" {
-		projectName = project.DefaultName
-	}
-	boundProject, err := s.projects.GetByName(projectName)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
-			return
-		}
-		internalError(c, err)
+	boundProject, ok := s.requireProject(c, c.Query("project"))
+	if !ok {
 		return
 	}
 	sessions, err := s.sessions.ListByProject(boundProject.ID)
@@ -793,12 +836,12 @@ func (s *Server) listProjects(c *gin.Context) {
 func (s *Server) createProject(c *gin.Context) {
 	var req createProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	created, err := s.projects.Create(strings.TrimSpace(req.Name), strings.TrimSpace(req.Description))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, projectResponse{Project: *created, IsDefault: created.Name == project.DefaultName})
@@ -820,15 +863,15 @@ func (s *Server) deleteProject(c *gin.Context) {
 	name := strings.TrimSpace(c.Param("name"))
 	var req deleteProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	if err := s.projects.Delete(name, req.DeleteDirectory); err != nil {
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound):
-			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + name})
+			notFound(c, "project not found: "+name)
 		default:
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 		}
 		return
 	}
@@ -858,17 +901,17 @@ type updateSessionRequest struct {
 func (s *Server) updateSession(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
 	var req updateSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	if req.Title == nil && req.Archived == nil && req.Pinned == nil && req.ReasoningEffort == nil && req.EnableWebSearch == nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "no session changes provided"})
+		badRequestf(c, "no session changes provided")
 		return
 	}
 	sess, err := s.sessions.Update(sessionID, session.Patch{
@@ -879,13 +922,13 @@ func (s *Server) updateSession(c *gin.Context) {
 		EnableWebSearch: req.EnableWebSearch,
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return
 	}
 	if err != nil {
 		var validation session.ValidationError
 		if errors.As(err, &validation) {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: validation.Error()})
+			badRequest(c, validation)
 			return
 		}
 		internalError(c, err)
@@ -905,12 +948,12 @@ func (s *Server) updateSession(c *gin.Context) {
 func (s *Server) deleteSession(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.sessions.Delete(sessionID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return
 	}
 	if errors.Is(err, session.ErrSessionBusy) {
@@ -951,14 +994,8 @@ func (s *Server) listConcierges(c *gin.Context) {
 	projectName := strings.TrimSpace(c.Query("project"))
 	var boundProject *store.Project
 	if projectName != "" {
-		var err error
-		boundProject, err = s.projects.GetByName(projectName)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
-				return
-			}
-			internalError(c, err)
+		var ok bool
+		if boundProject, ok = s.requireProject(c, projectName); !ok {
 			return
 		}
 	}

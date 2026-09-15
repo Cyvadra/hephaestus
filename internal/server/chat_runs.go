@@ -87,7 +87,7 @@ func (s *Server) startChatRun(c *gin.Context) {
 	if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
 		req.Kind = store.ChatRunMessage
 	} else if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	} else if req.Kind == "" {
 		req.Kind = store.ChatRunMessage
@@ -122,16 +122,16 @@ func (s *Server) startChatRun(c *gin.Context) {
 		}
 	case store.ChatRunRegenerate:
 		if err := validateGenerationOptions(&req.Options); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 			return
 		}
 		if err := validateBranchSelection(req.Options); err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 			return
 		}
 		sessionID, err = parseSessionID(c)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 			return
 		}
 		request = map[string]any{"message_id": req.MessageID, "options": req.Options}
@@ -142,11 +142,11 @@ func (s *Server) startChatRun(c *gin.Context) {
 	case store.ChatRunContinue:
 		sessionID, err = parseSessionID(c)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 			return
 		}
 		if req.MessageID == nil || *req.MessageID == 0 {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: "message_id is required"})
+			badRequestf(c, "message_id is required")
 			return
 		}
 		request = map[string]any{"message_id": req.MessageID, "options": req.Options}
@@ -155,12 +155,12 @@ func (s *Server) startChatRun(c *gin.Context) {
 			return turnRunResult(result, nil), err
 		}
 	default:
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "kind must be message, regenerate, or continue"})
+		badRequestf(c, "kind must be message, regenerate, or continue")
 		return
 	}
 	sess, err = s.sessions.Get(sessionID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return
 	}
 
@@ -179,12 +179,12 @@ func (s *Server) startChatRun(c *gin.Context) {
 func (s *Server) getActiveChatRun(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	run, err := s.chatRuns.ActiveForSession(sessionID)
 	if errors.Is(err, chatrun.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+		notFound(c, "no active chat run")
 		return
 	}
 	if err != nil {
@@ -197,12 +197,12 @@ func (s *Server) getActiveChatRun(c *gin.Context) {
 func (s *Server) getSteering(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	pending, ok, err := s.chatRuns.GetSteering(sessionID)
 	if errors.Is(err, chatrun.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+		notFound(c, "no active chat run")
 		return
 	}
 	if err != nil {
@@ -219,12 +219,12 @@ func (s *Server) getSteering(c *gin.Context) {
 func (s *Server) putSteering(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	var req steeringRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
@@ -234,14 +234,14 @@ func (s *Server) putSteering(c *gin.Context) {
 	outcome, runID, err := s.chatRuns.PutSteering(sessionID, req.Text, req.Mode)
 	if err != nil {
 		if errors.Is(err, chatrun.ErrRunNotFound) {
-			c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+			notFound(c, "no active chat run")
 			return
 		}
 		if errors.Is(err, chatrun.ErrRunFinished) || strings.Contains(err.Error(), "already claimed") {
 			c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 			return
 		}
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, steeringResponse{Status: string(outcome), RunID: runID, Text: req.Text, Mode: req.Mode})
@@ -250,12 +250,12 @@ func (s *Server) putSteering(c *gin.Context) {
 func (s *Server) cancelSteering(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	cancelled, err := s.chatRuns.CancelSteering(sessionID)
 	if errors.Is(err, chatrun.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+		notFound(c, "no active chat run")
 		return
 	}
 	if err != nil {
@@ -272,12 +272,12 @@ func (s *Server) cancelSteering(c *gin.Context) {
 func (s *Server) getChatRun(c *gin.Context) {
 	runID, err := parseUintParam(c, "id", "chat run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	run, err := s.chatRuns.Get(runID)
 	if errors.Is(err, chatrun.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 		return
 	}
 	if err != nil {
@@ -290,13 +290,13 @@ func (s *Server) getChatRun(c *gin.Context) {
 func (s *Server) cancelChatRun(c *gin.Context) {
 	runID, err := parseUintParam(c, "id", "chat run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.chatRuns.Cancel(runID)
 	switch {
 	case errors.Is(err, chatrun.ErrRunNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 	case errors.Is(err, chatrun.ErrRunFinished):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case err != nil:
@@ -309,13 +309,13 @@ func (s *Server) cancelChatRun(c *gin.Context) {
 func (s *Server) cancelActiveChatRun(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.chatRuns.CancelSession(sessionID)
 	switch {
 	case errors.Is(err, chatrun.ErrRunNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: "no active chat run"})
+		notFound(c, "no active chat run")
 	case errors.Is(err, chatrun.ErrRunFinished):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case err != nil:
@@ -328,12 +328,12 @@ func (s *Server) cancelActiveChatRun(c *gin.Context) {
 func (s *Server) streamChatRun(c *gin.Context) {
 	runID, err := parseUintParam(c, "id", "chat run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	run, events, sub, err := s.chatRuns.Subscribe(runID)
 	if errors.Is(err, chatrun.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 		return
 	}
 	if err != nil {
@@ -342,29 +342,18 @@ func (s *Server) streamChatRun(c *gin.Context) {
 	}
 	defer sub.Close()
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache, no-transform")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-	c.Writer.Flush()
-	emit := func(sequence uint64, event string, data any) {
-		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
-		c.Writer.Flush()
-	}
-	sequence := uint64(0)
-	emit(sequence, "snapshot", newChatRunResponse(run))
+	emit := beginSSE(c)
+	emit("snapshot", newChatRunResponse(run))
 	for index, event := range events {
 		// Interactive requests block generation. If replay contains a later
 		// event, this request was already resolved and must not be shown again.
 		if (event.Type == interaction.EventAskPermission || event.Type == interaction.EventAskQuestions) && index != len(events)-1 {
 			continue
 		}
-		sequence++
-		emit(sequence, event.Type, json.RawMessage(event.Payload))
+		emit(event.Type, json.RawMessage(event.Payload))
 	}
 	if run.Status.IsTerminal() {
-		emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, run)
+		emitRunDone(emit, run)
 		return
 	}
 	for {
@@ -377,12 +366,11 @@ func (s *Server) streamChatRun(c *gin.Context) {
 			}
 			if event.Type == "done" {
 				if event.Run != nil {
-					emitRunDone(func(event string, data any) { sequence++; emit(sequence, event, data) }, event.Run)
+					emitRunDone(emit, event.Run)
 				}
 				return
 			}
-			sequence++
-			emit(sequence, event.Type, json.RawMessage(event.Payload))
+			emit(event.Type, json.RawMessage(event.Payload))
 		}
 	}
 }
@@ -390,17 +378,17 @@ func (s *Server) streamChatRun(c *gin.Context) {
 func (s *Server) respondToQuestions(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	requestID, err := parseUintParam(c, "requestID", "interaction request id")
 	if err != nil || requestID == 0 {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid interaction request id"})
+		badRequestf(c, "invalid interaction request id")
 		return
 	}
 	var request questionResponseRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.pipeline.RespondQuestions(sessionID, uint64(requestID), request.Answers)
@@ -410,7 +398,7 @@ func (s *Server) respondToQuestions(c *gin.Context) {
 	case errors.Is(err, interaction.ErrNoPending), errors.Is(err, interaction.ErrRequestMismatch):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case errors.Is(err, interaction.ErrInvalidResponse):
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 	default:
 		internalError(c, err)
 	}
@@ -427,25 +415,16 @@ func (s *Server) prepareMessageRun(c *gin.Context) (uint, sendMessageRequest, *u
 func (s *Server) prepareMessageRunFromRequest(c *gin.Context, text string, req sendMessageRequest) (uint, sendMessageRequest, *upload.Result, chatrun.Execute, map[string]any) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return 0, sendMessageRequest{}, nil, nil, nil
 	}
-	if err := validateGenerationOptions(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return 0, sendMessageRequest{}, nil, nil, nil
-	}
-	if err := validateBranchSelection(req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return 0, sendMessageRequest{}, nil, nil, nil
-	}
-	if strings.TrimSpace(text) == "" {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "text is required"})
+	if !validateMessageRequest(c, &req, text) {
 		return 0, sendMessageRequest{}, nil, nil, nil
 	}
 	if command.IsCommand(text) {
 		result, err := s.commands.ExecuteResult(sessionID, text)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+			badRequest(c, err)
 		} else if result.Edit == nil {
 			c.JSON(http.StatusOK, sendMessageResponse{CommandResponse: result.Response, SessionTarget: result.SessionTarget, ReplayedMessages: result.ReplayedMessages})
 		} else {

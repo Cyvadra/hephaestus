@@ -3,6 +3,8 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 
@@ -71,7 +73,7 @@ func NewService(db *gorm.DB, store *Store, knownTools, knownPlugins map[string]b
 		store:              store,
 		knownTools:         cloneMap(knownTools),
 		knownPlugins:       cloneMap(knownPlugins),
-		pluginDescriptions: cloneStringMap(pluginDescriptions),
+		pluginDescriptions: cloneMap(pluginDescriptions),
 	}, nil
 }
 
@@ -92,25 +94,12 @@ func (s *Service) Catalog() (Catalog, error) {
 		Constants:          sortedMapKeys(reg.Constants),
 		Tools:              sortedBoolKeys(s.knownTools),
 		Plugins:            sortedBoolKeys(s.knownPlugins),
-		PluginDescriptions: cloneStringMap(s.pluginDescriptions),
+		PluginDescriptions: cloneMap(s.pluginDescriptions),
 	}, nil
 }
 
-func cloneStringMap(values map[string]string) map[string]string {
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
-}
-
 func sortedMapKeys[T any](values map[string]T) []string {
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(values))
 }
 
 func sortedBoolKeys(values map[string]bool) []string {

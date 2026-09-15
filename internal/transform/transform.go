@@ -42,6 +42,16 @@ func LimitToolExchangeContent(arguments, content string) string {
 	return LimitTextBytes(content, remaining)
 }
 
+// TruncateRunes returns at most limit runes of content and the number of
+// runes dropped (zero when content already fits).
+func TruncateRunes(content string, limit int) (string, int) {
+	runes := []rune(content)
+	if len(runes) <= limit {
+		return content, 0
+	}
+	return string(runes[:limit]), len(runes) - limit
+}
+
 // LimitTextBytes preserves the beginning and end of UTF-8 text within a byte
 // budget. The returned string is always valid UTF-8 and never exceeds limit.
 func LimitTextBytes(content string, limit int) string {

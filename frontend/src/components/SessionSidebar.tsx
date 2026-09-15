@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronRight, Pencil, Pin, Plus, Search, Trash2, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -102,11 +102,14 @@ export default function SessionSidebar({ mode, configurationSidebarOpen, activeS
     }
   }, [menu])
 
-  const isPinned = (session: Session) => session.FlagPinned === 1
-  const active = sessions.filter(s => !s.FlagArchived)
-  const pinnedSessions = active.filter(isPinned)
-  const groups = groupSessions(active.filter(s => !isPinned(s)), t)
-  const archived = sessions.filter(s => s.FlagArchived)
+  const { pinnedSessions, groups, archived } = useMemo(() => {
+    const active = sessions.filter(s => !s.FlagArchived)
+    return {
+      pinnedSessions: active.filter(isPinned),
+      groups: groupSessions(active.filter(s => !isPinned(s)), t),
+      archived: sessions.filter(s => s.FlagArchived),
+    }
+  }, [sessions, t])
 
   function renderSession(s: Session) {
     return (
@@ -407,6 +410,8 @@ interface SessionGroup {
   label: string
   sessions: Session[]
 }
+
+const isPinned = (session: Session) => session.FlagPinned === 1
 
 function groupSessions(sessions: Session[], t: ReturnType<typeof useTranslation>['t']): SessionGroup[] {
   const dayMs = 86_400_000

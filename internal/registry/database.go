@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sync/atomic"
 	"time"
 
@@ -66,12 +67,14 @@ func (r *Registry) Clone() *Registry {
 	}
 }
 
+// cloneMap copies a map, always returning a non-nil result so callers can
+// write into the clone without checking (unlike maps.Clone, which keeps nil).
 func cloneMap[T any](values map[string]T) map[string]T {
-	copy := make(map[string]T, len(values))
-	for name, value := range values {
-		copy[name] = value
+	clone := maps.Clone(values)
+	if clone == nil {
+		clone = make(map[string]T, 0)
 	}
-	return copy
+	return clone
 }
 
 // LoadDatabase builds the complete runtime registry from persisted records.

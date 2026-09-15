@@ -1,9 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cancelActiveChatRun, cancelSteering, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, setAutomaticApproval, updateSession } from '../api/client'
-import { authFetch } from '../api/auth'
+import { cancelActiveChatRun, cancelSteering, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, sendCommand, setAutomaticApproval, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, SteeringMode, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -22,6 +21,9 @@ const HISTORY_NAV_BOTTOM_THRESHOLD = 900
 const HISTORY_NAV_UNLOCK_DISTANCE = 48
 const HISTORY_NAV_TARGET_OFFSET = 28
 const STRUCTURED_MESSAGE_PREFIX = /^[<`[>#{(*-]/
+// The optimistic bubble has no siblings; share one empty map rather than
+// allocating a fresh one on every render.
+const NO_CHILDREN: ReturnType<typeof buildChildrenMap> = new Map()
 
 interface UserMessageNavigationItem {
   id: number
@@ -212,10 +214,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setResolvedSessionId(sessionId)
     setActiveSession(null)
     setActiveSubagentRun(null)
-    setStreaming(false)
-    setStreamingText('')
-    setStreamingActivities([])
-    setOptimisticUserMessage(null)
+    clearStreamingPresentation()
     setRegeneratingMessageId(null)
     setContinuingMessageId(null)
     initializedOptionsSessionRef.current = null
@@ -227,7 +226,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     lockedUserMessageIdRef.current = null
     setPreviousUserMessage(null)
     setShowBackToBottom(false)
-  }, [sessionId])
+  }, [sessionId, clearStreamingPresentation])
 
   const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal, epoch = viewEpochRef.current) => {
     const h = await getHistory(targetSessionId, signal)
@@ -411,16 +410,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (commandHelp || commandHelpLoading || resolvedSessionId == null || streaming) return
     setCommandHelpLoading(true)
     try {
-      const response = await authFetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: '/help' }),
-      })
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: response.statusText }))
-        throw new Error(body.error ?? response.statusText)
-      }
-      const data = await response.json() as SendMessageResponse
+      const data = await sendCommand(resolvedSessionId, '/help')
       if (data.command_response) {
         setCommandHelp(data.command_response)
       }
@@ -431,97 +421,76 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
   }, [commandHelp, commandHelpLoading, resolvedSessionId, streaming])
 
-  const handleToolGroupToggle = useCallback(async (toolGroup: string, active: boolean) => {
+  const toggleSessionSetting = useCallback(async (kind: 'toolgroup' | 'plugin', key: 'tool_groups' | 'plugins', name: string, active: boolean) => {
     if (resolvedSessionId == null || streaming) return
     try {
-      const response = await authFetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: `/${active ? 'activate' : 'deactivate'} toolgroup ${toolGroup}` }),
-      })
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: response.statusText }))
-        throw new Error(body.error ?? response.statusText)
-      }
+      await sendCommand(resolvedSessionId, `/${active ? 'activate' : 'deactivate'} ${kind} ${name}`)
       setActiveSession(current => {
         if (current == null) return current
-        const toolGroups = active
-          ? [...new Set([...current.Settings.tool_groups, toolGroup])]
-          : current.Settings.tool_groups.filter(currentToolGroup => currentToolGroup !== toolGroup)
-        return { ...current, Settings: { ...current.Settings, tool_groups: toolGroups } }
+        const names = active
+          ? [...new Set([...current.Settings[key], name])]
+          : current.Settings[key].filter(currentName => currentName !== name)
+        return { ...current, Settings: { ...current.Settings, [key]: names } }
       })
     } catch (cause) {
       setError(String(cause))
     }
   }, [resolvedSessionId, streaming])
 
-  const handlePluginToggle = useCallback(async (plugin: string, active: boolean) => {
-    if (resolvedSessionId == null || streaming) return
-    try {
-      const response = await authFetch(`/api/v1/sessions/${resolvedSessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: `/${active ? 'activate' : 'deactivate'} plugin ${plugin}` }),
-      })
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: response.statusText }))
-        throw new Error(body.error ?? response.statusText)
-      }
-      setActiveSession(current => {
-        if (current == null) return current
-        const plugins = active
-          ? [...new Set([...current.Settings.plugins, plugin])]
-          : current.Settings.plugins.filter(currentPlugin => currentPlugin !== plugin)
-        return { ...current, Settings: { ...current.Settings, plugins } }
-      })
-    } catch (cause) {
-      setError(String(cause))
-    }
-  }, [resolvedSessionId, streaming])
+  const handleToolGroupToggle = useCallback((toolGroup: string, active: boolean) =>
+    toggleSessionSetting('toolgroup', 'tool_groups', toolGroup, active), [toggleSessionSetting])
+
+  const handlePluginToggle = useCallback((plugin: string, active: boolean) =>
+    toggleSessionSetting('plugin', 'plugins', plugin, active), [toggleSessionSetting])
+
+  // Accepts a file drag while idle, claiming the event; returns false for
+  // drags the composer should ignore.
+  const acceptFileDrag = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return false
+    event.preventDefault()
+    return true
+  }, [streaming])
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
-    event.preventDefault()
-    setDragDepth(depth => depth + 1)
-  }, [streaming])
-
+    if (acceptFileDrag(event)) setDragDepth(depth => depth + 1)
+  }, [acceptFileDrag])
   const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'copy'
-  }, [streaming])
-
+    if (acceptFileDrag(event)) event.dataTransfer.dropEffect = 'copy'
+  }, [acceptFileDrag])
   const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
-    event.preventDefault()
-    setDragDepth(depth => Math.max(0, depth - 1))
-  }, [streaming])
-
+    if (acceptFileDrag(event)) setDragDepth(depth => Math.max(0, depth - 1))
+  }, [acceptFileDrag])
   const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (streaming || !Array.from(event.dataTransfer.types).includes('Files')) return
-    event.preventDefault()
+    if (!acceptFileDrag(event)) return
     setDragDepth(0)
     handleFilesChange([...pendingFiles, ...Array.from(event.dataTransfer.files)])
-  }, [handleFilesChange, pendingFiles, streaming])
+  }, [acceptFileDrag, handleFilesChange, pendingFiles])
 
-  const byId = buildById(messages)
-  const childrenMap = buildChildrenMap(messages)
-  const path = activePath(localLeafId, byId)
-  const displayMessages = groupToolChains(path)
-  const userMessageNavigationItems: UserMessageNavigationItem[] = displayMessages
-    .filter(item => item.message.Role === 'user')
-    .map((item, index) => ({
-      id: item.message.ID,
-      summary: summarizeUserMessage(item.message.Content),
-      index: index + 1,
-    }))
-  if (optimisticUserMessage) {
-    userMessageNavigationItems.push({
-      id: optimisticUserMessage.ID,
-      summary: summarizeUserMessage(optimisticUserMessage.Content),
-      index: userMessageNavigationItems.length + 1,
-    })
-  }
+  // Derived once per message-tree change rather than on every streamed token.
+  const childrenMap = useMemo(() => buildChildrenMap(messages), [messages])
+  const path = useMemo(() => activePath(localLeafId, buildById(messages)), [messages, localLeafId])
+  const displayMessages = useMemo(() => groupToolChains(path), [path])
+  const lastAssistantIdx = useMemo(
+    () => displayMessages.map(item => item.message.Role).lastIndexOf('assistant'),
+    [displayMessages],
+  )
+  const userMessageNavigationItems = useMemo(() => {
+    const items: UserMessageNavigationItem[] = displayMessages
+      .filter(item => item.message.Role === 'user')
+      .map((item, index) => ({
+        id: item.message.ID,
+        summary: summarizeUserMessage(item.message.Content),
+        index: index + 1,
+      }))
+    if (optimisticUserMessage) {
+      items.push({
+        id: optimisticUserMessage.ID,
+        summary: summarizeUserMessage(optimisticUserMessage.Content),
+        index: items.length + 1,
+      })
+    }
+    return items
+  }, [displayMessages, optimisticUserMessage])
   const userMessageNavigationRef = useRef(userMessageNavigationItems)
   userMessageNavigationRef.current = userMessageNavigationItems
 
@@ -565,10 +534,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setPreviousUserMessage(current => sameNavigationItem(current, candidate) ? current : candidate)
   }, [])
 
-  const handleMessagesScroll = useCallback(() => {
-    syncScrollNavigation()
-  }, [syncScrollNavigation])
-
   useLayoutEffect(() => {
     syncScrollNavigation()
   }, [messages, localLeafId, optimisticUserMessage, syncScrollNavigation])
@@ -609,16 +574,13 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     if (resolvedSessionId == null) return
     try {
       streamAbortRef.current?.abort()
-      setStreaming(false)
+      clearStreamingPresentation()
       setPendingSteering(null)
-      setStreamingText('')
-      setStreamingActivities([])
-      setOptimisticUserMessage(null)
       await cancelActiveChatRun(resolvedSessionId)
     } catch (cause) {
       setError(String(cause))
     }
-  }, [resolvedSessionId])
+  }, [resolvedSessionId, clearStreamingPresentation])
 
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
     const isCommand = text.trimStart().startsWith('/')
@@ -729,11 +691,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       if (streamAbortRef.current === controller) streamAbortRef.current = null
       if (!completed && !switchedSession && targetSessionId != null && currentSessionRef.current === targetSessionId) await loadHistory(targetSessionId)
       if (currentSessionRef.current === targetSessionId) {
-        setStreaming(false)
-		setPendingSteering(null)
-        setStreamingText('')
-        setStreamingActivities([])
-        setOptimisticUserMessage(null)
+        clearStreamingPresentation()
+        setPendingSteering(null)
       }
     }
   }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, t])
@@ -808,10 +767,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     )
   }, [generationOptions, resolvedSessionId, runExistingSessionStream])
 
-  const handleBranchSwitch = useCallback((newLeafId: number) => {
-    setLocalLeafId(newLeafId)
-  }, [])
-
   const handleEditAssistant = useCallback(async (messageId: number, content: string) => {
     if (resolvedSessionId == null || localLeafId == null) return
 
@@ -833,10 +788,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       setEditingMessageId(null)
     }
   }, [resolvedSessionId, localLeafId, loadHistory])
-
-  const handleStop = useCallback(async () => {
-    await stopActiveRun()
-  }, [stopActiveRun])
 
   const handleCancelSteering = useCallback(async () => {
     if (pendingSteering == null || resolvedSessionId !== pendingSteering.sessionId) return
@@ -926,8 +877,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       return next
     })
   }
-
-  const lastAssistantIdx = displayMessages.map(item => item.message.Role).lastIndexOf('assistant')
 
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
   const headerTitle = activeSession?.Title || (resolvedSessionId == null ? t('chat.session.new') : t('chat.session.unnamed', { id: resolvedSessionId }))
@@ -1023,7 +972,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         )}
       </header>
       <div className={'messages-region' + (wideChatHistory && !isNewSession ? ' wide-chat-history' : '')}>
-        <div className="messages-pane" ref={messagesPaneRef} onScroll={handleMessagesScroll}>
+        <div className="messages-pane" ref={messagesPaneRef} onScroll={syncScrollNavigation}>
         {isNewSession ? (
           <div className="empty-state-card">
             <h2>{isChoosingConcierge ? t('chat.concierge.select') : t('chat.concierge.start')}</h2>
@@ -1071,7 +1020,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               branchMessage={item.branchMessage}
               processMessages={item.processMessages}
               childrenMap={childrenMap}
-              onBranchSwitch={handleBranchSwitch}
+              onBranchSwitch={setLocalLeafId}
               onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID)}
               onEditAssistant={(content) => handleEditAssistant(item.message.ID, content)}
               editSaving={editingMessageId === item.message.ID}
@@ -1090,7 +1039,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           <div className="optimistic-message">
             <MessageBubble
               msg={optimisticUserMessage}
-              childrenMap={new Map()}
+              childrenMap={NO_CHILDREN}
               onBranchSwitch={() => undefined}
               onEditResend={() => undefined}
               onEditAssistant={async () => undefined}
@@ -1145,7 +1094,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         commandHelpLoading={commandHelpLoading}
         onCommandHelpRequest={handleCommandHelpRequest}
         disabled={streaming}
-        onStop={handleStop}
+        onStop={stopActiveRun}
     steeringMode={steeringMode}
     onSteeringModeChange={setSteeringMode}
     pendingSteering={pendingSteering?.text ?? null}

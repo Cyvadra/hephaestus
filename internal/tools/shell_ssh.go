@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/sshutil"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 )
@@ -20,7 +21,7 @@ type sshShellBackend struct {
 }
 
 func newSSHShellBackend(destination, projectsRoot string, access FileAccessConfig) (sshShellBackend, error) {
-	if !validShellSSHDestination(destination) {
+	if !sshutil.ValidDestination(destination) {
 		return sshShellBackend{}, fmt.Errorf("invalid SSH destination")
 	}
 	if !strings.HasPrefix(projectsRoot, "/") {
@@ -30,12 +31,6 @@ func newSSHShellBackend(destination, projectsRoot string, access FileAccessConfi
 		return sshShellBackend{}, fmt.Errorf("OpenSSH client unavailable: %w", err)
 	}
 	return sshShellBackend{destination: destination, projectsRoot: pathpkg.Clean(projectsRoot), access: access}, nil
-}
-
-func validShellSSHDestination(destination string) bool {
-	return destination != "" && !strings.HasPrefix(destination, "-") && strings.IndexFunc(destination, func(r rune) bool {
-		return r <= ' ' || r == 0x7f
-	}) == -1
 }
 
 func (b sshShellBackend) workingDirectory(ctx context.Context, requested string) (string, error) {

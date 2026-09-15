@@ -152,11 +152,11 @@ func (t *WebFetchTool) fetch(ctx context.Context, provider webFetchProvider, tar
 }
 
 func truncateWebText(text string, maxChars int) string {
-	runes := []rune(text)
-	if len(runes) <= maxChars {
+	head, dropped := transform.TruncateRunes(text, maxChars)
+	if dropped == 0 {
 		return text
 	}
-	return string(runes[:maxChars]) + "\n[TRUNCATED]"
+	return head + "\n[TRUNCATED]"
 }
 
 type netIPResolver interface {

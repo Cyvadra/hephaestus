@@ -62,7 +62,7 @@ func (s *Server) startWorkflowRun(c *gin.Context) {
 	workflowName := c.Param("name")
 	var req startWorkflowRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	projectName := strings.TrimSpace(req.Project)
@@ -72,9 +72,9 @@ func (s *Server) startWorkflowRun(c *gin.Context) {
 	run, err := s.workflows.Start(workflowName, projectName, req.Input)
 	switch {
 	case errors.Is(err, workflow.ErrWorkflowNotFound), errors.Is(err, workflow.ErrProjectNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 	case errors.Is(err, workflow.ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 	case err != nil:
 		internalError(c, err)
 	default:
@@ -123,12 +123,12 @@ type workflowRunDetail struct {
 func (s *Server) getWorkflowRun(c *gin.Context) {
 	id, err := parseUintParam(c, "id", "workflow run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	run, steps, err := s.workflows.Get(id)
 	if errors.Is(err, workflow.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "workflow run not found"})
+		notFound(c, "workflow run not found")
 		return
 	}
 	if err != nil {
@@ -153,13 +153,13 @@ func (s *Server) getWorkflowRun(c *gin.Context) {
 func (s *Server) cancelWorkflowRun(c *gin.Context) {
 	id, err := parseUintParam(c, "id", "workflow run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.workflows.Cancel(id)
 	switch {
 	case errors.Is(err, workflow.ErrRunNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: "workflow run not found"})
+		notFound(c, "workflow run not found")
 	case errors.Is(err, workflow.ErrRunFinished):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case err != nil:
@@ -210,12 +210,12 @@ type jobRunDetail struct {
 func (s *Server) getJobRun(c *gin.Context) {
 	id, err := parseUintParam(c, "id", "job run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	run, err := s.jobs.Get(id)
 	if errors.Is(err, job.ErrJobNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "job run not found"})
+		notFound(c, "job run not found")
 		return
 	}
 	if err != nil {
@@ -245,13 +245,13 @@ func (s *Server) getJobRun(c *gin.Context) {
 func (s *Server) cancelJobRun(c *gin.Context) {
 	id, err := parseUintParam(c, "id", "job run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.jobs.Cancel(id)
 	switch {
 	case errors.Is(err, job.ErrJobNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: "job run not found"})
+		notFound(c, "job run not found")
 	case errors.Is(err, job.ErrRunFinished):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case err != nil:
@@ -275,7 +275,7 @@ func (s *Server) cancelJobRun(c *gin.Context) {
 func (s *Server) streamWorkflowRun(c *gin.Context) {
 	runID, err := parseUintParam(c, "id", "workflow run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 
@@ -283,7 +283,7 @@ func (s *Server) streamWorkflowRun(c *gin.Context) {
 	// lost; Subscribe itself closes the channel for already-finished runs.
 	sub, err := s.workflows.Subscribe(runID)
 	if errors.Is(err, workflow.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "workflow run not found"})
+		notFound(c, "workflow run not found")
 		return
 	}
 	if err != nil {
@@ -298,20 +298,8 @@ func (s *Server) streamWorkflowRun(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache, no-transform")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-	c.Writer.Flush()
-
-	sequence := uint64(0)
 	ctx := c.Request.Context()
-	streamEvent := func(event string, data any) {
-		sequence++
-		c.SSEvent(event, streamEventEnvelope{Sequence: sequence, Data: data})
-		c.Writer.Flush()
-	}
+	streamEvent := beginSSE(c)
 	emitDone := func(run *store.WorkflowRun) {
 		streamEvent("done", workflow.ProgressEvent{Type: workflow.ProgressDone, Run: run})
 		// 发送 done 后短暂保持连接，确保客户端收到 done 并主动调用

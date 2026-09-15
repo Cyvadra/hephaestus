@@ -136,7 +136,7 @@ func TestIntegration_LastMessageTimeTracksActiveLeaf(t *testing.T) {
 	}
 
 	detachedTime := lastTime.Add(time.Hour)
-	if _, err := svc.AppendMessagesDetached(sess.ID, &saved[0].ID, []store.ChatMessage{{Role: "assistant", Content: "detached", Timestamp: detachedTime}}); err != nil {
+	if _, err := svc.AppendMessagesDetachedWithDeliveries(sess.ID, sess.ProjectID, &saved[0].ID, []store.ChatMessage{{Role: "assistant", Content: "detached", Timestamp: detachedTime}}, nil, nil); err != nil {
 		t.Fatalf("AppendMessagesDetached: %v", err)
 	}
 	if err := db.First(&reloaded, sess.ID).Error; err != nil {
@@ -146,7 +146,7 @@ func TestIntegration_LastMessageTimeTracksActiveLeaf(t *testing.T) {
 		t.Fatalf("detached append changed LastMessageTime to %s, want %s", reloaded.LastMessageTime, lastTime)
 	}
 
-	if _, err := svc.AppendMessagesAtLeaf(sess.ID, &saved[1].ID, &saved[0].ID, []store.ChatMessage{{Role: "user", Content: "stale", Timestamp: detachedTime}}); !errors.Is(err, session.ErrStaleActiveLeaf) {
+	if _, err := svc.AppendMessagesAtLeafWithDeliveries(sess.ID, sess.ProjectID, &saved[1].ID, &saved[0].ID, []store.ChatMessage{{Role: "user", Content: "stale", Timestamp: detachedTime}}, nil, nil); !errors.Is(err, session.ErrStaleActiveLeaf) {
 		t.Fatalf("expected ErrStaleActiveLeaf, got %v", err)
 	}
 	if err := db.First(&reloaded, sess.ID).Error; err != nil {

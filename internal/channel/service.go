@@ -19,6 +19,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
+	"github.com/Cyvadra/hephaestus/internal/media"
 	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/session"
@@ -278,7 +279,7 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 	if len(message.Attachments) > 0 {
 		visualCount := 0
 		for _, attachment := range message.Attachments {
-			if supportedVisualMIME(normalizedMIME(attachment.MIME, attachment.Name)) {
+			if media.SupportedVisual(normalizedMIME(attachment.MIME, attachment.Name)) {
 				visualCount++
 			}
 		}
@@ -379,7 +380,7 @@ func channelTurnOptions(expectedLeaf *uint, attachments []channels.Attachment, o
 	for _, attachment := range attachments {
 		attachment.MIME = normalizedMIME(attachment.MIME, attachment.Name)
 		kind := store.MessageAttachmentUserUpload
-		if supportedVisualMIME(attachment.MIME) {
+		if media.SupportedVisual(attachment.MIME) {
 			kind = store.MessageAttachmentVisualInput
 		}
 		options.UploadAttachments = append(options.UploadAttachments, store.MessageAttachment{
@@ -387,15 +388,6 @@ func channelTurnOptions(expectedLeaf *uint, attachments []channels.Attachment, o
 		})
 	}
 	return options
-}
-
-func supportedVisualMIME(mediaType string) bool {
-	switch mediaType {
-	case "image/jpeg", "image/png", "image/gif", "image/webp":
-		return true
-	default:
-		return false
-	}
 }
 
 func normalizedMIME(mediaType, name string) string {

@@ -8,7 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -424,7 +425,7 @@ func formatHelp(definitions []commandDefinition) string {
 // parallel switch statements. Either func may be nil where that operation
 // isn't supported for the Kind (e.g. /detail on a plugin).
 type kindDescriptor struct {
-	names    func(s *Service) ([]listItem, error)
+	names    func(s *Service, sessionID uint) ([]listItem, error)
 	detail   func(s *Service, name string) (any, error)
 	validate func(s *Service, name string) error
 }
@@ -443,6 +444,13 @@ func namedItems(names []string) []listItem {
 	return items
 }
 
+// sortedNames renders a registry map as list items in stable name order.
+func sortedNames[T any](values func(*Service) map[string]T) func(*Service, uint) ([]listItem, error) {
+	return func(s *Service, _ uint) ([]listItem, error) {
+		return namedItems(slices.Sorted(maps.Keys(values(s)))), nil
+	}
+}
+
 func knownName[T any](kind Kind, values func(*Service) map[string]T) func(*Service, string) error {
 	return func(s *Service, name string) error {
 		if _, ok := values(s)[name]; !ok {
@@ -454,22 +462,22 @@ func knownName[T any](kind Kind, values func(*Service) map[string]T) func(*Servi
 
 var kindDescriptors = map[Kind]kindDescriptor{
 	KindIdentity: {
-		names:    func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.currentRegistry().Identities)), nil },
+		names:    sortedNames(func(s *Service) map[string]registry.Identity { return s.currentRegistry().Identities }),
 		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().Identities[name], nil },
 		validate: knownName(KindIdentity, func(s *Service) map[string]registry.Identity { return s.currentRegistry().Identities }),
 	},
 	KindImpression: {
-		names:    func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.currentRegistry().Impressions)), nil },
+		names:    sortedNames(func(s *Service) map[string]registry.Impression { return s.currentRegistry().Impressions }),
 		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().Impressions[name], nil },
 		validate: knownName(KindImpression, func(s *Service) map[string]registry.Impression { return s.currentRegistry().Impressions }),
 	},
 	KindToolGroup: {
-		names:    func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.currentRegistry().ToolGroups)), nil },
+		names:    sortedNames(func(s *Service) map[string]registry.ToolGroup { return s.currentRegistry().ToolGroups }),
 		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().ToolGroups[name], nil },
 		validate: knownName(KindToolGroup, func(s *Service) map[string]registry.ToolGroup { return s.currentRegistry().ToolGroups }),
 	},
 	KindPlugin: {
-		names: func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.pluginReg.KnownNames())), nil },
+		names: sortedNames(func(s *Service) map[string]bool { return s.pluginReg.KnownNames() }),
 		validate: func(s *Service, name string) error {
 			if !s.pluginReg.Has(name) {
 				return fmt.Errorf("command: unknown plugin %q", name)
@@ -478,25 +486,25 @@ var kindDescriptors = map[Kind]kindDescriptor{
 		},
 	},
 	KindConcierge: {
-		names:    func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.currentRegistry().Concierges)), nil },
+		names:    sortedNames(func(s *Service) map[string]registry.Concierge { return s.currentRegistry().Concierges }),
 		detail:   func(s *Service, name string) (any, error) { return s.currentRegistry().Concierges[name], nil },
 		validate: knownName(KindConcierge, func(s *Service) map[string]registry.Concierge { return s.currentRegistry().Concierges }),
 	},
 	KindWorkflow: {
-		names:  func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.currentRegistry().Workflows)), nil },
+		names:  sortedNames(func(s *Service) map[string]registry.Workflow { return s.currentRegistry().Workflows }),
 		detail: func(s *Service, name string) (any, error) { return s.currentRegistry().Workflows[name], nil },
 	},
 	KindJob: {
-		names:  func(s *Service) ([]listItem, error) { return namedItems(keysOf(s.currentRegistry().Jobs)), nil },
+		names:  sortedNames(func(s *Service) map[string]registry.Job { return s.currentRegistry().Jobs }),
 		detail: func(s *Service, name string) (any, error) { return s.currentRegistry().Jobs[name], nil },
 	},
 	KindSession: {
-		names: func(s *Service) ([]listItem, error) {
+		names: func(s *Service, sessionID uint) ([]listItem, error) {
 			var sessions []store.Session
 			if err := s.db.Preload("Project").Where("parent_subagent_run_id IS NULL").Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
 				return nil, err
 			}
-			return sessionListItems(sessions, 0), nil
+			return sessionListItems(sessions, sessionID), nil
 		},
 		detail: func(s *Service, name string) (any, error) {
 			id, err := strconv.Atoi(name)
@@ -507,7 +515,7 @@ var kindDescriptors = map[Kind]kindDescriptor{
 		},
 	},
 	KindProject: {
-		names: func(s *Service) ([]listItem, error) {
+		names: func(s *Service, _ uint) ([]listItem, error) {
 			projects, err := s.projects.List()
 			if err != nil {
 				return nil, err
@@ -596,7 +604,7 @@ func (s *Service) list(sessionID uint, args []string) (string, error) {
 	}
 	kind := Kind(args[0])
 	desc, ok := kindDescriptors[kind]
-	if !ok || desc.names == nil {
+	if !ok {
 		return "", fmt.Errorf("command: unknown kind %q", kind)
 	}
 	items, err := s.listItems(sessionID, kind, desc)
@@ -633,14 +641,7 @@ func formatList(kind Kind, items []listItem) string {
 }
 
 func (s *Service) listItems(sessionID uint, kind Kind, desc kindDescriptor) ([]listItem, error) {
-	if kind == KindSession {
-		var sessions []store.Session
-		if err := s.db.Preload("Project").Where("parent_subagent_run_id IS NULL").Order("last_message_time desc, id desc").Limit(maxSessionListItems).Find(&sessions).Error; err != nil {
-			return nil, err
-		}
-		return sessionListItems(sessions, sessionID), nil
-	}
-	items, err := desc.names(s)
+	items, err := desc.names(s, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -743,8 +744,7 @@ func (s *Service) switchTo(ctx context.Context, sessionID uint, args []string) (
 		if !s.projects.IsConciergeAvailable(*boundProject, c.Name) {
 			return "", nil, fmt.Errorf("command: concierge %q is not available for project %q", c.Name, boundProject.Name)
 		}
-		nextSettings := session.SettingsFromConcierge(c)
-		settings = nextSettings
+		settings = session.SettingsFromConcierge(c)
 		if err := s.saveConciergeSettings(sess, c.Name, settings); err != nil {
 			return "", nil, err
 		}
@@ -770,16 +770,11 @@ func (s *Service) switchTo(ctx context.Context, sessionID uint, args []string) (
 				return "", nil, fmt.Errorf("command: switch project: %w", err)
 			}
 			settings := session.SettingsFromConcierge(concierge)
-			if err := s.db.Transaction(func(tx *gorm.DB) error {
-				if err := tx.Model(sess).Updates(map[string]any{
-					"source_concierge": concierge.Name,
-					"settings":         datatypes.NewJSONType(settings),
-					"project_id":       boundProject.ID,
-				}).Error; err != nil {
-					return err
-				}
-				return nil
-			}); err != nil {
+			if err := s.db.Model(sess).Updates(map[string]any{
+				"source_concierge": concierge.Name,
+				"settings":         datatypes.NewJSONType(settings),
+				"project_id":       boundProject.ID,
+			}).Error; err != nil {
 				return "", nil, fmt.Errorf("command: switch project: %w", err)
 			}
 			return fmt.Sprintf("Switched to concierge %q (identity now %q) and project %q.", concierge.Name, concierge.Identity, name), nil, nil
@@ -1129,15 +1124,6 @@ func (s *Service) forgetSession(sessionID uint) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.lastList, sessionID)
-}
-
-func keysOf[T any](m map[string]T) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func sessionListItems(sessions []store.Session, currentSessionID uint) []listItem {

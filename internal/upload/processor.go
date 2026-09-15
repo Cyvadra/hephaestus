@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Cyvadra/hephaestus/internal/media"
 )
 
 var (
@@ -141,7 +143,7 @@ func (p *Processor) Process(_ context.Context, projectDir string, files []*multi
 		content := p.extractText(path, extension(name), file.Size)
 		attachment.MIME = detectMIME(path)
 		_, imageExtension := p.imageExtensions[extension(name)]
-		attachment.VisualInput = imageExtension && supportedVisualMIME(attachment.MIME)
+		attachment.VisualInput = imageExtension && media.SupportedVisual(attachment.MIME)
 		if content != "" {
 			attachment.ContentIncluded = true
 		}
@@ -217,15 +219,6 @@ func detectMIME(path string) string {
 		return ""
 	}
 	return http.DetectContentType(header[:count])
-}
-
-func supportedVisualMIME(mediaType string) bool {
-	switch mediaType {
-	case "image/jpeg", "image/png", "image/gif", "image/webp":
-		return true
-	default:
-		return false
-	}
 }
 
 func promptBlock(path string, size int64, content string) string {

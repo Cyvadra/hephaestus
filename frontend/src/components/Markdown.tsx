@@ -81,12 +81,15 @@ function CodeBlock({ className, children }: CodeProps) {
  * markdown plus LaTeX math (both `$...$`/`$$...$$` and the `\(...\)`/`\[...\]`
  * delimiters some models emit).
  */
+const remarkPlugins = [remarkGfm, remarkMath]
+const rehypePlugins = [rehypeKatex]
+
 export default function Markdown({ children }: Props) {
   return (
     <div className="ds-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={{
           pre({ children }) {
             return <>{children}</>

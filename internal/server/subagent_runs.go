@@ -57,12 +57,12 @@ func publicSubagentRunSummary(run store.SubagentRun) subagentRunSummary {
 func (s *Server) listSubagentRuns(c *gin.Context) {
 	sessionID, err := parseSessionID(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	runs, err := s.subagents.ListByParentSession(sessionID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: "session not found"})
+		notFound(c, "session not found")
 		return
 	}
 	if err != nil {
@@ -88,12 +88,12 @@ func (s *Server) listSubagentRuns(c *gin.Context) {
 func (s *Server) getSubagentRun(c *gin.Context) {
 	runID, err := parseUintParam(c, "id", "subagent run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	run, err := s.subagents.Get(runID)
 	if errors.Is(err, subagent.ErrRunNotFound) {
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 		return
 	}
 	if err != nil {
@@ -116,13 +116,13 @@ func (s *Server) getSubagentRun(c *gin.Context) {
 func (s *Server) cancelSubagentRun(c *gin.Context) {
 	runID, err := parseUintParam(c, "id", "subagent run id")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		badRequest(c, err)
 		return
 	}
 	err = s.subagents.Cancel(runID)
 	switch {
 	case errors.Is(err, subagent.ErrRunNotFound):
-		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+		notFound(c, err.Error())
 	case errors.Is(err, subagent.ErrRunFinished):
 		c.JSON(http.StatusConflict, errorResponse{Error: err.Error()})
 	case err != nil:

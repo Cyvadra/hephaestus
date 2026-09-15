@@ -17,12 +17,15 @@ export async function downloadAttachment(sessionId: number, attachmentId: number
   URL.revokeObjectURL(url)
 }
 
+/** Throws the server's `{ error }` message (or status text) for a failed response. */
+export async function ensureOk(res: Response): Promise<Response> {
+  if (res.ok) return res
+  const body = await res.json().catch(() => ({ error: res.statusText }))
+  throw new Error(body.error ?? res.statusText)
+}
+
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await authFetch(url, init)
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
+  const res = await ensureOk(await authFetch(url, init))
   if (res.status === 204 || res.headers.get('Content-Length') === '0') return undefined as T
   return res.json()
 }
@@ -54,17 +57,12 @@ export const createProject = (name: string, description: string) =>
     body: JSON.stringify({ name, description }),
   })
 
-export const deleteProject = async (name: string, deleteDirectory = false) => {
-  const res = await authFetch(`${BASE}/projects/${encodeURIComponent(name)}`, {
+export const deleteProject = (name: string, deleteDirectory = false) =>
+  fetchJSON<void>(`${BASE}/projects/${encodeURIComponent(name)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete_directory: deleteDirectory }),
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
-}
 
 export const listConcierges = (project?: string) => {
   const query = project ? `?project=${encodeURIComponent(project)}` : ''
@@ -94,13 +92,16 @@ export const updateSession = (sessionId: number, changes: { title?: string; arch
     }),
   })
 
-export const deleteSession = async (sessionId: number) => {
-  const res = await authFetch(`${BASE}/sessions/${sessionId}`, { method: 'DELETE' })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
-}
+export const deleteSession = (sessionId: number) =>
+  fetchJSON<void>(`${BASE}/sessions/${sessionId}`, { method: 'DELETE' })
+
+/** Executes a slash command in the session without starting a chat run. */
+export const sendCommand = (sessionId: number, text: string) =>
+  fetchJSON<SendMessageResponse>(`${BASE}/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
 
 export const getHistory = (sessionId: number, signal?: AbortSignal) =>
   fetchJSON<HistoryResponse>(`${BASE}/sessions/${sessionId}/history`, { signal })
@@ -114,10 +115,7 @@ export const getActiveChatRun = (sessionId: number) =>
 export const getSteering = async (sessionId: number): Promise<SteeringResponse | null> => {
   const res = await authFetch(`${BASE}/sessions/${sessionId}/chat-run/steering`)
   if (res.status === 204) return null
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
+  await ensureOk(res)
   return res.json() as Promise<SteeringResponse>
 }
 
@@ -231,13 +229,8 @@ export const replaceConfiguration = <K extends ConfigurationKind>(kind: K, name:
     body: JSON.stringify(value),
   })
 
-export const deleteConfiguration = async (kind: ConfigurationKind, name: string) => {
-  const res = await authFetch(configurationURL(kind, name), { method: 'DELETE' })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
-}
+export const deleteConfiguration = (kind: ConfigurationKind, name: string) =>
+  fetchJSON<void>(configurationURL(kind, name), { method: 'DELETE' })
 
 export interface ConfigurationCompletionRequest {
   kind: Extract<ConfigurationKind, 'identities' | 'impressions'>

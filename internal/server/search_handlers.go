@@ -1,16 +1,13 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 // searchSessions godoc
@@ -32,7 +29,7 @@ func (s *Server) searchSessions(c *gin.Context) {
 		return
 	}
 
-	boundProject, ok := s.resolveProjectQuery(c)
+	boundProject, ok := s.requireProject(c, c.Query("project"))
 	if !ok {
 		return
 	}
@@ -66,7 +63,7 @@ func (s *Server) searchMessages(c *gin.Context) {
 		return
 	}
 
-	boundProject, ok := s.resolveProjectQuery(c)
+	boundProject, ok := s.requireProject(c, c.Query("project"))
 	if !ok {
 		return
 	}
@@ -80,24 +77,4 @@ func (s *Server) searchMessages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, results)
-}
-
-// resolveProjectQuery looks up the Project named by the "project" query
-// parameter (defaulting like listSessions), writing an error response and
-// returning ok=false if it can't be resolved.
-func (s *Server) resolveProjectQuery(c *gin.Context) (*store.Project, bool) {
-	projectName := strings.TrimSpace(c.Query("project"))
-	if projectName == "" {
-		projectName = project.DefaultName
-	}
-	boundProject, err := s.projects.GetByName(projectName)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, errorResponse{Error: "project not found: " + projectName})
-			return nil, false
-		}
-		internalError(c, err)
-		return nil, false
-	}
-	return boundProject, true
 }

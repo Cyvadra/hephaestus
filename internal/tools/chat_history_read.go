@@ -8,6 +8,7 @@ import (
 
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"gorm.io/gorm"
 )
 
@@ -145,9 +146,9 @@ func preserveSnippet(content string, limit int) string {
 	if content == "" {
 		return "(no text content)"
 	}
-	runes := []rune(content)
-	if len(runes) <= limit {
+	head, dropped := transform.TruncateRunes(content, limit)
+	if dropped == 0 {
 		return content
 	}
-	return string(runes[:limit]) + fmt.Sprintf("\n…(+%d chars; increase max_chars to read more)", len(runes)-limit)
+	return head + fmt.Sprintf("\n…(+%d chars; increase max_chars to read more)", dropped)
 }

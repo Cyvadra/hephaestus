@@ -27,6 +27,7 @@ v0.3.3 及更早版本的完整记录见 git tag 与提交历史。
 - PM2 配置不再内置代理地址：仅在设置 `HEPHAESTUS_PROXY_URL` 时注入代理环境变量。
 - Swagger 文档重新生成，补上缺失的 `/configurations/complete` 与鉴权声明。
 - `HEPHAESTUS_POSTGRES_DSN` 标记为废弃别名，使用时会打印提示；请改用 `HEPHAESTUS_DATABASE_URL`。
+- **`/workflow-runs/:id/stream` 的事件序号改为从 0 开始**（此前从 1 开始），与 `/chat-runs/:id/stream`、`/configurations/complete` 及前端的校验保持一致。依赖序号从 1 连续递增的外部消费方需相应调整。
 
 ### Fixed
 

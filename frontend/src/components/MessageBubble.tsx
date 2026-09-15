@@ -5,7 +5,7 @@ import Markdown from './Markdown'
 import type { ChatMessage, ToolCall } from '../api/types'
 import { downloadAttachment } from '../api/client'
 import { siblings, descendToLeaf } from '../lib/tree'
-import { parseAttachmentPrefix } from '../lib/attachments'
+import { formatSize, parseAttachmentPrefix } from '../lib/attachments'
 import { parseAskQuestionsHistory } from '../lib/askQuestionsHistory'
 
 interface Props {
@@ -313,19 +313,23 @@ export default function MessageBubble({ msg, branchMessage, processMessages, chi
   )
 }
 
+const timestampFormatters = new Map<string, { today: Intl.DateTimeFormat; other: Intl.DateTimeFormat }>()
+
 function formatMessageTimestamp(timestamp: string, locale: string) {
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return ''
 
-  const isToday = date.toDateString() === new Date().toDateString()
-  return new Intl.DateTimeFormat(locale, isToday
-    ? { hour: '2-digit', minute: '2-digit', hour12: false }
-    : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false },
-  ).format(date)
-}
-
-function formatAttachmentSize(size: number) {
-  return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`
+  let formatters = timestampFormatters.get(locale)
+  if (!formatters) {
+    formatters = {
+      today: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
+      other: new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }),
+    }
+    timestampFormatters.set(locale, formatters)
+  }
+  const now = new Date()
+  const isToday = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+  return (isToday ? formatters.today : formatters.other).format(date)
 }
 
 function AssistantAttachment({ attachment }: { attachment: ChatMessage['Attachments'][number] }) {
@@ -361,7 +365,7 @@ function AssistantAttachment({ attachment }: { attachment: ChatMessage['Attachme
     >
       <FileText aria-hidden="true" size={16} />
       <span ref={nameRef} style={style}><span>{attachment.Name}</span></span>
-      <small>{formatAttachmentSize(attachment.Size)}</small>
+      <small>{formatSize(attachment.Size)}</small>
       <Download aria-hidden="true" size={15} />
     </button>
   )

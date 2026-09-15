@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowUp, Blocks, Check, ShieldCheck, Wrench, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { formatSize } from '../lib/attachments'
 import type { GenerationOptions, ReasoningEffort, SteeringMode } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
 
@@ -69,10 +70,10 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
     ? t(`chat.reasoning.${generationOptions.reasoningEffort}`)
     : t('chat.reasoning.unavailable')
   const commandQuery = text.trimStart().toLowerCase()
-  const commandSuggestions = commandHelp
+  const commandSuggestions = useMemo(() => commandHelp
     ?.split('\n')
     .filter(line => line.trimStart().startsWith('/'))
-    .sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' })) ?? []
+    .sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' })) ?? [], [commandHelp])
   const matchedCommands = commandQuery === '/'
     ? []
     : commandSuggestions.filter(command => command.toLowerCase().startsWith(commandQuery))
@@ -205,7 +206,6 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
             value={text}
             onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}
-            disabled={false}
             placeholder={disabled ? t('chat.compose.generating') : t('chat.compose.placeholder')}
             rows={3}
             className="composer-textarea"
@@ -473,10 +473,6 @@ function SelectableOptionsControl({ label, menuLabel, title, icon, options, acti
       )}
     </div>
   )
-}
-
-function formatSize(size: number) {
-  return size >= 1024 * 1024 ? `${(size / (1024 * 1024)).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`
 }
 
 // DeepSeek 官方思考图标（轨道圆环 + 中心点）

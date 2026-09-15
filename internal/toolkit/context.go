@@ -3,7 +3,6 @@ package toolkit
 import (
 	"context"
 
-	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/store"
 )
 
@@ -100,15 +99,4 @@ func WithTurnMessages(ctx context.Context, messages []store.ChatMessage) context
 func TurnMessagesFromContext(ctx context.Context) ([]store.ChatMessage, bool) {
 	messages, ok := ctx.Value(turnMessagesContextKey{}).([]store.ChatMessage)
 	return append([]store.ChatMessage(nil), messages...), ok
-}
-
-type toolCallContextKey struct{}
-
-func WithToolCall(ctx context.Context, call ds4.ToolCall) context.Context {
-	return context.WithValue(ctx, toolCallContextKey{}, call)
-}
-
-func ToolCallFromContext(ctx context.Context) (ds4.ToolCall, bool) {
-	call, ok := ctx.Value(toolCallContextKey{}).(ds4.ToolCall)
-	return call, ok
 }

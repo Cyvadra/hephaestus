@@ -1,4 +1,4 @@
-import { startChatRun, startChatRunWithFiles, startConfigurationCompletion, type ConfigurationCompletionRequest } from './client'
+import { ensureOk, startChatRun, startChatRunWithFiles, startConfigurationCompletion, type ConfigurationCompletionRequest } from './client'
 import { authFetch } from './auth'
 import type { ChatRun, ChatRunDone, GenerationOptions, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
 
@@ -85,55 +85,20 @@ export async function* streamRun(runId: number, signal?: AbortSignal): AsyncGene
 }
 
 export async function* streamConfigurationCompletion(request: ConfigurationCompletionRequest, signal?: AbortSignal): AsyncGenerator<ConfigurationCompletionEvent> {
-  yield* streamConfigurationResponse(startConfigurationCompletion(request, signal), signal)
+  yield* streamConfigurationResponse(startConfigurationCompletion(request, signal))
 }
 
-async function* streamConfigurationResponse(responsePromise: Promise<Response>, signal?: AbortSignal): AsyncGenerator<ConfigurationCompletionEvent> {
-  const res = await responsePromise
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let eventName = ''
-  let data = ''
-  let sequence = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      const normalized = line.endsWith('\r') ? line.slice(0, -1) : line
-      if (normalized === '') {
-        if (eventName) {
-          const envelope = JSON.parse(data) as { sequence: number; data: { text?: string; status?: string } | string }
-          if (envelope.sequence !== sequence) throw new Error(`Out-of-order SSE event: expected ${sequence}, received ${envelope.sequence}`)
-          if (eventName === 'delta' && typeof envelope.data !== 'string') yield { sequence, type: 'delta', data: envelope.data.text ?? '' }
-          else if (eventName === 'error') yield { sequence, type: 'error', data: typeof envelope.data === 'string' ? envelope.data : '' }
-          else if (eventName === 'done') yield { sequence, type: 'done' }
-          sequence++
-        }
-        eventName = ''
-        data = ''
-      } else if (normalized.startsWith('event:')) eventName = normalized.slice(6).trim()
-      else if (normalized.startsWith('data:')) data += (data ? '\n' : '') + normalized.slice(5).replace(/^ /, '')
-    }
-  }
-  if (signal?.aborted) return
+interface RawSSEEvent {
+  event: string
+  envelope: EventEnvelope
 }
 
-async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {
-  const res = await authFetch(url, init)
-
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? res.statusText)
-  }
-
+/**
+ * Parses the SSE wire format from a fetch response body into named events,
+ * verifying the envelope sequence is contiguous.
+ */
+async function* readSSE(res: Response): AsyncGenerator<RawSSEEvent> {
+  if (!res.body) throw new Error('Response has no body')
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -141,82 +106,79 @@ async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<S
   let dataLines: string[] = []
   let expectedSequence = 0
 
-  const dispatch = async function* (): AsyncGenerator<StreamEvent> {
-    if (!eventName && dataLines.length === 0) {
-      eventName = ''
-      dataLines = []
-      return
-    }
-
-    if (!eventName || dataLines.length === 0) {
-      throw new Error('Malformed SSE event')
-    }
-
+  const flush = (): RawSSEEvent | null => {
+    if (!eventName && dataLines.length === 0) return null
+    if (!eventName || dataLines.length === 0) throw new Error('Malformed SSE event')
     const envelope = parseEnvelope(dataLines.join('\n'))
     if (envelope.sequence !== expectedSequence) {
       throw new Error(`Out-of-order SSE event: expected ${expectedSequence}, received ${envelope.sequence}`)
     }
     expectedSequence++
-
-    const progress = envelope.data as { type?: string, text?: string, tool_call?: StreamToolCall, session?: Session, interaction?: InteractionRequest }
-    if (eventName === 'snapshot') {
-      yield { sequence: envelope.sequence, type: 'snapshot', data: envelope.data as ChatRun }
-    } else if (eventName === 'delta' || eventName === 'reasoning') {
-      yield { sequence: envelope.sequence, type: eventName, data: requireString(progress.text) }
-    } else if (eventName === 'tool_call' || eventName === 'tool_output' || eventName === 'tool_result') {
-      if (!progress.tool_call) throw new Error('Invalid SSE tool event data')
-      yield { sequence: envelope.sequence, type: eventName, data: progress.tool_call }
-    } else if (eventName === 'session_updated') {
-      if (!progress.session) throw new Error('Invalid SSE session event data')
-      yield { sequence: envelope.sequence, type: 'session_updated', data: progress.session }
-    } else if (eventName === 'ask_permission' || eventName === 'ask_questions') {
-      if (!progress.interaction) throw new Error('Invalid SSE interaction event data')
-    yield { sequence: envelope.sequence, type: eventName, data: progress.interaction }
-    } else if (eventName === 'done') {
-      yield { sequence: envelope.sequence, type: 'done', data: envelope.data as ChatRunDone }
-    } else {
-      throw new Error(`Unknown SSE event: ${eventName}`)
-    }
-
+    const raw = { event: eventName, envelope }
     eventName = ''
     dataLines = []
+    return raw
   }
 
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
     buf += decoder.decode(value, { stream: true })
-
     const lines = buf.split('\n')
     buf = lines.pop() ?? ''
-
     for (const line of lines) {
       const normalized = line.endsWith('\r') ? line.slice(0, -1) : line
-
       if (normalized === '') {
-        for await (const ev of dispatch()) {
-          yield ev
-        }
+        const raw = flush()
+        if (raw) yield raw
+      } else if (normalized.startsWith(':')) {
         continue
-      }
-
-      if (normalized.startsWith(':')) {
-        continue
-      }
-
-      if (normalized.startsWith('event:')) {
+      } else if (normalized.startsWith('event:')) {
         eventName = normalized.slice(6).trim()
       } else if (normalized.startsWith('data:')) {
-        let chunk = normalized.slice(5)
-        if (chunk.startsWith(' ')) {
-          chunk = chunk.slice(1)
-        }
-        dataLines.push(chunk)
+        dataLines.push(normalized.slice(5).replace(/^ /, ''))
       }
     }
   }
+  // A connection cut between `event:` and its `data:` line leaves a partial
+  // trailing event; discard it rather than failing the whole stream.
+  if (eventName && dataLines.length === 0) return
+  const raw = flush()
+  if (raw) yield raw
+}
 
-  for await (const ev of dispatch()) {
-    yield ev
+async function* streamConfigurationResponse(responsePromise: Promise<Response>): AsyncGenerator<ConfigurationCompletionEvent> {
+  const res = await ensureOk(await responsePromise)
+  for await (const { event, envelope: { data, sequence } } of readSSE(res)) {
+    const payload = data as { text?: string; status?: string } | string
+    if (event === 'delta' && typeof payload !== 'string') yield { sequence, type: 'delta', data: payload.text ?? '' }
+    else if (event === 'error') yield { sequence, type: 'error', data: typeof payload === 'string' ? payload : '' }
+    else if (event === 'done') yield { sequence, type: 'done' }
+  }
+}
+
+async function* streamResponse(url: string, init: RequestInit): AsyncGenerator<StreamEvent> {
+  const res = await ensureOk(await authFetch(url, init))
+  for await (const { event: eventName, envelope } of readSSE(res)) {
+    const { sequence } = envelope
+    const progress = envelope.data as { type?: string, text?: string, tool_call?: StreamToolCall, session?: Session, interaction?: InteractionRequest }
+    if (eventName === 'snapshot') {
+      yield { sequence, type: 'snapshot', data: envelope.data as ChatRun }
+    } else if (eventName === 'delta' || eventName === 'reasoning') {
+      yield { sequence, type: eventName, data: requireString(progress.text) }
+    } else if (eventName === 'tool_call' || eventName === 'tool_output' || eventName === 'tool_result') {
+      if (!progress.tool_call) throw new Error('Invalid SSE tool event data')
+      yield { sequence, type: eventName, data: progress.tool_call }
+    } else if (eventName === 'session_updated') {
+      if (!progress.session) throw new Error('Invalid SSE session event data')
+      yield { sequence, type: 'session_updated', data: progress.session }
+    } else if (eventName === 'ask_permission' || eventName === 'ask_questions') {
+      if (!progress.interaction) throw new Error('Invalid SSE interaction event data')
+      yield { sequence, type: eventName, data: progress.interaction }
+    } else if (eventName === 'done') {
+      yield { sequence, type: 'done', data: envelope.data as ChatRunDone }
+    } else {
+      throw new Error(`Unknown SSE event: ${eventName}`)
+    }
   }
 }

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Cyvadra/ds4"
+	"github.com/Cyvadra/hephaestus/internal/media"
 	"github.com/Cyvadra/hephaestus/internal/registry"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
@@ -338,7 +339,7 @@ func addFinalUserImages(ctx context.Context, builder *ds4.ChatBuilder, messages 
 		if err != nil {
 			return fmt.Errorf("llm: read visual upload %q: %w", attachment.Name, err)
 		}
-		if !supportedVisualMIME(attachment.MIME) {
+		if !media.SupportedVisual(attachment.MIME) {
 			return fmt.Errorf("llm: visual upload %q has unsupported MIME type %q", attachment.Name, attachment.MIME)
 		}
 		builder.WithImageBase64(data, attachment.MIME, ds4.ImageDetailOriginal)
@@ -371,15 +372,6 @@ func resolveVisualUpload(workspace, relativePath string) (string, error) {
 		return "", fmt.Errorf("attachment path is not a regular file")
 	}
 	return resolved, nil
-}
-
-func supportedVisualMIME(mediaType string) bool {
-	switch mediaType {
-	case "image/jpeg", "image/png", "image/gif", "image/webp":
-		return true
-	default:
-		return false
-	}
 }
 
 func modelOrDefault(model string) string {
