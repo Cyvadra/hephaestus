@@ -2,32 +2,28 @@ const path = require('node:path')
 
 const root = __dirname
 
-// Proxy defaults.
+// Optional outbound proxy for the API process. Model providers and web tools
+// are the only components that make outbound requests; set HEPHAESTUS_PROXY_URL
+// before running `make deploy` when this host needs one. Nothing is injected
+// when it is unset, so the processes inherit the environment as-is.
 //
-// approx-client (mihomo) exposes one listener per exit node on port 17890, each
-// bound to its own 127.0.1.x loopback address; `us-direct.approx.internal`
-// resolves to 127.0.1.5 via /etc/hosts. That per-node listener is the supported
-// default.
-//
-// The old 127.0.0.1:7890 mixed-port is DEPRECATED and must not be reintroduced
-// here or anywhere else. Do not rely on the PM2 daemon's inherited environment:
-// the daemon can outlive several config generations, so every app declares its
-// proxy explicitly below.
-const PROXY_URL = process.env.HEPHAESTUS_PROXY_URL || 'http://us-direct.approx.internal:17890'
-const NO_PROXY =
-  process.env.HEPHAESTUS_NO_PROXY || '127.0.0.1,localhost,38.59.245.198,47.86.99.175'
+// Do not rely on the PM2 daemon's inherited environment: the daemon can outlive
+// several config generations, so each app declares its own environment below.
+const PROXY_URL = process.env.HEPHAESTUS_PROXY_URL || ''
+const NO_PROXY = process.env.HEPHAESTUS_NO_PROXY || '127.0.0.1,localhost'
 
-const proxyEnv = {
-  http_proxy: PROXY_URL,
-  https_proxy: PROXY_URL,
-  HTTP_PROXY: PROXY_URL,
-  HTTPS_PROXY: PROXY_URL,
-  all_proxy: PROXY_URL,
-  ALL_PROXY: PROXY_URL,
-  no_proxy: NO_PROXY,
-  NO_PROXY: NO_PROXY,
-  GOPROXY: process.env.GOPROXY || 'https://goproxy.cn,direct',
-}
+const proxyEnv = PROXY_URL
+  ? {
+      http_proxy: PROXY_URL,
+      https_proxy: PROXY_URL,
+      HTTP_PROXY: PROXY_URL,
+      HTTPS_PROXY: PROXY_URL,
+      all_proxy: PROXY_URL,
+      ALL_PROXY: PROXY_URL,
+      no_proxy: NO_PROXY,
+      NO_PROXY: NO_PROXY,
+    }
+  : {}
 
 module.exports = {
   apps: [
@@ -38,6 +34,7 @@ module.exports = {
       interpreter: 'none',
       env: {
         ...proxyEnv,
+        GIN_MODE: 'release',
         HEPHAESTUS_LISTEN_ADDR: '127.0.0.1:9016',
       },
       autorestart: true,
