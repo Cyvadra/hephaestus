@@ -36,9 +36,11 @@ test:
 	go test ./...
 
 # Requires HEPHAESTUS_TEST_POSTGRES_DSN to point at a real Postgres
-# instance; integration tests are skipped otherwise.
+# instance; integration tests are skipped otherwise. -p 1 is required:
+# every package shares the one database, so migrating it concurrently
+# from several test binaries makes them fail against each other.
 test-integration:
-	go test ./... -run TestIntegration -v
+	go test -p 1 ./... -run TestIntegration -v
 
 # Regenerates docs/swagger from the @-annotations in internal/server and
 # cmd/hephaestus/main.go. Requires the swag CLI (go install

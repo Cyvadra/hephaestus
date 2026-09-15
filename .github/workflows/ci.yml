@@ -28,10 +28,12 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      # Built from source with this job's toolchain: the published v1.64.8
+      # binary is built with Go 1.24 and refuses a module targeting 1.26.
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.64.8
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          golangci-lint run ./...
 
       - name: Vulnerability scan
         run: |
