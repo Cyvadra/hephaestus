@@ -73,10 +73,18 @@ Project 将会话、上传文件和工作目录组织在一起。模型可以在
 
 ### 前置条件
 
-- Go
-- Node.js 与 npm
+- Go 1.26 或更高
+- Node.js 22 或更高，以及 npm
 - SQLite 或 PostgreSQL
 - 至少一个可用模型提供方：DeepSeek API，或 OpenAI 兼容的本地模型服务
+
+Hephaestus 依赖一个带 `replace` 指令的 GoQQBot 分支，因此不支持 `go install`。请克隆仓库后构建：
+
+```sh
+git clone https://github.com/Cyvadra/hephaestus.git
+cd hephaestus
+make build-server
+```
 
 从仓库根目录配置环境变量。可以从 `.env.example` 开始：
 
@@ -186,6 +194,19 @@ http://127.0.0.1:5173
 
 Shell 默认关闭。启用后，高风险操作会要求确认；`/interact auto-approve` 的授权只存在于当前服务进程，重启后自动失效。
 
+## 内置 Plugin
+
+Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXED_PLUGINS` 列出的 Plugin 对每个 Session 固定启用且不可停用，其余可在 Concierge 或 Session 中按需开关。
+
+| 名称 | 作用 |
+| --- | --- |
+| `environment` | 在首条消息中注入时间、地点和天气等基础环境信息。 |
+| `metaphysics` | 在首条消息中注入黄历、四柱和奇门遁甲等玄学信息。 |
+| `session_summary` | 自动生成并定期更新会话标题和摘要。 |
+| `storyline_status` | 在每条助手回复后追加当前剧情状态。 |
+| `traditional-cc` | 将首条用户消息的简体中文转换为繁体中文。 |
+| `options` | 在回复后生成可选的下一条用户消息建议。 |
+
 ## 配置参考
 
 后端会读取进程环境变量以及工作目录中的可选 `.env` 文件。下表中“必需”代表对应功能启用时必须提供。
@@ -201,6 +222,7 @@ Shell 默认关闭。启用后，高风险操作会要求确认；`/interact aut
 | `HEPHAESTUS_LOCAL_MODEL_API_KEY` | 无 | 本地模型服务的可选 API Key。 |
 | `HEPHAESTUS_CONFIG_DIR` | `./config` | 默认 Registry 模板目录。 |
 | `HEPHAESTUS_LISTEN_ADDR` | `127.0.0.1:9016` | API 监听地址。 |
+| `HEPHAESTUS_COOKIE_SECURE` | `false` | 由反向代理终止 HTTPS 时设为 `true`，会话 Cookie 才会带上 `Secure`。 |
 | `HEPHAESTUS_PROJECTS_ROOT` | `./data/projects` | Project 目录根路径，支持 `~`。 |
 | `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE` | `false` | 允许文件工具访问 Project 与系统临时目录外的路径。 |
 | `HEPHAESTUS_SHELL_ENABLED` | `false` | 是否启用 Shell 工具。 |
@@ -212,8 +234,10 @@ Shell 默认关闭。启用后，高风险操作会要求确认；`/interact aut
 | `HEPHAESTUS_ENV_LONGITUDE` | 必需 | 环境经度，范围 `-180` 至 `180`。 |
 | `HEPHAESTUS_ENV_TIMEZONE` | 必需 | IANA 时区，用于时间、农历与四柱计算。 |
 | `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | 首轮环境上下文使用的天气服务回退顺序。 |
-| `HEPHAESTUS_FIXED_PLUGINS` | `metaphysics,session_summary` | 每个 Session 固定启用、不可停用的 Plugin。 |
+| `HEPHAESTUS_FIXED_PLUGINS` | `environment,metaphysics,session_summary` | 每个 Session 固定启用、不可停用的 Plugin。 |
 | `HEPHAESTUS_SUBAGENT_MAX_DEPTH` | `2` | `spawn` / `fork` 的最大递归委派深度。 |
+| `HEPHAESTUS_PROXY_URL` | 无 | 仅供 `make deploy`：为 PM2 进程注入出站代理；留空则不注入。 |
+| `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | 仅供 `make deploy`：代理排除列表。 |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | 无 | 接收警告和错误通知的企业微信 Webhook。 |
 | `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | 网页抓取实现：`firecrawl` 或 `local`。 |
 | `HEPHAESTUS_FIRECRAWL_API_KEY` | 使用 Firecrawl 时必需 | Firecrawl API Key。 |
@@ -228,7 +252,8 @@ Shell 默认关闭。启用后，高风险操作会要求确认；`/interact aut
 | `HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS` | `4000` | LLM 生成搜索摘要的最大长度。 |
 | `HEPHAESTUS_QQ_APP_ID` | 无 | 可选 QQ 频道 Bot AppID；三项 QQ 配置需要同时设置。 |
 | `HEPHAESTUS_QQ_APP_SECRET` | 无 | QQ Bot AppSecret。 |
-| `HEPHAESTUS_QQ_USER_OPENID` | 无 | 被允许接入此单用户部署的 QQ 用户 OpenID。 |
+| `HEPHAESTUS_QQ_USER_OPENID` | 无 | 被允许接入此单用户部署的 QQ 用户 OpenID；留空时见下方 QQ Channel 一节。 |
+| `HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS` | `30` | 纯图片消息等待随后文字消息的时长。 |
 | `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | 可直接纳入提示词的文本扩展名。 |
 | `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,gif,webp` | 经 MIME 校验后可直接作为视觉输入的扩展名。 |
 | `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | 可直接注入提示词的单个文本文件大小上限。 |
@@ -236,7 +261,9 @@ Shell 默认关闭。启用后，高风险操作会要求确认；`/interact aut
 | `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | 单条消息全部附件最大大小。 |
 | `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | 单条消息最多附件数。 |
 
-单文件上限不能超过单条消息附件总上限。`HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES`、`HEPHAESTUS_BAIDU_OCR_API_KEY` 与 `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` 已废弃并会被忽略。
+单文件上限不能超过单条消息附件总上限。
+
+`HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES`、`HEPHAESTUS_BAIDU_OCR_API_KEY` 与 `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` 已废弃并会被忽略。`HEPHAESTUS_POSTGRES_DSN` 是 `HEPHAESTUS_DATABASE_URL` 的废弃别名，仍可用但启动时会打印提示。
 
 ## Subagent
 
@@ -250,7 +277,9 @@ Shell 默认关闭。启用后，高风险操作会要求确认；`/interact aut
 
 ## QQ Channel
 
-同时设置 `HEPHAESTUS_QQ_APP_ID`、`HEPHAESTUS_QQ_APP_SECRET` 与 `HEPHAESTUS_QQ_USER_OPENID` 后，即可启用 QQ C2C Channel。三项都不设置时，应用不会启动外部 Channel。
+设置 `HEPHAESTUS_QQ_APP_ID` 与 `HEPHAESTUS_QQ_APP_SECRET` 即可启用 QQ C2C Channel，两者必须同时提供。三项都不设置时，应用不会启动外部 Channel。
+
+`HEPHAESTUS_QQ_USER_OPENID` 限定唯一允许接入的用户。首次部署时可以留空：此时 Bot 会向任何发信人回复其自己的 OpenID 且不处理消息，便于取得该值后填回配置并重启。
 
 每个 QQ 会话会串行处理消息并绑定一个持久 Session；首次消息从默认 Concierge 创建 Session。`/new`、`/clear` 和 Session 切换会更新该绑定。外部 Channel 等待完整回复而不转发模型增量；附件会复制到 Session 的 Project，Agent 交付的文件也可回传到 QQ。
 
@@ -283,7 +312,9 @@ make deploy
 
 仓库根目录的 `.env` 是生产配置的权威来源。服务启动时会用其中的值覆盖 PM2 或父进程遗留的同名变量，因此不会继续使用旧的模型地址或密钥。`make deploy-build` 仍只负责构建，适用于不需要重启服务的场景。
 
-不要将 HTTP 监听器直接暴露到互联网。请在 TLS 终止的反向代理后部署，并将 `/api` 转发到前端；后端 `9016` 端口应保持私有。前端采用 SPA 路由，生产静态主机或反向代理需要将未知的非 `/api` 路由回退至 `index.html`。
+部署后可用 `curl -s 127.0.0.1:9016/healthz` 确认 API 存活及其构建版本。
+
+不要将 HTTP 监听器直接暴露到互联网。请在 TLS 终止的反向代理后部署，并将 `/api` 转发到前端；后端 `9016` 端口应保持私有。此时必须设置 `HEPHAESTUS_COOKIE_SECURE=true`，否则会话 Cookie 不会带上 `Secure` 属性。前端采用 SPA 路由，生产静态主机或反向代理需要将未知的非 `/api` 路由回退至 `index.html`。
 
 需要私有远程访问时，可使用 SSH 转发：
 
@@ -296,10 +327,13 @@ ssh -N -L 5173:127.0.0.1:5173 user@server
 ## 验证
 
 ```sh
-make test
-make vet
+make check   # go vet + golangci-lint + go test -race
 make build
 ```
+
+`make check` 需要 golangci-lint v1.64 或更高。单独的 `make test`、`make vet`、`make lint` 仍然可用。设置 `HEPHAESTUS_TEST_POSTGRES_DSN` 后可用 `make test-integration` 在真实 Postgres 上运行集成测试。
+
+服务运行后，`GET /healthz` 返回运行状态与构建版本，无需认证；`./hephaestus --version` 输出同一版本号。
 
 ## 设计边界
 
@@ -309,8 +343,19 @@ make build
 - 配置、消息分支、工具调用和自动化运行优先保留，以便复盘、调试和继续工作。
 - 文件、Shell、网页抓取和外部 Channel 都可能触及外部系统；请结合部署环境审慎启用。
 
+## 文档
+
+- [`docs/release/Hephaestus.md`](./docs/release/Hephaestus.md)：核心概念与运行模型的完整说明。
+- [`SECURITY.md`](./SECURITY.md)：威胁模型、认证设计与部署要求。
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md)：开发环境、检查命令与配置文件约定。
+- [`CHANGELOG.md`](./CHANGELOG.md)：版本变更记录。
+
 ## 致谢
 
 初始 `pkg/channels` 实现改编自 PicoClaw 的 [`pkg/channels`](https://github.com/sipeed/picoclaw/tree/main/pkg/channels)，遵循 MIT License。
 
 部分 Agent Harness 实现与 Identity 配置参考 DeepSeek 的 [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness)，遵循 MIT License。
+
+QQ Channel 使用 [GoQQBot](https://github.com/ProgramCX/GoQQBot) 的分支，遵循 MIT License。
+
+完整的第三方版权与许可声明见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。Hephaestus 自身以 GNU GPL v3 发布。
