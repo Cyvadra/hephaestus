@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Requests under `/api` are proxied to `http://localhost:9016`.
+Requests under `/api` are proxied to `http://127.0.0.1:9016`.
 
 ## Deployment
 

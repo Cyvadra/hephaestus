@@ -46,9 +46,6 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	if err := recreateActiveChatRunIndex(db); err != nil {
 		return nil, err
 	}
-	if err := ensureSearchIndexes(db); err != nil {
-		return nil, err
-	}
 	for _, model := range []any{
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},
@@ -83,6 +80,12 @@ func Open(databaseURL string) (*gorm.DB, error) {
 		return nil, err
 	}
 	if err := migrateSessions(db, defaultProject.ID); err != nil {
+		return nil, err
+	}
+	// After migrateSessions: the sessions table is created there rather than
+	// by the AutoMigrate call above, so indexing it any earlier fails on a
+	// database that does not already have one.
+	if err := ensureSearchIndexes(db); err != nil {
 		return nil, err
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -96,16 +97,31 @@ func baseRegistry() *registry.Registry {
 	}
 }
 
+// openTestDB runs against Postgres when HEPHAESTUS_TEST_POSTGRES_DSN is set
+// and otherwise against a per-test SQLite file. Job orchestration itself is
+// dialect-independent (Service.claim already degrades its row lock on
+// SQLite), so the default keeps these tests in `make test` instead of
+// skipping them everywhere Postgres is absent.
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := os.Getenv("HEPHAESTUS_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("HEPHAESTUS_TEST_POSTGRES_DSN not set; skipping Postgres integration test")
+		dsn = "sqlite://" + filepath.Join(t.TempDir(), "job.db")
 	}
 	db, err := store.Open(dsn)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatalf("database pool: %v", err)
+	}
+	if db.Dialector.Name() == "sqlite" {
+		// The scheduler writes from several goroutines; a single connection
+		// serializes them instead of surfacing "database is locked".
+		pool.SetMaxOpenConns(1)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
 	return db
 }
 
@@ -131,12 +147,6 @@ func newServices(t *testing.T, reg *registry.Registry, runner *fakeRunner) *serv
 	wf := workflow.NewService(db, regStore, testToolReg(), runner, proj, notify.New(""))
 	jobSvc := NewService(db, regStore, wf, notify.New(""))
 	return &services{db: db, regStore: regStore, workflow: wf, job: jobSvc, runner: runner}
-}
-
-func (s *services) addJob(job registry.Job) {
-	reg := s.regStore.Current()
-	reg.Jobs[job.Name] = job
-	s.regStore.Publish(reg)
 }
 
 func claimAndRun(t *testing.T, s *services, jobName string, now time.Time) *store.JobRun {

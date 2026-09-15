@@ -360,7 +360,7 @@ func (s *Service) edit(sessionID uint, args []string) (*EditRequest, error) {
 
 func (s *Service) interact(sessionID uint, args []string) (string, error) {
 	if len(args) != 1 {
-		return "", fmt.Errorf(interactionUsage)
+		return "", errors.New(interactionUsage)
 	}
 	if s.interactions == nil {
 		return "", fmt.Errorf("command: interactions are not configured")
@@ -376,7 +376,7 @@ func (s *Service) interact(sessionID uint, args []string) (string, error) {
 		return autoApproveDisabledResponse, nil
 	case interactionApprove, interactionDeny:
 	default:
-		return "", fmt.Errorf(interactionUsage)
+		return "", errors.New(interactionUsage)
 	}
 	if err := s.interactions.Respond(sessionID, args[0] == interactionApprove); err != nil {
 		if errors.Is(err, interaction.ErrNoPending) {

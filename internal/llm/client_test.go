@@ -90,17 +90,17 @@ func TestCallAttachesToolExampleToDescription(t *testing.T) {
 		t.Fatalf("Call() error = %v", err)
 	}
 
-	var found *ds4.Function
+	description, found := "", false
 	for i := range captured.Tools {
 		if captured.Tools[i].Function.Name == "example_tool" {
-			found = &captured.Tools[i].Function
+			description, found = captured.Tools[i].Function.Description, true
 		}
 	}
-	if found == nil {
+	if !found {
 		t.Fatal("expected example_tool in request tools")
 	}
-	if !strings.Contains(found.Description, "Example:") || !strings.Contains(found.Description, "uname -a") || !strings.Contains(found.Description, "Linux test") {
-		t.Errorf("expected example attached to description, got %q", found.Description)
+	if !strings.Contains(description, "Example:") || !strings.Contains(description, "uname -a") || !strings.Contains(description, "Linux test") {
+		t.Errorf("expected example attached to description, got %q", description)
 	}
 }
 

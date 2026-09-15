@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -176,8 +175,6 @@ func removeHopByHopHeaders(header http.Header) {
 		header.Del(name)
 	}
 }
-
-func proxyURL(raw string) (*url.URL, error) { return url.Parse(raw) }
 
 var _ http.Hijacker = interface {
 	Hijack() (net.Conn, *bufio.ReadWriter, error)

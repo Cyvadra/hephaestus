@@ -111,10 +111,13 @@ func TestIntegration_SchedulerEnvReflectsState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildEnv: %v", err)
 	}
-	// The real clock is used so idle time against the latest persisted
-	// message is non-negative.
-	if env.Date != now.Format("2006-01-02") || env.Hour != now.Hour() || env.IdleSeconds < 0 {
+	if env.Date != now.Format("2006-01-02") || env.Hour != now.Hour() {
 		t.Fatalf("unexpected base env: %+v", env)
+	}
+	// Idle time is -1 exactly when the job's Projects hold no messages, and
+	// measured against the newest one otherwise.
+	if (env.IdleSeconds < 0) != !env.HasMessages {
+		t.Fatalf("idle seconds %v disagrees with HasMessages %v", env.IdleSeconds, env.HasMessages)
 	}
 	if env.ExecutionsToday != 3 || !env.HasLastStarted || !env.HasLastSucceeded {
 		t.Fatalf("expected persisted state reflected, got %+v", env)

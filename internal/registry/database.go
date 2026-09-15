@@ -244,7 +244,13 @@ func replaceRecord(tx *gorm.DB, kind Kind, value any) error {
 	if err != nil {
 		return err
 	}
-	return tx.Model(modelForKind(kind)).Where("name = ?", name).Select("*").Omit("created_at", "updated_at").Updates(value).Error
+	// created_at is preserved, but updated_at must advance: syncTemplate
+	// compares it against the template file's mtime to decide whether a
+	// database edit is newer than the file. Freezing it at creation time
+	// would let a template silently overwrite a user's edit.
+	return tx.Model(modelForKind(kind)).Where("name = ?", name).
+		Select("*").Omit("created_at").
+		Updates(value).Error
 }
 
 func loadDatabaseInto(db *gorm.DB, reg *Registry) error {
