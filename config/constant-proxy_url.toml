@@ -1,2 +1,2 @@
 name = "proxy_url"
-value = "http://127.0.0.1:17890"
+value = "http://us-direct.approx.internal:17890"
