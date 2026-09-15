@@ -710,17 +710,6 @@ func forkPath(db *gorm.DB, sess store.Session, leafID *uint) ([]store.ChatMessag
 	return walkActivePath(all, leafID)
 }
 
-func activePath(db *gorm.DB, sess store.Session) ([]store.ChatMessage, error) {
-	if sess.ActiveLeafMessageID == nil {
-		return nil, nil
-	}
-	all, err := loadMessages(db, sess.ID)
-	if err != nil {
-		return nil, err
-	}
-	return walkActivePath(all, sess.ActiveLeafMessageID)
-}
-
 func copySettings(settings store.SessionSettings) store.SessionSettings {
 	return store.SessionSettings{
 		Identity:    settings.Identity,

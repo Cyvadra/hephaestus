@@ -178,12 +178,6 @@ func isPriorityCommand(text string) bool {
 	return len(fields) > 0 && (fields[0] == "/stop" || fields[0] == "/steer")
 }
 
-// processStop bypasses the per-chat message queue so it can interrupt the
-// turn currently occupying that queue.
-func (s *Service) processStop(ctx context.Context, message channels.InboundMessage) {
-	s.processPriorityCommand(ctx, message)
-}
-
 // processPriorityCommand bypasses the per-chat message queue so live run
 // controls can affect the turn currently occupying that queue.
 func (s *Service) processPriorityCommand(ctx context.Context, message channels.InboundMessage) {
@@ -211,7 +205,6 @@ func (s *Service) runStack(ctx context.Context, queue <-chan channels.InboundMes
 		var open bool
 		if pending != nil {
 			message = *pending
-			pending = nil
 		} else {
 			message, open = <-queue
 			if !open {

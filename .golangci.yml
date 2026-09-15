@@ -1,0 +1,23 @@
+# golangci-lint v1.64 configuration. Install the matching version with
+#   go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+# and run it through `make lint`.
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+
+linters-settings:
+  gofmt:
+    simplify: true
+
+issues:
+  # Report every finding rather than the default per-linter sample.
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -175,11 +175,11 @@ func (s *Service) execute(ctx context.Context, runID uint) {
 	}
 	now := time.Now()
 	if err := s.db.Model(run).Updates(map[string]any{"status": store.SubagentRunRunning, "started_at": &now}).Error; err != nil {
-		s.finish(run, store.SubagentRunFailed, 0, "", err)
+		s.failRun(run, err)
 		return
 	}
 	if s.executor == nil {
-		s.finish(run, store.SubagentRunFailed, 0, "", errors.New("subagent executor is not configured"))
+		s.failRun(run, errors.New("subagent executor is not configured"))
 		return
 	}
 	execCtx := toolkit.WithSubagentContext(ctx, toolkit.SubagentContext{RunID: run.ID, ParentSessionID: run.ParentSessionID, Depth: run.Depth})
@@ -195,6 +195,15 @@ func (s *Service) execute(ctx context.Context, runID uint) {
 	}
 	if err := s.finish(run, status, childID, result, runErr); err != nil {
 		log.Printf("subagents: finalize run %d: %v", run.ID, err)
+	}
+}
+
+// failRun marks a loaded run failed, logging a finalization error rather
+// than dropping it: the caller is already on an error path and has no better
+// recovery available.
+func (s *Service) failRun(run *store.SubagentRun, runErr error) {
+	if err := s.finish(run, store.SubagentRunFailed, 0, "", runErr); err != nil {
+		log.Printf("subagents: finalize failed run %d: %v", run.ID, err)
 	}
 }
 

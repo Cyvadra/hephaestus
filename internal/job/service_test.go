@@ -133,12 +133,6 @@ func newServices(t *testing.T, reg *registry.Registry, runner *fakeRunner) *serv
 	return &services{db: db, regStore: regStore, workflow: wf, job: jobSvc, runner: runner}
 }
 
-func (s *services) addJob(job registry.Job) {
-	reg := s.regStore.Current()
-	reg.Jobs[job.Name] = job
-	s.regStore.Publish(reg)
-}
-
 func claimAndRun(t *testing.T, s *services, jobName string, now time.Time) *store.JobRun {
 	t.Helper()
 	run, claimed, err := s.job.claim(context.Background(), s.regStore.Current(), jobName, now)

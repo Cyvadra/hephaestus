@@ -675,19 +675,6 @@ func writeTurnError(c *gin.Context, err error) {
 	}
 }
 
-func turnErrorMessage(err error) string {
-	switch {
-	case errors.Is(err, session.ErrStaleActiveLeaf):
-		return staleLeafMessage
-	case errors.Is(err, session.ErrInvalidParent):
-		return "active leaf message does not belong to session"
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		return "session not found"
-	default:
-		return "internal server error"
-	}
-}
-
 func internalError(c *gin.Context, err error) {
 	log.Printf("server: %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
 	c.JSON(http.StatusInternalServerError, errorResponse{Error: "internal server error"})

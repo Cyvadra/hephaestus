@@ -124,7 +124,7 @@ func multipartFiles(t *testing.T, parts ...filePart) []*multipart.FileHeader {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { form.RemoveAll() })
+	t.Cleanup(func() { _ = form.RemoveAll() })
 	return form.File["files"]
 }
 
