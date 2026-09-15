@@ -1,7 +1,7 @@
 // Hephaestus: a single-user LLM<->human interaction framework.
 //
 //	@title			Hephaestus API
-//	@version		0.1
+//	@version		0.4.0
 //	@description	Single-user AI agent framework: sessions, chat turns, slash commands.
 //	@BasePath		/api/v1
 //	@securityDefinitions.apikey	BearerAuth
@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -51,6 +52,7 @@ import (
 	"github.com/Cyvadra/hephaestus/pkg/channels"
 	channelqq "github.com/Cyvadra/hephaestus/pkg/channels/qq"
 	"github.com/Cyvadra/hephaestus/pkg/weather"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -78,7 +80,15 @@ func loadEnvironment(filename string) error {
 	return nil
 }
 
+// version is the build version, set with -ldflags at build time. It is
+// reported by `hephaestus --version` and by GET /healthz.
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Println(version)
+		return
+	}
 	if err := loadEnvironment(".env"); err != nil {
 		log.Fatalf("dotenv: %v", err)
 	}
@@ -87,7 +97,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("bootstrap: %v", err)
 	}
-	warnIfExposed(cfg.ListenAddr)
+	if os.Getenv(gin.EnvGinMode) == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	warnIfExposed(cfg.ListenAddr, cfg.CookieSecure)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -283,6 +296,8 @@ func main() {
 		log.Fatalf("auth: %v", err)
 	}
 	srv := server.New(authService, registryStore, sessions, pipeline, commands, projects, uploads, configs, workflowSvc, jobSvc, chatRunSvc, subagentSvc)
+	srv.SetSecureCookies(cfg.CookieSecure)
+	srv.SetVersion(version)
 	scheduler := job.NewScheduler(jobSvc, registryStore, db, notifier)
 	var schedulerWG sync.WaitGroup
 	schedulerWG.Add(1)
@@ -328,7 +343,7 @@ func main() {
 // warnIfExposed logs a warning when the API binds to a non-loopback
 // address, because exposing a process that can execute local shell commands
 // requires TLS and trusted network boundaries even when login is enabled.
-func warnIfExposed(addr string) {
+func warnIfExposed(addr string, cookieSecure bool) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return
@@ -338,4 +353,7 @@ func warnIfExposed(addr string) {
 		return
 	}
 	log.Printf("warning: HEPHAESTUS_LISTEN_ADDR %q is not loopback; serve the authenticated API through TLS", addr)
+	if !cookieSecure {
+		log.Printf("warning: HEPHAESTUS_COOKIE_SECURE is false; set it to true so session cookies require HTTPS")
+	}
 }

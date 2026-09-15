@@ -1,6 +1,6 @@
 // Package server exposes the platform over HTTP using Gin, with Swagger
 // documentation generated from the handler annotations below (run
-// `swag init -g internal/server/server.go -o docs/swagger` to regenerate).
+// `make swagger` to regenerate).
 package server
 
 import (
@@ -42,6 +42,26 @@ type Server struct {
 	// done event so the client can close its EventSource instead of the
 	// browser auto-reconnecting. Zero disables the grace (tests).
 	streamDoneGrace time.Duration
+	// secureCookies issues session cookies with the Secure attribute even
+	// when this process serves plain HTTP, for deployments that terminate
+	// HTTPS in a reverse proxy.
+	secureCookies bool
+	// version is reported by the health endpoint.
+	version string
+}
+
+// SetSecureCookies forces the Secure attribute on session cookies. Use it
+// when HTTPS is terminated in front of Hephaestus, where the request this
+// process sees is plain HTTP and cannot be detected as secure.
+func (s *Server) SetSecureCookies(secure bool) { s.secureCookies = secure }
+
+// SetVersion records the build version reported by GET /healthz.
+func (s *Server) SetVersion(version string) { s.version = version }
+
+// cookieSecure reports whether session cookies should carry the Secure
+// attribute: either this connection is TLS, or a proxy terminated it.
+func (s *Server) cookieSecure(c *gin.Context) bool {
+	return s.secureCookies || c.Request.TLS != nil
 }
 
 // New builds the Gin engine and registers every route.
@@ -62,6 +82,8 @@ func New(authService *auth.Service, registries *registry.Store, sessions *sessio
 		subagents:       subagents,
 		streamDoneGrace: 3 * time.Second,
 	}
+
+	s.engine.GET("/healthz", s.health)
 
 	public := s.engine.Group("/api/v1")
 	public.POST("/auth/login", s.login)
@@ -118,6 +140,22 @@ func New(authService *auth.Service, registries *registry.Store, sessions *sessio
 	s.engine.GET("/swagger/*any", s.requireAuthentication, ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	return s
+}
+
+// health reports process liveness and build version.
+//
+//	@Summary		Health check
+//	@Description	Reports process liveness and build version. This endpoint is public and touches no database.
+//	@Tags			meta
+//	@Produce		json
+//	@Success		200	{object}	map[string]string
+//	@Router			/healthz [get]
+func (s *Server) health(c *gin.Context) {
+	version := s.version
+	if version == "" {
+		version = "dev"
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
 }
 
 var _ subagentRunner = (*subagent.Service)(nil)

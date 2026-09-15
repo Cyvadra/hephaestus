@@ -104,3 +104,43 @@ func testDigest(password string, timestamp int64, salt string) string {
 	digest := sha256.Sum256([]byte(password + fmt.Sprintf("%d", timestamp) + salt))
 	return hex.EncodeToString(digest[:])
 }
+
+func TestSecureCookiesForcedBehindTLSTerminatingProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	salt := "0123456789abcdef0123456789abcdef"
+	body := fmt.Sprintf(`{"username":"admin","timestamp":%d,"salt":"%s","digest":"%s"}`, now.UnixMilli(), salt, testDigest("password", now.UnixMilli(), salt))
+
+	for _, testCase := range []struct {
+		name   string
+		secure bool
+	}{{"plain loopback", false}, {"behind proxy", true}} {
+		t.Run(testCase.name, func(t *testing.T) {
+			srv := New(newAuthService(t), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			srv.SetSecureCookies(testCase.secure)
+			recorder := httptest.NewRecorder()
+			srv.engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body)))
+			cookies := recorder.Result().Cookies()
+			if recorder.Code != http.StatusOK || len(cookies) != 1 {
+				t.Fatalf("login response = %d %v", recorder.Code, recorder.Header())
+			}
+			if cookies[0].Secure != testCase.secure {
+				t.Fatalf("cookie Secure = %v, want %v", cookies[0].Secure, testCase.secure)
+			}
+		})
+	}
+}
+
+func TestHealthEndpointIsPublic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := New(newAuthService(t), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	srv.SetVersion("v1.2.3")
+	recorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("healthz status = %d, want 200", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), `"version":"v1.2.3"`) || !strings.Contains(recorder.Body.String(), `"status":"ok"`) {
+		t.Fatalf("healthz body = %s", recorder.Body.String())
+	}
+}

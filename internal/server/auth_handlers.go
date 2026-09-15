@@ -42,7 +42,7 @@ func (s *Server) login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
-	s.auth.SetCookie(c.Writer, token, c.Request.TLS != nil)
+	s.auth.SetCookie(c.Writer, token, s.cookieSecure(c))
 	c.JSON(http.StatusOK, gin.H{"username": request.Username})
 }
 
@@ -69,7 +69,7 @@ func (s *Server) authSession(c *gin.Context) {
 // @Security BearerAuth
 // @Router /auth/logout [post]
 func (s *Server) logout(c *gin.Context) {
-	s.auth.ClearCookie(c.Writer, c.Request.TLS != nil)
+	s.auth.ClearCookie(c.Writer, s.cookieSecure(c))
 	c.Status(http.StatusNoContent)
 }
 
@@ -85,7 +85,7 @@ func (s *Server) requireAuthentication(c *gin.Context) {
 		c.Abort()
 		return
 	} else if refreshed {
-		s.auth.SetCookie(c.Writer, token, c.Request.TLS != nil)
+		s.auth.SetCookie(c.Writer, token, s.cookieSecure(c))
 	}
 	c.Set("auth.claims", claims)
 	c.Next()

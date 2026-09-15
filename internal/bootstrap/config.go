@@ -4,6 +4,7 @@ package bootstrap
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -44,6 +45,10 @@ type Config struct {
 	WeComWebhookURL string
 	// ListenAddr is the address the Gin HTTP server binds to.
 	ListenAddr string
+	// CookieSecure issues the session cookie with the Secure attribute even
+	// when Hephaestus itself serves plain HTTP. Set it when HTTPS is
+	// terminated by a reverse proxy in front of the process.
+	CookieSecure bool
 	// ProjectsRoot is the directory under which each Project gets its own
 	// named subdirectory; created on startup if missing.
 	ProjectsRoot string
@@ -110,6 +115,7 @@ func Load() (*Config, error) {
 		ChannelImageTextWait:     time.Duration(env.int("HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS", 30)) * time.Second,
 		WeComWebhookURL:          os.Getenv("HEPHAESTUS_WECOM_WEBHOOK_URL"),
 		ListenAddr:               getenvDefault("HEPHAESTUS_LISTEN_ADDR", "127.0.0.1:9016"),
+		CookieSecure:             env.bool("HEPHAESTUS_COOKIE_SECURE"),
 		ProjectsRoot:             projectsRoot,
 		ProjectAccessOverride:    env.bool("HEPHAESTUS_PROJECT_ACCESS_OVERRIDE"),
 		ShellEnabled:             env.bool("HEPHAESTUS_SHELL_ENABLED"),
@@ -224,11 +230,17 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// databaseURL prefers HEPHAESTUS_DATABASE_URL and falls back to the
+// deprecated HEPHAESTUS_POSTGRES_DSN so existing installations keep working.
 func databaseURL() string {
 	if url := strings.TrimSpace(os.Getenv("HEPHAESTUS_DATABASE_URL")); url != "" {
 		return url
 	}
-	return strings.TrimSpace(os.Getenv("HEPHAESTUS_POSTGRES_DSN"))
+	legacy := strings.TrimSpace(os.Getenv("HEPHAESTUS_POSTGRES_DSN"))
+	if legacy != "" {
+		log.Printf("bootstrap: HEPHAESTUS_POSTGRES_DSN is deprecated; rename it to HEPHAESTUS_DATABASE_URL")
+	}
+	return legacy
 }
 
 // envValues parses numeric/boolean environment variables, recording a
