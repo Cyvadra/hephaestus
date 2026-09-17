@@ -205,6 +205,72 @@ func TestExecutePersistsCancellationWhenExecutorReturnsSuccess(t *testing.T) {
 	}
 }
 
+func TestCancelFinalizesExecutorThatIgnoresContext(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+	previousGracePeriod := cancelGracePeriod
+	cancelGracePeriod = time.Millisecond
+	t.Cleanup(func() { cancelGracePeriod = previousGracePeriod })
+
+	block := make(chan struct{})
+	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
+		<-block
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if err := svc.Cancel(run.ID); err != nil {
+		t.Fatalf("cancel run: %v", err)
+	}
+	if final := waitForTerminalRun(t, svc, run.ID); final.Status != store.ChatRunCancelled {
+		t.Fatalf("run status = %s, want cancelled", final.Status)
+	}
+	if _, err := svc.ActiveForSession(projectID); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("active run after forced cancellation = %v, want ErrRunNotFound", err)
+	}
+	close(block)
+}
+
+// A parent turn persisting progress holds progressMu and then takes s.mu to
+// publish. Starting a child run under s.mu must not wait for progressMu, or
+// the two deadlock and both sessions hang.
+func TestStartDoesNotWaitForProgressLock(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+	if err := db.Create(&store.Project{ID: projectID, Name: fmt.Sprintf("chatrun-lock-%d", projectID)}).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := db.Create(&store.Session{ID: projectID, ProjectID: projectID}).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Delete(&store.Session{}, projectID)
+		db.Delete(&store.Project{}, projectID)
+	})
+
+	svc.progressMu.Lock()
+	started := make(chan error, 1)
+	go func() {
+		_, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
+			return nil, nil
+		})
+		started <- err
+	}()
+	select {
+	case err := <-started:
+		svc.progressMu.Unlock()
+		if err != nil {
+			t.Fatalf("start run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		svc.progressMu.Unlock()
+		t.Fatal("Start blocked on progressMu while holding s.mu")
+	}
+}
+
 func TestReconcileRestoresInterruptedSnapshotToHistory(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()

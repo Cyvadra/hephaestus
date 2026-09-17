@@ -24,6 +24,10 @@ import (
 
 const runTimeout = 30 * time.Minute
 
+// cancelGracePeriod gives cooperative executors time to flush their final
+// state before a cancellation is finalized independently of the executor.
+var cancelGracePeriod = 10 * time.Second
+
 // snapshotTimeout bounds the terminal-snapshot rebuild so that finalizing a
 // run always reaches a terminal status. The snapshot is a diagnostic
 // aggregate: losing it is strictly better than leaving the row 'running'.
@@ -72,6 +76,8 @@ type Service struct {
 	sequences    map[uint]uint64
 	wg           sync.WaitGroup
 	shuttingDown bool
+	// stopping is closed by Shutdown to release pending cancel grace timers.
+	stopping chan struct{}
 
 	// onRunEnded notifies the delivery layer that a session's run finished,
 	// so completions that arrived too late to be steered can be delivered.
@@ -85,7 +91,7 @@ func (s *Service) SetOnRunEnded(fn func(runID, sessionID uint, status store.Chat
 }
 
 func New(db *gorm.DB) *Service {
-	return &Service{db: db, ctrl: runctrl.New(), steering: steering.NewManager(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}}
+	return &Service{db: db, ctrl: runctrl.New(), steering: steering.NewManager(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}, stopping: make(chan struct{})}
 }
 
 // PutSteering creates or replaces the pending instruction for the session's
@@ -224,9 +230,9 @@ func (s *Service) startLocked(sessionID, projectID uint, subagentRunID *uint, ki
 
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	s.ctrl.Register(run.ID, cancel)
-	s.progressMu.Lock()
-	s.sequences[run.ID] = 0
-	s.progressMu.Unlock()
+	// Do not touch progressMu here: callers hold s.mu, and the lock order is
+	// progressMu before s.mu (recordDelta -> publish). A missing sequence
+	// reads as zero, so the new run needs no initialization.
 	s.wg.Add(1)
 	go s.execute(ctx, run.ID, sessionID, execute)
 	return run, nil
@@ -260,10 +266,9 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 				runErr = context.Canceled
 			}
 		}
-		if _, finishErr := s.finish(runID, status, nil, runErr); finishErr != nil {
+		if _, finalized, finishErr := s.finish(runID, status, nil, runErr); finishErr != nil {
 			log.Printf("chatrun: finalize run %d after start failure: %v", runID, finishErr)
-		}
-		if s.onRunEnded != nil {
+		} else if finalized && s.onRunEnded != nil {
 			s.onRunEnded(runID, sessionID, status)
 		}
 		return
@@ -294,12 +299,12 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 	} else if runErr != nil {
 		status = store.ChatRunFailed
 	}
-	status, err := s.finish(runID, status, result, runErr)
+	status, finalized, err := s.finish(runID, status, result, runErr)
 	if err != nil {
 		log.Printf("chatrun: finalize run %d: %v", runID, err)
 		return
 	}
-	if s.onRunEnded != nil {
+	if finalized && s.onRunEnded != nil {
 		s.onRunEnded(runID, sessionID, status)
 	}
 }
@@ -321,7 +326,7 @@ func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) error {
 	return nil
 }
 
-func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) (store.ChatRunStatus, error) {
+func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result, runErr error) (store.ChatRunStatus, bool, error) {
 	finished := time.Now()
 	update := map[string]any{"status": status, "finished_at": &finished}
 	terminal := &store.ChatRun{ID: runID, Status: status, FinishedAt: &finished}
@@ -354,11 +359,19 @@ func (s *Service) finish(runID uint, status store.ChatRunStatus, result *Result,
 		update["error"] = runErr.Error()
 		terminal.Error = runErr.Error()
 	}
-	if err := s.db.Model(&store.ChatRun{}).Where("id = ?", runID).Updates(update).Error; err != nil {
-		return status, fmt.Errorf("chatrun: persist terminal state: %w", err)
+	write := s.db.Model(&store.ChatRun{}).Where("id = ? AND status IN ?", runID, []store.ChatRunStatus{store.ChatRunPending, store.ChatRunRunning, store.ChatRunCancelling}).Updates(update)
+	if write.Error != nil {
+		return status, false, fmt.Errorf("chatrun: persist terminal state: %w", write.Error)
+	}
+	if write.RowsAffected == 0 {
+		current, err := s.Get(runID)
+		if err != nil {
+			return status, false, err
+		}
+		return current.Status, false, nil
 	}
 	s.publish(runID, ProgressEvent{Type: "done", Run: terminal})
-	return status, nil
+	return status, true, nil
 }
 
 func (s *Service) snapshot(ctx context.Context, runID uint) (store.ChatRunSnapshot, error) {
@@ -568,7 +581,40 @@ func (s *Service) Cancel(runID uint) error {
 	if err := s.ctrl.Cancel(runID); err != nil {
 		return fmt.Errorf("%w: run %d is not actively executing", ErrRunFinished, runID)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shuttingDown {
+		return nil
+	}
+	s.wg.Add(1)
+	go s.finalizeCancelledAfterGrace(run.ID, run.SessionID)
 	return nil
+}
+
+// finalizeCancelledAfterGrace prevents an executor that ignores its context
+// from holding its session's active-run slot forever.
+func (s *Service) finalizeCancelledAfterGrace(runID, sessionID uint) {
+	timer := time.NewTimer(cancelGracePeriod)
+	defer s.wg.Done()
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-s.stopping:
+		return
+	}
+
+	run, err := s.Get(runID)
+	if err != nil || run.Status != store.ChatRunCancelling {
+		return
+	}
+	status, finalized, err := s.finish(runID, store.ChatRunCancelled, nil, context.Canceled)
+	if err != nil {
+		log.Printf("chatrun: force-finalize cancelled run %d: %v", runID, err)
+		return
+	}
+	if finalized && s.onRunEnded != nil {
+		s.onRunEnded(runID, sessionID, status)
+	}
 }
 
 // CancelSession cancels the session's one active run, if it has one.
@@ -584,7 +630,10 @@ func (s *Service) CancelSession(sessionID uint) error {
 // marking any unfinished persisted runs as interrupted.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
-	s.shuttingDown = true
+	if !s.shuttingDown {
+		s.shuttingDown = true
+		close(s.stopping)
+	}
 	s.mu.Unlock()
 	s.ctrl.Shutdown()
 	s.wg.Wait()
