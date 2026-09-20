@@ -24,14 +24,22 @@ import (
 
 const runTimeout = 30 * time.Minute
 
-// cancelGracePeriod gives cooperative executors time to flush their final
-// state before a cancellation is finalized independently of the executor.
-var cancelGracePeriod = 10 * time.Second
+// defaultCancelGracePeriod gives cooperative executors time to flush their
+// final state before a cancellation is finalized independently of the
+// executor. It is a per-Service field rather than a global so that tests
+// shortening it cannot race with another Service's in-flight finalizer.
+const defaultCancelGracePeriod = 10 * time.Second
 
 // snapshotTimeout bounds the terminal-snapshot rebuild so that finalizing a
 // run always reaches a terminal status. The snapshot is a diagnostic
 // aggregate: losing it is strictly better than leaving the row 'running'.
 const snapshotTimeout = 2 * time.Minute
+
+// defaultMaxEventBytes caps the total streamed payload persisted for one run.
+// internal/llm guards runaway model output far below this; this is a backstop
+// for any emitter that reaches recordDelta without passing through that guard,
+// since every delta becomes its own chat_run_events row.
+const defaultMaxEventBytes int64 = 16 << 20
 
 var (
 	ErrRunNotFound  = errors.New("chatrun: run not found")
@@ -70,10 +78,19 @@ type Service struct {
 	ctrl     *runctrl.Controller
 	steering *steering.Manager
 
-	mu           sync.Mutex
-	subs         map[uint]map[chan ProgressEvent]struct{}
-	progressMu   sync.Mutex
-	sequences    map[uint]uint64
+	mu         sync.Mutex
+	subs       map[uint]map[chan ProgressEvent]struct{}
+	progressMu sync.Mutex
+	sequences  map[uint]uint64
+	// runBytes accumulates persisted payload bytes per run. A run is marked
+	// overBudget once it trips the cap so it is cancelled exactly once.
+	runBytes      map[uint]int64
+	overBudget    map[uint]struct{}
+	maxEventBytes int64
+
+	// cancelGrace is read by finalizeCancelledAfterGrace and set once at
+	// construction, so it needs no synchronization.
+	cancelGrace  time.Duration
 	wg           sync.WaitGroup
 	shuttingDown bool
 	// stopping is closed by Shutdown to release pending cancel grace timers.
@@ -91,7 +108,7 @@ func (s *Service) SetOnRunEnded(fn func(runID, sessionID uint, status store.Chat
 }
 
 func New(db *gorm.DB) *Service {
-	return &Service{db: db, ctrl: runctrl.New(), steering: steering.NewManager(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}, stopping: make(chan struct{})}
+	return &Service{db: db, ctrl: runctrl.New(), steering: steering.NewManager(), subs: map[uint]map[chan ProgressEvent]struct{}{}, sequences: map[uint]uint64{}, runBytes: map[uint]int64{}, overBudget: map[uint]struct{}{}, maxEventBytes: defaultMaxEventBytes, cancelGrace: defaultCancelGracePeriod, stopping: make(chan struct{})}
 }
 
 // PutSteering creates or replaces the pending instruction for the session's
@@ -309,20 +326,50 @@ func (s *Service) execute(ctx context.Context, runID, sessionID uint, execute Ex
 	}
 }
 
+// WithMaxEventBytes overrides the per-run cap on persisted streamed payload.
+// A non-positive value restores the default.
+func (s *Service) WithMaxEventBytes(limit int64) *Service {
+	if limit <= 0 {
+		limit = defaultMaxEventBytes
+	}
+	s.progressMu.Lock()
+	s.maxEventBytes = limit
+	s.progressMu.Unlock()
+	return s
+}
+
 func (s *Service) recordDelta(runID uint, delta chat.StreamEvent) error {
 	payload, err := json.Marshal(delta)
 	if err != nil {
 		return fmt.Errorf("chatrun: encode progress: %w", err)
 	}
 	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
+	if _, tripped := s.overBudget[runID]; tripped {
+		s.progressMu.Unlock()
+		return nil
+	}
+	total := s.runBytes[runID] + int64(len(payload))
+	if total > s.maxEventBytes {
+		limit := s.maxEventBytes
+		s.overBudget[runID] = struct{}{}
+		s.progressMu.Unlock()
+		// Cancel outside the lock: the executor may still be emitting, and
+		// the lock order here is progressMu before s.mu.
+		if cancelErr := s.ctrl.Cancel(runID); cancelErr != nil && !errors.Is(cancelErr, runctrl.ErrNotActive) {
+			log.Printf("chatrun: cancel oversized run %d: %v", runID, cancelErr)
+		}
+		return fmt.Errorf("chatrun: run %d exceeded the %d byte streamed-output budget", runID, limit)
+	}
 	sequence := s.sequences[runID] + 1
 	event := store.ChatRunEvent{RunID: runID, Sequence: sequence, Type: delta.Type, Payload: payload}
 	if err := s.db.Create(&event).Error; err != nil {
+		s.progressMu.Unlock()
 		return fmt.Errorf("chatrun: persist progress: %w", err)
 	}
 	s.sequences[runID] = sequence
+	s.runBytes[runID] = total
 	s.publish(runID, ProgressEvent{Sequence: sequence, Type: delta.Type, Payload: payload})
+	s.progressMu.Unlock()
 	return nil
 }
 
@@ -594,7 +641,7 @@ func (s *Service) Cancel(runID uint) error {
 // finalizeCancelledAfterGrace prevents an executor that ignores its context
 // from holding its session's active-run slot forever.
 func (s *Service) finalizeCancelledAfterGrace(runID, sessionID uint) {
-	timer := time.NewTimer(cancelGracePeriod)
+	timer := time.NewTimer(s.cancelGrace)
 	defer s.wg.Done()
 	defer timer.Stop()
 	select {
@@ -730,6 +777,8 @@ func (s *Service) removeSub(runID uint, ch chan ProgressEvent) {
 func (s *Service) closeRun(runID uint) {
 	s.progressMu.Lock()
 	delete(s.sequences, runID)
+	delete(s.runBytes, runID)
+	delete(s.overBudget, runID)
 	s.progressMu.Unlock()
 	s.mu.Lock()
 	for ch := range s.subs[runID] {

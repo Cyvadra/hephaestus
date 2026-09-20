@@ -284,6 +284,32 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 
 单文件上限不能超过单条消息附件总上限。
 
+### 失控输出保护
+
+模型偶尔会陷入退化循环，不断重复同一段字符且不返回 `finish_reason`。此时 `max_tokens`
+无法及时止损：流式响应会一直写入，直到 30 分钟的运行超时。守卫在流式读取过程中逐字节检测，
+一旦判定为退化即中止请求，并把重复片段从消息中截去，使其不会被持久化、也不会在下一轮作为
+上下文回灌给模型。被截断的消息以 `incomplete` 状态保存，保留退化开始之前的干净前缀。
+
+三重检测按开销从低到高依次执行，分别作用于 content、reasoning 与每个工具调用的参数：单字节
+重复、滑动窗口压缩率（可捕获重复短语，而非仅重复字符）、以及绝对字节上限。窗口压缩率的默认
+阈值有较大余量：本仓库真实文本的最差 4KB 窗口压缩率为 28%~64%，而退化输出远低于此
+（重复单字符 0.61%、重复短语 1.53%、重复整句 3.56%）。默认 3.9% 高于全部三者、
+又距真实文本约 7 倍余量，因此单字符、短语与整句三种循环都能捕获。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HEPHAESTUS_LLM_REPETITION_GUARD_DISABLED` | `false` | 设为 `true` 完全关闭守卫。 |
+| `HEPHAESTUS_LLM_REPETITION_MAX_CHAR_RUN` | `1024` | 连续相同字节达到该长度即判定退化。 |
+| `HEPHAESTUS_LLM_REPETITION_WINDOW_BYTES` | `4096` | 压缩率检测所用的尾部窗口大小。 |
+| `HEPHAESTUS_LLM_REPETITION_MIN_BYTES` | `4096` | 低于该长度的通道不做任何检测，短回复不会误伤。 |
+| `HEPHAESTUS_LLM_REPETITION_RATIO_PERCENT` | `3.9` | 窗口压缩后小于原大小该百分比即判定退化，可用小数。 |
+| `HEPHAESTUS_LLM_MAX_CHANNEL_BYTES` | `8388608` | 单个通道的绝对上限，用于非重复型的失控输出。 |
+| `HEPHAESTUS_CHATRUN_MAX_EVENT_BYTES` | `16777216` | 单次运行持久化的流式载荷上限；超出即取消该运行。 |
+
+最后一项是兜底：每个流式增量都会写入一行 `chat_run_events`，因此即使有绕过上述守卫的
+输出源，也不会无限增长。正常情况下 LLM 守卫会先触发。
+
 `HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES`、`HEPHAESTUS_BAIDU_OCR_API_KEY` 与 `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` 已废弃并会被忽略。`HEPHAESTUS_POSTGRES_DSN` 是 `HEPHAESTUS_DATABASE_URL` 的废弃别名，仍可用但启动时会打印提示。
 
 ## Subagent

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,11 +25,24 @@ import (
 
 const continuationMaxTokens = 8192
 
-var errStreamFinished = errors.New("llm: stream finished")
+var (
+	errStreamFinished   = errors.New("llm: stream finished")
+	errStreamDegenerate = errors.New("llm: stream degenerate")
+)
 
 // Client wraps a ds4.Client with Identity-aware request building.
 type Client struct {
-	ds4 *ds4.Client
+	ds4   *ds4.Client
+	guard GuardConfig
+}
+
+// WithGuard sets the runaway-output policy applied to every streamed
+// response. The zero GuardConfig (what a Client starts with) already means
+// "enabled with package defaults", so this is only needed to retune or
+// disable the guard.
+func (c *Client) WithGuard(cfg GuardConfig) *Client {
+	c.guard = cfg
+	return c
 }
 
 var (
@@ -168,11 +182,24 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 	var toolCallOrder []int
 	finishReason := ""
 
+	// Each streamed channel is guarded independently: a model can degenerate
+	// in its reasoning while its visible content is still fine.
+	contentGuard := newRepetitionGuard(c.guard, channelContent, true)
+	reasoningGuard := newRepetitionGuard(c.guard, channelReasoning, true)
+	toolGuards := map[int]*repetitionGuard{}
+	var degenerate *DegenerateOutputError
+
 	err := builder.StreamWithContext(ctx, func(chunk ds4.ChatStreamChunk) error {
 		finished := false
 		for _, choice := range chunk.Choices {
 			content.WriteString(choice.Delta.Content)
 			reasoning.WriteString(choice.Delta.ReasoningContent)
+			if degenerate == nil {
+				degenerate = contentGuard.Append(choice.Delta.Content)
+			}
+			if degenerate == nil {
+				degenerate = reasoningGuard.Append(choice.Delta.ReasoningContent)
+			}
 			delta := StreamDelta{Content: choice.Delta.Content, ReasoningContent: choice.Delta.ReasoningContent}
 			for _, tc := range choice.Delta.ToolCalls {
 				existing, ok := toolCalls[tc.Index]
@@ -180,6 +207,9 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 					existing = &ds4.ToolCall{}
 					toolCalls[tc.Index] = existing
 					toolCallOrder = append(toolCallOrder, tc.Index)
+					guard := newRepetitionGuard(c.guard, channelToolArguments, false)
+					guard.toolIndex = tc.Index
+					toolGuards[tc.Index] = guard
 				}
 				if tc.ID != "" {
 					existing.ID = tc.ID
@@ -191,12 +221,20 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 					existing.Function.Name = tc.Function.Name
 				}
 				existing.Function.Arguments += tc.Function.Arguments
+				if degenerate == nil {
+					degenerate = toolGuards[tc.Index].Append(tc.Function.Arguments)
+				}
 				delta.ToolCalls = append(delta.ToolCalls, ToolCallDelta{
 					Index:     tc.Index,
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 				})
+			}
+			// Abort before emitting: the delta that tripped the guard is part
+			// of the degenerate span, so subscribers should never see it.
+			if degenerate != nil {
+				return errStreamDegenerate
 			}
 			if onDelta != nil && (delta.Content != "" || delta.ReasoningContent != "" || len(delta.ToolCalls) > 0) {
 				onDelta(delta)
@@ -214,9 +252,31 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 		}
 		return nil
 	})
-	if errors.Is(err, errStreamFinished) {
+	if errors.Is(err, errStreamFinished) || errors.Is(err, errStreamDegenerate) {
 		err = nil
 	}
+
+	contentText := content.String()
+	reasoningText := reasoning.String()
+	// Drop the degenerate tail so it is neither shown to the user nor
+	// replayed into the provider as context on the next turn.
+	if degenerate != nil {
+		// The pipeline reports a truncated turn as a completed-but-incomplete
+		// one, so this log is the only operator-visible signal that a response
+		// was cut short and why.
+		log.Printf("llm: aborted stream: %v", degenerate)
+		switch degenerate.Channel {
+		case channelContent:
+			contentText = truncateChannel(contentText, degenerate.Offset)
+		case channelReasoning:
+			reasoningText = truncateChannel(reasoningText, degenerate.Offset)
+		case channelToolArguments:
+			if call, ok := toolCalls[degenerate.ToolIndex]; ok {
+				call.Function.Arguments = truncateChannel(call.Function.Arguments, degenerate.Offset)
+			}
+		}
+	}
+
 	sort.Ints(toolCallOrder)
 	calls := make([]ds4.ToolCall, 0, len(toolCallOrder))
 	for _, idx := range toolCallOrder {
@@ -224,9 +284,15 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 	}
 	message := ds4.Message{
 		Role:             ds4.RoleAssistant,
-		Content:          content.String(),
-		ReasoningContent: reasoning.String(),
+		Content:          contentText,
+		ReasoningContent: reasoningText,
 		ToolCalls:        calls,
+	}
+	if degenerate != nil {
+		return nil, &IncompleteResponseError{
+			Message: message,
+			Err:     fmt.Errorf("llm: stream chat completion: %w", degenerate),
+		}
 	}
 	if err != nil {
 		return nil, &IncompleteResponseError{

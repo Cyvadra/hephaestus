@@ -20,6 +20,8 @@ v0.3.3 及更早版本的完整记录见 git tag 与提交历史。
 - `CONTRIBUTING.md`、`SECURITY.md`、`THIRD_PARTY_NOTICES.md` 与本变更日志。
 - `make lint` 与 `make check`，配套 `.golangci.yml` 固定 lint 规则集。
 - `POST /sessions` 接受 `auto_approve`：可在会话创建时即开启「全部允许」，无需创建后再改一次。该策略与 `/interact auto-approve` 一样只属于当前服务进程。
+- 失控输出守卫：流式响应中检测模型退化（重复字符、重复短语或重复整句，且不返回 `finish_reason`），及时中止请求并截去重复片段，避免其被持久化并在下一轮回灌为上下文；被截断的消息以 `incomplete` 状态保留干净前缀，中止原因写入日志。作用于 content、reasoning 与工具调用参数三类通道，阈值由 `HEPHAESTUS_LLM_REPETITION_*` 与 `HEPHAESTUS_LLM_MAX_CHANNEL_BYTES` 配置，详见 README。
+- `HEPHAESTUS_CHATRUN_MAX_EVENT_BYTES`：单次对话运行可持久化的流式载荷上限，超出即取消运行，防止 `chat_run_events` 无限增长。
 
 ### Changed
 

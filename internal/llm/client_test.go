@@ -3,12 +3,14 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -443,5 +445,131 @@ func TestMaxTokensUpperBoundRejectsUnrelatedErrors(t *testing.T) {
 				t.Fatal("maxTokensUpperBound() unexpectedly accepted error")
 			}
 		})
+	}
+}
+
+// TestCallStreamAbortsDegenerateReasoning reproduces the session 758 failure:
+// the model loops in its reasoning channel and never sends finish_reason. The
+// stream must abort on its own, keep the clean prefix, and leave the visible
+// content channel untouched.
+func TestCallStreamAbortsDegenerateReasoning(t *testing.T) {
+	const prefix = "Wait, let me re-read: "
+	release := make(chan struct{})
+	var served int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Answer.\",\"reasoning_content\":\"" + prefix + "\"}}]}\n\n"))
+		w.(http.Flusher).Flush()
+		// Never send finish_reason: only the guard can end this stream.
+		for {
+			select {
+			case <-release:
+				return
+			default:
+			}
+			zeros := strings.Repeat("0", 256)
+			if _, err := w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"" + zeros + "\"}}]}\n\n")); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			atomic.AddInt64(&served, 256)
+		}
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+
+	client := &Client{ds4: ds4.New("test").WithBaseURL(server.URL)}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var gotContent, gotReasoning strings.Builder
+	started := time.Now()
+	response, err := client.CallStream(ctx, registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil, func(d StreamDelta) {
+		gotContent.WriteString(d.Content)
+		gotReasoning.WriteString(d.ReasoningContent)
+	})
+	if response != nil {
+		t.Fatalf("expected no response, got %+v", response)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("guard took %v to abort", elapsed)
+	}
+
+	var incomplete *IncompleteResponseError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("error = %v, want *IncompleteResponseError", err)
+	}
+	var degen *DegenerateOutputError
+	if !errors.As(err, &degen) {
+		t.Fatalf("error = %v, want a wrapped *DegenerateOutputError", err)
+	}
+	if degen.Channel != channelReasoning {
+		t.Fatalf("channel = %q, want %q", degen.Channel, channelReasoning)
+	}
+
+	// The partial message keeps the clean prefix and drops the zeros.
+	if incomplete.Message.ReasoningContent != prefix {
+		t.Fatalf("reasoning = %q, want the clean prefix %q", incomplete.Message.ReasoningContent, prefix)
+	}
+	if incomplete.Message.Content != "Answer." {
+		t.Fatalf("content = %q, want the untouched visible channel", incomplete.Message.Content)
+	}
+	// Deltas already emitted are not retracted, but the stream must have
+	// stopped far short of what the server was willing to send.
+	if emitted := int64(gotReasoning.Len()); emitted > 64*1024 {
+		t.Fatalf("emitted %d reasoning bytes before aborting", emitted)
+	}
+	if total := atomic.LoadInt64(&served); total == 0 {
+		t.Fatal("server never streamed the degenerate run")
+	}
+}
+
+// TestCallStreamGuardDisabledHonoursConfig checks the escape hatch: with the
+// guard off, the same stream runs until the context deadline instead.
+func TestCallStreamGuardDisabledHonoursConfig(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for {
+			select {
+			case <-release:
+				return
+			default:
+			}
+			if _, err := w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"" + strings.Repeat("0", 256) + "\"}}]}\n\n")); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+		}
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+
+	client := (&Client{ds4: ds4.New("test").WithBaseURL(server.URL)}).WithGuard(GuardConfig{Disabled: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err := client.CallStream(ctx, registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil, nil)
+	var degen *DegenerateOutputError
+	if errors.As(err, &degen) {
+		t.Fatalf("disabled guard still aborted the stream: %v", degen)
+	}
+	// The stream ends only because the deadline cut the connection; ds4 may
+	// surface that as either the context error or a truncated final chunk.
+	if err == nil {
+		t.Fatal("expected the stream to end on the context deadline")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,8 +52,9 @@ func TestStartPersistsFinalResultAndSnapshot(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
+	seedSession(t, db, projectID)
 	messageID := uint(42)
-	run, err := svc.Start(1, projectID, store.ChatRunMessage, map[string]any{"text": "hello"}, func(_ context.Context, onDelta func(chat.StreamEvent)) (*Result, error) {
+	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, map[string]any{"text": "hello"}, func(_ context.Context, onDelta func(chat.StreamEvent)) (*Result, error) {
 		onDelta(chat.StreamEvent{Type: "delta", Text: "hi"})
 		return &Result{FinalMessageID: &messageID, Response: map[string]any{"ok": true}}, nil
 	})
@@ -136,6 +138,7 @@ func TestStartRejectsConcurrentRunForSession(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
+	seedSession(t, db, projectID)
 	block := make(chan struct{})
 	first, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
 		<-block
@@ -158,6 +161,7 @@ func TestCancelledRunInvokesRunEnded(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
+	seedSession(t, db, projectID)
 	var callbackCount atomic.Int32
 	svc.SetOnRunEnded(func(_ uint, _ uint, _ store.ChatRunStatus) {
 		callbackCount.Add(1)
@@ -185,6 +189,7 @@ func TestExecutePersistsCancellationWhenExecutorReturnsSuccess(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
+	seedSession(t, db, projectID)
 	started := make(chan struct{})
 	proceed := make(chan struct{})
 	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
@@ -209,9 +214,8 @@ func TestCancelFinalizesExecutorThatIgnoresContext(t *testing.T) {
 	svc, db := newTestService(t)
 	projectID := testProjectID()
 	cleanupProjectRuns(t, db, projectID)
-	previousGracePeriod := cancelGracePeriod
-	cancelGracePeriod = time.Millisecond
-	t.Cleanup(func() { cancelGracePeriod = previousGracePeriod })
+	seedSession(t, db, projectID)
+	svc.cancelGrace = time.Millisecond
 
 	block := make(chan struct{})
 	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(context.Context, func(chat.StreamEvent)) (*Result, error) {
@@ -392,4 +396,62 @@ func waitForTerminalRun(t *testing.T, svc *Service, runID uint) *store.ChatRun {
 			}
 		}
 	}
+}
+
+// A runaway emitter must not be able to write unbounded chat_run_events rows.
+// internal/llm stops degenerate model output long before this, so the cap is a
+// backstop for any emitter that reaches recordDelta another way.
+func TestRecordDeltaCapsRunawayEmitter(t *testing.T) {
+	svc, db := newTestService(t)
+	projectID := testProjectID()
+	cleanupProjectRuns(t, db, projectID)
+	seedSession(t, db, projectID)
+	svc.WithMaxEventBytes(8 << 10)
+
+	emitted := make(chan int, 1)
+	run, err := svc.Start(projectID, projectID, store.ChatRunMessage, nil, func(ctx context.Context, emit func(chat.StreamEvent)) (*Result, error) {
+		count := 0
+		for i := 0; i < 5000; i++ {
+			if ctx.Err() != nil {
+				break
+			}
+			emit(chat.StreamEvent{Type: "delta", Text: strings.Repeat("0", 256)})
+			count++
+		}
+		emitted <- count
+		return &Result{}, nil
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	<-emitted
+
+	final := waitForTerminalRun(t, svc, run.ID)
+	if final.Status != store.ChatRunCancelled && final.Status != store.ChatRunFailed {
+		t.Fatalf("run status = %s, want cancelled or failed", final.Status)
+	}
+	var rows int64
+	if err := db.Model(&store.ChatRunEvent{}).Where("run_id = ?", run.ID).Count(&rows).Error; err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	// 8KB budget over ~280-byte payloads is a few dozen rows, not thousands.
+	if rows > 200 {
+		t.Fatalf("persisted %d event rows past the byte budget", rows)
+	}
+}
+
+// seedSession creates the project and session rows Start requires, so the test
+// does not depend on pre-existing rows in the shared test database.
+func seedSession(t *testing.T, db *gorm.DB, id uint) {
+	t.Helper()
+	if err := db.Create(&store.Project{ID: id, Name: fmt.Sprintf("chatrun-test-%d", id)}).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := db.Create(&store.Session{ID: id, ProjectID: id}).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Where("id = ?", id).Delete(&store.Session{})
+		db.Where("id = ?", id).Delete(&store.Project{})
+	})
 }

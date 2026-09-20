@@ -126,7 +126,15 @@ func main() {
 	if _, err := projects.EnsureDefault(); err != nil {
 		log.Fatalf("project: ensure default: %v", err)
 	}
-	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey)
+	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey).
+		WithGuard(llm.GuardConfig{
+			Disabled:        cfg.LLMGuardDisabled,
+			MaxCharRun:      cfg.LLMGuardMaxCharRun,
+			WindowBytes:     cfg.LLMGuardWindowBytes,
+			MinBytes:        cfg.LLMGuardMinBytes,
+			RatioPercent:    cfg.LLMGuardRatioPercent,
+			MaxChannelBytes: cfg.LLMGuardMaxChannelBytes,
+		})
 	sessions := session.New(db)
 	subagentSvc := subagent.New(db, cfg.SubagentMaxDepth)
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
@@ -223,7 +231,7 @@ func main() {
 
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
 	pipeline.SetNotificationSource(subagentSvc)
-	chatRunSvc := chatrun.New(db)
+	chatRunSvc := chatrun.New(db).WithMaxEventBytes(cfg.ChatRunMaxEventBytes)
 	pipeline.SetSteeringSource(chatRunSvc)
 	if err := chatRunSvc.Reconcile(); err != nil {
 		log.Fatalf("chat runs: reconcile stale runs: %v", err)

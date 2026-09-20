@@ -81,11 +81,27 @@ type Config struct {
 	UploadFileMaxBytes       int64
 	UploadTotalMaxBytes      int64
 	UploadMaxFiles           int
-	EnvironmentLocation      string
-	EnvironmentLatitude      float64
-	EnvironmentLongitude     float64
-	EnvironmentTimezone      string
-	WeatherProviders         []string
+	// LLMGuardDisabled turns off the runaway-output guard that aborts a
+	// streaming response once the model stops making progress.
+	LLMGuardDisabled bool
+	// LLMGuardMaxCharRun aborts a channel on a run of this many identical
+	// bytes; LLMGuardWindowBytes/RatioPercent abort it when that trailing
+	// window compresses below the ratio (catching repeated phrases, not just
+	// repeated characters); LLMGuardMinBytes is the size below which no check
+	// arms; LLMGuardMaxChannelBytes is the absolute per-channel cap.
+	LLMGuardMaxCharRun      int
+	LLMGuardWindowBytes     int
+	LLMGuardMinBytes        int
+	LLMGuardRatioPercent    float64
+	LLMGuardMaxChannelBytes int
+	// ChatRunMaxEventBytes caps the streamed payload persisted for one chat
+	// run, as a backstop for emitters that bypass the LLM guard.
+	ChatRunMaxEventBytes int64
+	EnvironmentLocation  string
+	EnvironmentLatitude  float64
+	EnvironmentLongitude float64
+	EnvironmentTimezone  string
+	WeatherProviders     []string
 	// FixedPlugins run for every session and cannot be disabled through
 	// mutable session settings.
 	FixedPlugins []string
@@ -140,6 +156,13 @@ func Load() (*Config, error) {
 		UploadFileMaxBytes:       env.int64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
 		UploadTotalMaxBytes:      env.int64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
 		UploadMaxFiles:           env.int("HEPHAESTUS_UPLOAD_MAX_FILES", 5),
+		LLMGuardDisabled:         env.bool("HEPHAESTUS_LLM_REPETITION_GUARD_DISABLED"),
+		LLMGuardMaxCharRun:       env.int("HEPHAESTUS_LLM_REPETITION_MAX_CHAR_RUN", 1024),
+		LLMGuardWindowBytes:      env.int("HEPHAESTUS_LLM_REPETITION_WINDOW_BYTES", 4096),
+		LLMGuardMinBytes:         env.int("HEPHAESTUS_LLM_REPETITION_MIN_BYTES", 4096),
+		LLMGuardRatioPercent:     env.float("HEPHAESTUS_LLM_REPETITION_RATIO_PERCENT", 3.9),
+		LLMGuardMaxChannelBytes:  env.int("HEPHAESTUS_LLM_MAX_CHANNEL_BYTES", 8<<20),
+		ChatRunMaxEventBytes:     env.int64("HEPHAESTUS_CHATRUN_MAX_EVENT_BYTES", 16<<20),
 		EnvironmentLocation:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_LOCATION")),
 		EnvironmentTimezone:      strings.TrimSpace(os.Getenv("HEPHAESTUS_ENV_TIMEZONE")),
 		WeatherProviders:         splitCommaSeparated(getenvDefault("HEPHAESTUS_WEATHER_PROVIDERS", "open_meteo,wttr,met_no")),
@@ -274,6 +297,21 @@ func (v *envValues) int64(key string, fallback int64) int64 {
 	parsed, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		v.problems = append(v.problems, fmt.Errorf("bootstrap: %s must be an integer, got %q", key, raw))
+		return fallback
+	}
+	return parsed
+}
+
+// float returns the floating-point value of key, or fallback when unset. A
+// set but unparsable value is recorded as a problem and falls back.
+func (v *envValues) float(key string, fallback float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		v.problems = append(v.problems, fmt.Errorf("bootstrap: %s must be a number, got %q", key, raw))
 		return fallback
 	}
 	return parsed
