@@ -73,6 +73,9 @@ Plugin 的失败或超时不会中断正常会话；平台会跳过该次执行�
 
 - `/help`、`/ping`：查看命令帮助和平台连通性。
 - `/stop`：请求终止当前会话的运行任务。
+- `/steer [normal|aggressive] <text>`：向运行中的任务追加指令，在下一个工具调用边界注入；`aggressive` 会跳过即将执行的工具调用。`/steer cancel` 撤回尚未送达的指令。
+- `/edit [n] <text>`：编辑活跃分支上倒数第 `n` 条用户消息并重新发送，原记录保留为分支；`n` 默认为 1。
+- `/last [count]`、`/replay [count]`：重新发送最近的助手回复或最近几轮对话；`count` 默认为 1。
 - `/status`：查看会话设置、Project、上下文估算和近期告警。
 - `/list`、`/detail`：浏览身份、印象、工具组、插件、Concierge、会话、Project、Workflow 和 Job。
 - `/switch`：切换 Identity、Concierge、Project 或打开另一个会话。

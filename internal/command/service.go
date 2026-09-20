@@ -83,6 +83,17 @@ func (s *Service) AutoApprove(sessionID uint) bool {
 	return s.interactions != nil && s.interactions.AutoApprove(sessionID)
 }
 
+// SetAutoApprove changes whether permission requests for sessionID are
+// automatically approved. Like every other authorization change it applies to
+// the current runtime only, so a policy seeded at session creation does not
+// outlive a restart.
+func (s *Service) SetAutoApprove(sessionID uint, enabled bool) {
+	if s.interactions == nil {
+		return
+	}
+	s.interactions.SetAutoApprove(sessionID, enabled)
+}
+
 type cancelRegistration struct {
 	id     uint64
 	cancel context.CancelFunc

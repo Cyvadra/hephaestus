@@ -69,11 +69,11 @@ export const listConcierges = (project?: string) => {
   return fetchJSON<ConciergeItem[]>(`${BASE}/concierges${query}`)
 }
 
-export const createSession = (concierge: string, project: string, toolGroups: string[], plugins: string[]) =>
+export const createSession = (concierge: string, project: string, toolGroups: string[], plugins: string[], autoApprove = false) =>
   fetchJSON<Session>(`${BASE}/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ concierge, project, tool_groups: toolGroups, plugins }),
+    body: JSON.stringify({ concierge, project, tool_groups: toolGroups, plugins, auto_approve: autoApprove }),
   })
 
 export const forkSessionAtMessage = (sessionId: number, messageId: number) =>

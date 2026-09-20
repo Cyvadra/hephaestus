@@ -7,28 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cyvadra/hephaestus/internal/project"
 	"github.com/Cyvadra/hephaestus/internal/session"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"gorm.io/datatypes"
-	"gorm.io/gorm"
 )
 
 func newSearchTestServer(t *testing.T) (*Server, store.Project) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&store.Project{}, &store.Session{}, &store.ChatMessage{}, &store.MessageAttachment{}); err != nil {
-		t.Fatal(err)
-	}
-	projects, err := project.New(db, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, projects := newTestStore(t, &store.Project{}, &store.Session{}, &store.ChatMessage{}, &store.MessageAttachment{})
 	p, err := projects.Create("search-test", "")
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +35,6 @@ func newSearchTestServer(t *testing.T) (*Server, store.Project) {
 		t.Fatal(err)
 	}
 
-	gin.SetMode(gin.TestMode)
 	return &Server{projects: projects, sessions: session.New(db)}, *p
 }
 

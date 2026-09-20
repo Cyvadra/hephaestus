@@ -442,6 +442,28 @@ func TestInteractAutomaticApprovalCommands(t *testing.T) {
 	}
 }
 
+func TestSetAutoApproveSeedsSessionPolicy(t *testing.T) {
+	service := testService()
+	service.interactions = interaction.NewManager()
+
+	service.SetAutoApprove(7, true)
+	if !service.AutoApprove(7) {
+		t.Fatal("a seeded session should start with automatic approval enabled")
+	}
+	if service.AutoApprove(8) {
+		t.Fatal("automatic approval should remain scoped to its session")
+	}
+
+	service.SetAutoApprove(7, false)
+	if service.AutoApprove(7) {
+		t.Fatal("automatic approval should be disabled again")
+	}
+
+	// Seeding must stay safe for callers without an interaction manager, such
+	// as tests that build the service without one.
+	(&Service{}).SetAutoApprove(9, true)
+}
+
 func TestCancelRegistrationCannotBeRemovedByOlderTurn(t *testing.T) {
 	service := testService()
 	firstID := service.RegisterCancel(4, func() {})

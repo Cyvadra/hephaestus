@@ -2,10 +2,9 @@ import { useEffect, useMemo, useState, useRef, type KeyboardEvent, type ReactNod
 import { ArrowUp, Blocks, Check, ShieldCheck, Wrench, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatSize } from '../lib/attachments'
+import { toggleAuthorizationMode, toggleReasoningEffort, type AuthorizationMode } from '../lib/composerOptions'
 import type { GenerationOptions, ReasoningEffort, SteeringMode } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
-
-export type AuthorizationMode = 'timeoutDeny' | 'askEachTime' | 'allowAll'
 
 interface Props {
   focusKey?: string
@@ -22,7 +21,9 @@ interface Props {
   files: File[]
   onFilesChange: (files: File[]) => void
   generationOptions: GenerationOptions
-  onGenerationOptionsChange: (options: GenerationOptions) => void
+  webSearchAvailable: boolean
+  onReasoningEffortChange: (effort: ReasoningEffort) => void
+  onWebSearchToggle: (enabled: boolean) => void
   toolGroups: string[]
   activeToolGroups: string[]
   onToolGroupToggle: (toolGroup: string, active: boolean) => void
@@ -31,7 +32,6 @@ interface Props {
   activePlugins: string[]
   onPluginToggle: (plugin: string, active: boolean) => void
   authorizationMode: AuthorizationMode
-  authorizationDisabled: boolean
   onAuthorizationModeChange: (mode: AuthorizationMode) => void
 }
 
@@ -52,7 +52,7 @@ function getStoredSendShortcut(): SendShortcut {
   return sendShortcutChoices.includes(stored as SendShortcut) ? stored as SendShortcut : 'enter'
 }
 
-export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, steeringMode, onSteeringModeChange, pendingSteering, onCancelSteering, disabled, files, onFilesChange, generationOptions, onGenerationOptionsChange, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, authorizationDisabled, onAuthorizationModeChange }: Props) {
+export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, steeringMode, onSteeringModeChange, pendingSteering, onCancelSteering, disabled, files, onFilesChange, generationOptions, webSearchAvailable, onReasoningEffortChange, onWebSearchToggle, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, onAuthorizationModeChange }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -119,6 +119,14 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
     setSendShortcut(shortcut)
     localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, shortcut)
     setSendShortcutMenuOpen(false)
+  }
+
+  // A single click on the label flips thinking on (at the default 深度 level)
+  // or off, mirroring the 联网 toggle; the hover menu keeps offering every
+  // level, and the button's active state tracks "thinking is on".
+  const toggleReasoning = () => {
+    if (controlsDisabled) return
+    onReasoningEffortChange(toggleReasoningEffort(generationOptions.reasoningEffort))
   }
 
   const cancelSendShortcutTimer = () => {
@@ -224,11 +232,14 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                   disabled={controlsDisabled}
                   aria-haspopup="menu"
                   aria-expanded={reasoningMenu.open}
-                  onClick={reasoningMenu.pinOpen}
-                  onFocus={() => {
-                    if (!controlsDisabled) reasoningMenu.pinOpen()
+                  aria-pressed={generationOptions.reasoningEffort !== 'none'}
+                  onClick={toggleReasoning}
+                  onFocus={event => {
+                    // Keyboard focus only: a mouse click also focuses the button,
+                    // and must toggle thinking without pinning the menu open.
+                    if (!controlsDisabled && event.currentTarget.matches(':focus-visible')) reasoningMenu.pinOpen()
                   }}
-                  title={t('chat.reasoning.select')}
+                  title={t('chat.reasoning.toggle')}
                 >
                   <ThinkingIcon />
                   <span>{reasoningLabel}</span>
@@ -242,7 +253,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                         aria-checked={generationOptions.reasoningEffort === choice}
                         key={choice}
                         onClick={() => {
-                          onGenerationOptionsChange({ ...generationOptions, reasoningEffort: choice })
+                          onReasoningEffortChange(choice)
                           reasoningMenu.close()
                         }}
                       >
@@ -256,17 +267,20 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
               <button
                 type="button"
                 className={'composer-option-btn' + (generationOptions.webSearch ? ' active' : '')}
-                disabled={controlsDisabled}
+                disabled={controlsDisabled || !webSearchAvailable}
                 aria-pressed={generationOptions.webSearch}
-                onClick={() => onGenerationOptionsChange({ ...generationOptions, webSearch: !generationOptions.webSearch })}
-                title={generationOptions.webSearch ? t('chat.compose.webSearchEnabled') : t('chat.compose.webSearchDisabled')}
+                onClick={() => onWebSearchToggle(!generationOptions.webSearch)}
+                title={!webSearchAvailable ? t('chat.compose.webSearchUnavailable') : generationOptions.webSearch ? t('chat.compose.webSearchEnabled') : t('chat.compose.webSearchDisabled')}
               >
                 <WebIcon />
                 <span>{t('chat.compose.webSearch')}</span>
               </button>
               <AuthorizationModeControl
                 mode={authorizationMode}
-                disabled={authorizationDisabled}
+                // Authorization is a runtime policy the server applies to the
+                // next request, so it stays usable before the session exists
+                // and while a generation is streaming.
+                disabled={isCommand}
                 onChange={onAuthorizationModeChange}
               />
               {toolGroups.length > 0 && (
@@ -366,50 +380,22 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
 
 function AuthorizationModeControl({ mode, disabled, onChange }: { mode: AuthorizationMode; disabled: boolean; onChange: (mode: AuthorizationMode) => void }) {
   const { t } = useTranslation()
-  const controlRef = useRef<HTMLDivElement>(null)
-  const menu = useHoverMenu(controlRef)
-  const choices: AuthorizationMode[] = ['timeoutDeny', 'askEachTime', 'allowAll']
+  const allowAll = mode === 'allowAll'
 
+  // A single switch, like 联网: highlighted means every sensitive action is
+  // allowed for this session, unhighlighted means each one is asked for.
   return (
-    <div
-      className="composer-reasoning-control"
-      ref={controlRef}
-      onMouseEnter={() => { if (!disabled) menu.openOnHover() }}
-      onMouseLeave={menu.scheduleClose}
+    <button
+      type="button"
+      className={'composer-option-btn' + (allowAll ? ' active' : '')}
+      disabled={disabled}
+      aria-pressed={allowAll}
+      onClick={() => onChange(toggleAuthorizationMode(mode))}
+      title={t(allowAll ? 'chat.compose.authorization.allowAll' : 'chat.compose.authorization.askEachTime')}
     >
-      <button
-        type="button"
-        className={'composer-option-btn' + (mode === 'allowAll' || menu.open ? ' active' : '')}
-        disabled={disabled}
-        aria-haspopup="menu"
-        aria-expanded={menu.open}
-        onClick={menu.pinOpen}
-        onFocus={() => { if (!disabled) menu.pinOpen() }}
-        title={t('chat.compose.authorization.select')}
-      >
-        <ShieldCheck aria-hidden="true" size={14} />
-        <span>{t('chat.compose.authorization.label')}</span>
-      </button>
-      {menu.open && (
-        <div className="composer-options-menu" role="menu" aria-label={t('chat.compose.authorization.select')} onMouseEnter={menu.cancelClose} onMouseLeave={menu.scheduleClose}>
-          {choices.map(choice => (
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={mode === choice}
-              key={choice}
-              onClick={() => {
-                onChange(choice)
-                menu.close()
-              }}
-            >
-              <span>{t(`chat.compose.authorization.${choice}`)}</span>
-              {mode === choice && <Check aria-hidden="true" size={14} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      <ShieldCheck aria-hidden="true" size={14} />
+      <span>{t('chat.compose.authorization.label')}</span>
+    </button>
   )
 }
 

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import i18n from '../i18n'
 import Markdown from './Markdown'
 import type { InteractionRequest, QuestionsInteractionRequest, StreamToolCall } from '../api/types'
-import type { AuthorizationMode } from './Composer'
+import type { AuthorizationMode } from '../lib/composerOptions'
 import { normalizeQuestionAnswers, type DraftQuestionAnswer } from '../lib/questionAnswers'
 
 export type StreamActivity =
@@ -99,7 +99,6 @@ function PermissionActivity({ request, onRespond, authorizationMode, onAutoAppro
     }
       return
     }
-    if (authorizationMode === 'timeoutDeny' && secondsRemaining === 5) autoRespond(false)
     if (authorizationMode === 'askEachTime' && secondsRemaining === 0) autoRespond(true)
   }, [authorizationMode, onAutoApprove, request, secondsRemaining])
 

@@ -30,12 +30,16 @@ type createSessionRequest struct {
 	Project    string   `json:"project"`
 	ToolGroups []string `json:"tool_groups"`
 	Plugins    []string `json:"plugins"`
+	// AutoApprove seeds the session's authorization policy, so a client can
+	// start a session in "allow all" mode instead of changing it afterwards.
+	// Like every other auto-approve change it belongs to the current runtime.
+	AutoApprove bool `json:"auto_approve"`
 }
 
 // createSession godoc
 //
 //	@Summary		Create a session
-//	@Description	Creates a new Session from the named Concierge's current settings.
+//	@Description	Creates a new Session from the named Concierge's current settings. auto_approve seeds the session's runtime authorization policy.
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		json
@@ -89,6 +93,10 @@ func (s *Server) createSession(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
+	// Authorization is runtime state that lives in the interaction manager
+	// rather than the session row, so it is applied after creation and is
+	// reported back by GET /sessions/{id}/history.
+	s.commands.SetAutoApprove(sess.ID, req.AutoApprove)
 	c.JSON(http.StatusCreated, sess)
 }
 

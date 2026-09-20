@@ -19,6 +19,7 @@ v0.3.3 及更早版本的完整记录见 git tag 与提交历史。
 - GitHub Actions CI：Go 构建、vet、race 测试、golangci-lint、govulncheck、Swagger 新鲜度检查，Postgres 集成测试，以及前端 lint / 类型检查 / 测试 / 构建。
 - `CONTRIBUTING.md`、`SECURITY.md`、`THIRD_PARTY_NOTICES.md` 与本变更日志。
 - `make lint` 与 `make check`，配套 `.golangci.yml` 固定 lint 规则集。
+- `POST /sessions` 接受 `auto_approve`：可在会话创建时即开启「全部允许」，无需创建后再改一次。该策略与 `/interact auto-approve` 一样只属于当前服务进程。
 
 ### Changed
 
@@ -28,6 +29,9 @@ v0.3.3 及更早版本的完整记录见 git tag 与提交历史。
 - Swagger 文档重新生成，补上缺失的 `/configurations/complete` 与鉴权声明。
 - `HEPHAESTUS_POSTGRES_DSN` 标记为废弃别名，使用时会打印提示；请改用 `HEPHAESTUS_DATABASE_URL`。
 - **`/workflow-runs/:id/stream` 的事件序号改为从 0 开始**（此前从 1 开始），与 `/chat-runs/:id/stream`、`/configurations/complete` 及前端的校验保持一致。依赖序号从 1 连续递增的外部消费方需相应调整。
+- **新建会话的思考强度与「联网」不再沿用上一个会话的取值**：选定 Concierge 后，思考强度取该 Identity 的默认值；「联网」按 Concierge 分别记住上次的选择（未选过时，跟随该 Concierge 是否默认启用 `web` 工具组），并在 Concierge 无法提供 web 工具时置灰。
+- 思考强度标签支持单击开关：处于「适度 / 深度 / 极度」任一时单击即关闭思考（回到「即答」），处于「即答」时单击开启到默认的「深度」；「适度」与「极度」仍由悬停菜单选择（英文界面档位名同步更正为 Max / High / Low / Direct）。
+- **授权改为两态开关**：高亮代表「全部允许」，未高亮代表「每次询问」，单击即切换；原先的「超时拒绝」后端并不支持，已连同会话内的 Project 偏好记忆一并删除。草稿阶段的「全部允许」随会话创建一并下发；生成进行中也可切换（`/interact` 命令在会话消息入口处理，不受进行中的运行影响）。
 
 ### Fixed
 
@@ -37,6 +41,7 @@ v0.3.3 及更早版本的完整记录见 git tag 与提交历史。
 - 流式响应在收到 finish reason 后未及时结束。
 - 持久化工具审计结果时未剥离 NUL 字节。
 - 子 Agent 运行失败时 `finish` 的错误被丢弃，失败无从追溯。
+- **Concierge 提供 `web` 工具组时「联网」却无法开启**：可用性此前要求 Concierge 为会话默认勾选该工具组，导致像 `pure` 这样「提供但不默认启用」的 Concierge 永远置灰。现在只要 Concierge 提供该工具组就可切换，且开启时会一并激活会话的 `web` 工具组，使联网真正生效；「联网」的显示也改为反映实际生效状态（工具组已存在且未被 `EnableWebSearch` 关闭）。
 - 配置列表过长时无法滚动。
 
 ### Removed

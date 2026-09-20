@@ -773,7 +773,7 @@ const docTemplate = `{
         },
         "/sessions": {
             "post": {
-                "description": "Creates a new Session from the named Concierge's current settings.",
+                "description": "Creates a new Session from the named Concierge's current settings. auto_approve seeds the session's runtime authorization policy.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2293,6 +2293,10 @@ const docTemplate = `{
                 "concierge"
             ],
             "properties": {
+                "auto_approve": {
+                    "description": "AutoApprove seeds the session's authorization policy, so a client can\nstart a session in \"allow all\" mode instead of changing it afterwards.\nLike every other auto-approve change it belongs to the current runtime.",
+                    "type": "boolean"
+                },
                 "concierge": {
                     "type": "string"
                 },

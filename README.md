@@ -57,6 +57,24 @@ Session 从 Concierge 创建后拥有独立设置。你可以在不中断历史�
 
 会话保存完整消息树，当前活跃分支由 `active_leaf_message_id` 决定。编辑、重新生成和从旧消息继续对话都会形成可回看的分支，而非覆盖原记录。上下文接近模型窗口时，平台压缩较早历史，同时保留近期原始消息和可继续对话的关键信息。
 
+所有会话与消息都可全文检索：网页界面提供跨会话搜索，模型也可通过 `chat_history` 工具组自行查找和读取旧对话。检索不依赖向量数据库，PostgreSQL 下由 `pg_trgm` 索引加速，SQLite 同样可用。
+
+### 运行中可转向，中断不丢失
+
+Agent 正在执行多步工具调用时，你不必等它跑完或整轮停止：
+
+- **Steering**：用 `/steer <text>` 或界面中的转向控件追加指令，指令会在下一个工具调用边界注入。`normal` 模式让当前工具照常完成；`aggressive` 模式跳过即将执行的工具调用，让模型先读到你的新指令。
+- **中断保留**：`/stop` 或连接中断时，已生成的可见内容和已完成的工具交换都会保存，回复标记为未完成，之后可从该位置继续。若期间活跃分支已变化，结果会保留为可访问的非活跃分支。
+- **可靠收尾**：取消会沿子 Agent 链路级联；若某次运行在宽限期后仍未响应取消，平台会强制结束该运行，避免会话一直卡在 `running`。
+
+### 需要时主动提问
+
+启用 `ask_questions` 工具组后，模型在缺少关键信息时可以一次提出一至五个问题，每个问题提供二至五个选项并始终允许自由输入，而不是自行猜测。敏感工具调用则走独立的授权确认流程，网页界面与 QQ Channel 中都可答复。
+
+### 在界面中维护配置
+
+网页端内置配置工作台，可直接新建、复制、编辑和删除 Identity、Impression、Tool Group、Concierge、Workflow 与 Job，保存前经过与启动时相同的完整校验。编辑 Identity 或 Impression 时，可以即时生成一条 AI 回复作为参考，确认效果后再保存。界面支持简体中文与英文，以及日间、夜间和跟随系统主题。
+
 ### Project 是 Agent 的工作现场
 
 Project 将会话、上传文件和工作目录组织在一起。模型可以在受控范围内检索历史、处理附件、访问 Project 文件、搜索网页，或在显式启用后执行本地或远程 Shell 命令。
@@ -155,8 +173,11 @@ http://127.0.0.1:5173
 | `/clear [true|false]` | 基于当前 Session 设置新建会话。 |
 | `/new [true|false]` | 从源 Concierge 当前设置新建会话。 |
 | `/stop` | 请求停止当前运行。 |
+| `/steer [normal\|aggressive] <text>` | 向运行中的任务追加指令；`/steer cancel` 撤回尚未送达的指令。 |
+| `/edit [n] <text>` | 编辑倒数第 `n` 条用户消息并重新发送，原记录保留为分支；`n` 默认为 1。 |
+| `/last [count]`、`/replay [count]` | 重新发送最近的助手回复或最近几轮对话，便于在外部 Channel 中回看。 |
 | `/interact approve\|deny` | 对敏感操作给出明确授权或拒绝。 |
-| `/interact auto-approve` | 为本进程内当前 Session 临时开启自动授权。 |
+| `/interact auto-approve` | 为本进程内当前 Session 临时开启自动授权；`cancel-auto-approve` 关闭。 |
 
 `/list <kind>` 显示的条目可以使用序号（如 `1` 或 `#1`）引用；`/switch session <ordinal|#session-id>` 可切换到另一条持久 Session。
 
@@ -188,7 +209,7 @@ http://127.0.0.1:5173
 
 ### 工具、网页与附件
 
-默认工具组可覆盖聊天历史检索、Project 管理、网页搜索、网页获取和 Shell。`web_search` 聚合 DuckDuckGo、Sogou 以及可选的 Brave、Tavily、SerpAPI、SearXNG；`web_fetch` 默认经由 Firecrawl，并可回退到本地无头浏览器。
+内置工具组覆盖聊天历史检索（`chat_history`）、Project 管理（`project`）、文件交付（`basic` 中的 `send_file`）、向用户提问（`ask_questions`）、网页搜索与获取（`web`）、Shell（`shell`）和子 Agent 委派（`subagent`）。新建的 Project 目录会附带一份 `AGENTS.md` 骨架，用于记录该工作区的约定。`web_search` 聚合 DuckDuckGo、Sogou 以及可选的 Brave、Tavily、SerpAPI、SearXNG；`web_fetch` 默认经由 Firecrawl，并可回退到本地无头浏览器。
 
 一条用户消息最多可附带五个附件。允许的小文本文件会直接进入本轮提示词；JPEG、PNG、GIF、WebP 可作为视觉输入发送给当前模型；其他文件仍会保存在 Project 中并保留受控引用。
 
@@ -338,6 +359,7 @@ make build
 ## 设计边界
 
 - Hephaestus 面向一个受信任的长期使用者，不是多租户协作平台。
+- 登录采用挑战摘要，密码不以明文传输；连续失败后需先完成工作量证明，详见 [`SECURITY.md`](./SECURITY.md)。
 - Project 是工作上下文与文件组织边界，不是多用户安全隔离边界。
 - 聊天历史检索不依赖向量数据库。
 - 配置、消息分支、工具调用和自动化运行优先保留，以便复盘、调试和继续工作。

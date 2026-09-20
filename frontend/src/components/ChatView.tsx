@@ -7,15 +7,15 @@ import { streamContinue, streamMessage, streamRegenerate, streamRun, type Stream
 import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, SteeringMode, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
 import MessageBubble from './MessageBubble'
-import Composer, { type AuthorizationMode } from './Composer'
+import Composer from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import Markdown from './Markdown'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
 import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
+import { conciergeComposerOptions, composerReasoningEffort, rememberWebSearchPreference, sessionOptionOverrides, supportsWebSearch, webSearchSelectable, WEB_TOOL_GROUP, type AuthorizationMode } from '../lib/composerOptions'
 import i18n from '../i18n'
 
 const WIDE_CHAT_HISTORY_STORAGE_KEY = 'hephaestus.wideChatHistory'
-const AUTHORIZATION_PREFERENCE_STORAGE_KEY_PREFIX = 'hephaestus.authorizationPreference.'
 const HISTORY_NAV_TOP_THRESHOLD = 120
 const HISTORY_NAV_BOTTOM_THRESHOLD = 900
 const HISTORY_NAV_UNLOCK_DISTANCE = 48
@@ -36,16 +36,6 @@ interface PendingSteering {
   runId: number
   text: string
   mode: SteeringMode
-}
-
-function authorizationPreferenceStorageKey(project: string): string {
-  return `${AUTHORIZATION_PREFERENCE_STORAGE_KEY_PREFIX}${project}`
-}
-
-function authorizationPreference(project: string | null): Exclude<AuthorizationMode, 'allowAll'> {
-  if (project == null) return 'askEachTime'
-  const stored = localStorage.getItem(authorizationPreferenceStorageKey(project))
-  return stored === 'timeoutDeny' || stored === 'askEachTime' ? stored : 'askEachTime'
 }
 
 function sameNavigationItem(left: UserMessageNavigationItem | null, right: UserMessageNavigationItem | null): boolean {
@@ -169,7 +159,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [activeSubagentRun, setActiveSubagentRun] = useState<SubagentRunDetail | null>(null)
   const [headerTitleDraft, setHeaderTitleDraft] = useState('')
   const [generationOptions, setGenerationOptions] = useState<GenerationOptions>({ reasoningEffort: 'high', webSearch: false })
-  const [authorizationMode, setAuthorizationMode] = useState<AuthorizationMode>(() => authorizationPreference(project))
+  const [authorizationMode, setAuthorizationMode] = useState<AuthorizationMode>('askEachTime')
   const [draftToolGroups, setDraftToolGroups] = useState<string[]>([])
   const [draftPlugins, setDraftPlugins] = useState<string[]>([])
   const [previousUserMessage, setPreviousUserMessage] = useState<UserMessageNavigationItem | null>(null)
@@ -182,12 +172,37 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const currentSessionRef = useRef<number | null>(sessionId)
 	const viewEpochRef = useRef(0)
   const shouldAutoScrollRef = useRef(true)
-  const initializedOptionsSessionRef = useRef<number | null>(null)
+  // optionsOwnerRef names whose composer options are mounted (`session:<id>` or
+  // `draft:<project>\0<concierge>`), so async loads cannot clobber the user's
+  // choices and a draft cannot inherit the previous session's values.
+  const optionsOwnerRef = useRef<string | null>(null)
   const createdSessionRef = useRef<number | null>(null)
   const cancelledTitleEditRef = useRef(false)
   const lockedUserMessageIdRef = useRef<number | null>(null)
   const highlightedMessageRef = useRef<number | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
+  const selectedConcierge = useMemo(
+    () => draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null,
+    [concierges, defaultConciergeId, draftConcierge],
+  )
+  const newSessionConcierge = draftConcierge ?? selectedConcierge
+  const sessionConcierge = useMemo(
+    () => concierges.find(concierge => concierge.name === activeSession?.SourceConcierge),
+    [activeSession?.SourceConcierge, concierges],
+  )
+  // The composer's 联网 control answers to one (Concierge, tool groups) pair:
+  // the draft's Concierge and draft tool groups before the session exists, the
+  // session's own afterwards.
+  const [webConcierge, webToolGroups] = activeSession == null
+    ? [newSessionConcierge, draftToolGroups]
+    : [sessionConcierge, activeSession.Settings.tool_groups]
+  // 联网 is offered whenever the web tool group is within reach: the Concierge
+  // may provide it (for a draft, or for a session able to activate it) or the
+  // session may already carry it. It is only live once that group is part of
+  // the session's own tool groups, because EnableWebSearch merely mutes the
+  // tools the group contributes.
+  const webSearchAvailable = webSearchSelectable(webConcierge, webToolGroups)
+  const webSearchActive = generationOptions.webSearch && supportsWebSearch(webToolGroups)
 
   const clearStreamingPresentation = useCallback(() => {
     setStreaming(false)
@@ -217,7 +232,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     clearStreamingPresentation()
     setRegeneratingMessageId(null)
     setContinuingMessageId(null)
-    initializedOptionsSessionRef.current = null
+    optionsOwnerRef.current = null
     createdSessionRef.current = null
     // A pending ?highlight= scrolls to a specific message once messages load,
     // so the default jump-to-bottom must not fight it on this session's first render.
@@ -241,19 +256,22 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     }
     setMessages(h.messages)
     setLocalLeafId(h.session.ActiveLeafMessageID)
-    setAuthorizationMode(h.auto_approve ? 'allowAll' : authorizationPreference(project))
-    if (initializedOptionsSessionRef.current !== targetSessionId) {
+    setAuthorizationMode(h.auto_approve ? 'allowAll' : 'askEachTime')
+    const owner = `session:${targetSessionId}`
+    if (optionsOwnerRef.current !== owner) {
       setGenerationOptions({
         reasoningEffort: composerReasoningEffort(h.session.ReasoningEffort || h.reasoning_effort),
         webSearch: h.session.EnableWebSearch ?? false,
       })
-      initializedOptionsSessionRef.current = targetSessionId
+      optionsOwnerRef.current = owner
     }
-  }, [project])
+  }, [])
 
+  // Automatic approval is runtime state on the server, so a draft always starts
+  // from the asking default and only carries "allow all" into createSession.
   useEffect(() => {
-    if (resolvedSessionId == null) setAuthorizationMode(authorizationPreference(project))
-  }, [project, resolvedSessionId])
+    if (resolvedSessionId == null) setAuthorizationMode('askEachTime')
+  }, [resolvedSessionId])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -397,7 +415,39 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setPendingFiles(next)
   }, [])
 
-  const handleGenerationOptionsChange = useCallback((options: GenerationOptions) => {
+  const toggleSessionSetting = useCallback(async (kind: 'toolgroup' | 'plugin', key: 'tool_groups' | 'plugins', name: string, active: boolean) => {
+    if (resolvedSessionId == null || streaming) return false
+    try {
+      await sendCommand(resolvedSessionId, `/${active ? 'activate' : 'deactivate'} ${kind} ${name}`)
+      setActiveSession(current => {
+        if (current == null) return current
+        const names = active
+          ? [...new Set([...current.Settings[key], name])]
+          : current.Settings[key].filter(currentName => currentName !== name)
+        return { ...current, Settings: { ...current.Settings, [key]: names } }
+      })
+      return true
+    } catch (cause) {
+      setError(String(cause))
+      return false
+    }
+  }, [resolvedSessionId, streaming])
+
+  // 联网 is gated by two things: the session's tool groups decide whether
+  // web_search/web_fetch exist at all, and EnableWebSearch only mutes them.
+  // Switching 联网 on therefore has to make sure the group is there: a draft
+  // carries it into createSession, and a live session activates it with the
+  // same command the tools menu issues. Resolves to whether the group is there.
+  const enableWebToolGroup = useCallback(async () => {
+    if (resolvedSessionId == null) {
+      setDraftToolGroups(current => supportsWebSearch(current) ? current : [...current, WEB_TOOL_GROUP])
+      return true
+    }
+    if (supportsWebSearch(activeSession?.Settings.tool_groups)) return true
+    return toggleSessionSetting('toolgroup', 'tool_groups', WEB_TOOL_GROUP, true)
+  }, [activeSession, resolvedSessionId, toggleSessionSetting])
+
+  const persistGenerationOptions = useCallback((options: GenerationOptions) => {
     setGenerationOptions(options)
     if (resolvedSessionId == null) return
     void updateSession(resolvedSessionId, {
@@ -405,6 +455,20 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       enableWebSearch: options.webSearch,
     }).catch((cause: unknown) => setError(String(cause)))
   }, [resolvedSessionId])
+
+  const handleReasoningEffortChange = useCallback((reasoningEffort: ReasoningEffort) => {
+    persistGenerationOptions({ ...generationOptions, reasoningEffort })
+  }, [generationOptions, persistGenerationOptions])
+
+  const handleWebSearchToggle = useCallback(async (enabled: boolean) => {
+    // Without the tool group the flag would record 联网 as on while it is not.
+    if (enabled && !(await enableWebToolGroup())) return
+    // 联网 is remembered per Concierge so sessions started from it later reuse
+    // the choice instead of inheriting another Concierge's state.
+    const concierge = activeSession?.SourceConcierge ?? newSessionConcierge?.name
+    if (concierge != null) rememberWebSearchPreference(concierge, enabled)
+    persistGenerationOptions({ ...generationOptions, webSearch: enabled })
+  }, [activeSession, enableWebToolGroup, generationOptions, newSessionConcierge, persistGenerationOptions])
 
   const handleCommandHelpRequest = useCallback(async () => {
     if (commandHelp || commandHelpLoading || resolvedSessionId == null || streaming) return
@@ -420,22 +484,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       setCommandHelpLoading(false)
     }
   }, [commandHelp, commandHelpLoading, resolvedSessionId, streaming])
-
-  const toggleSessionSetting = useCallback(async (kind: 'toolgroup' | 'plugin', key: 'tool_groups' | 'plugins', name: string, active: boolean) => {
-    if (resolvedSessionId == null || streaming) return
-    try {
-      await sendCommand(resolvedSessionId, `/${active ? 'activate' : 'deactivate'} ${kind} ${name}`)
-      setActiveSession(current => {
-        if (current == null) return current
-        const names = active
-          ? [...new Set([...current.Settings[key], name])]
-          : current.Settings[key].filter(currentName => currentName !== name)
-        return { ...current, Settings: { ...current.Settings, [key]: names } }
-      })
-    } catch (cause) {
-      setError(String(cause))
-    }
-  }, [resolvedSessionId, streaming])
 
   const handleToolGroupToggle = useCallback((toolGroup: string, active: boolean) =>
     toggleSessionSetting('toolgroup', 'tool_groups', toolGroup, active), [toggleSessionSetting])
@@ -561,14 +609,23 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     lockedUserMessageIdRef.current = null
     pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
   }, [])
-  const selectedConcierge = draftConcierge ?? concierges.find(concierge => concierge.name === defaultConciergeId) ?? concierges[0] ?? null
-  const newSessionConcierge = draftConcierge ?? selectedConcierge
-
   useEffect(() => {
     if (resolvedSessionId != null || newSessionConcierge == null) return
     setDraftToolGroups(newSessionConcierge.default_tool_groups)
     setDraftPlugins(newSessionConcierge.default_plugins)
   }, [newSessionConcierge, resolvedSessionId])
+
+  // A draft starts from the selected Concierge's Identity defaults rather than
+  // from the session the user was just looking at. Its options belong to one
+  // (project, Concierge) pair, so edits made during the draft survive
+  // re-renders while picking another Concierge re-applies its defaults.
+  useEffect(() => {
+    if (resolvedSessionId != null || newSessionConcierge == null) return
+    const owner = `draft:${project ?? ''}\u0000${newSessionConcierge.name}`
+    if (optionsOwnerRef.current === owner) return
+    optionsOwnerRef.current = owner
+    setGenerationOptions(conciergeComposerOptions(newSessionConcierge))
+  }, [newSessionConcierge, project, resolvedSessionId])
 
   const stopActiveRun = useCallback(async () => {
     if (resolvedSessionId == null) return
@@ -643,19 +700,21 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           throw new Error(t('chat.concierge.selectBeforeStarting'))
         }
         if (project == null) throw new Error('No project selected')
-        const created = await createSession(selectedConcierge.name, project, draftToolGroups, draftPlugins)
+        // "allow all" is runtime state on the server, so it is seeded with the
+        // session instead of being patched in after the session exists.
+        const created = await createSession(selectedConcierge.name, project, draftToolGroups, draftPlugins, authorizationMode === 'allowAll')
         targetSessionId = created.ID
         setActiveSession(created)
-        initializedOptionsSessionRef.current = created.ID
+        optionsOwnerRef.current = `session:${created.ID}`
         createdSessionRef.current = created.ID
         setResolvedSessionId(created.ID)
         streamSessionRef.current = created.ID
         onSessionCreated?.(created.ID)
-        const updated = await updateSession(created.ID, {
-          reasoningEffort: generationOptions.reasoningEffort,
-          enableWebSearch: generationOptions.webSearch,
-        })
-        setActiveSession(updated)
+        // The backend seeds a new session with the Concierge's Identity
+        // defaults, so only persist composer values the user changed away
+        // from them (sessionOptionOverrides returns null when they match).
+        const overrides = sessionOptionOverrides(created, generationOptions)
+        if (overrides != null) setActiveSession(await updateSession(created.ID, overrides))
       }
 
       const gen = streamMessage(targetSessionId, text, leafId, files, generationOptions, controller.signal)
@@ -695,7 +754,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setPendingSteering(null)
       }
     }
-  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, t])
+  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, t])
 
   const runExistingSessionStream = useCallback(async (
     messageId: number,
@@ -863,12 +922,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   const handleAuthorizationModeChange = useCallback((mode: AuthorizationMode) => {
     setAuthorizationMode(mode)
-    if (mode !== 'allowAll' && project != null) {
-      localStorage.setItem(authorizationPreferenceStorageKey(project), mode)
-    }
     if (resolvedSessionId == null) return
     void setAutomaticApproval(resolvedSessionId, mode === 'allowAll').catch((cause: unknown) => setError(String(cause)))
-  }, [project, resolvedSessionId])
+  }, [resolvedSessionId])
 
   const handleChatHeaderDoubleClick = () => {
     setWideChatHistory(current => {
@@ -883,12 +939,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const isSubagentSession = activeSession?.ParentSubagentRunID != null
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
   const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || t('chat.concierge.notSelected')
-  const sessionConcierge = concierges.find(concierge => concierge.name === activeSession?.SourceConcierge)
   const toolGroups = activeSession == null ? (newSessionConcierge?.tool_groups ?? []) : [...new Set([
     ...(activeSession.Settings.tool_groups ?? []),
     ...(sessionConcierge?.tool_groups ?? []),
-  ])].filter(toolGroup => toolGroup !== 'web').sort((left, right) => left.localeCompare(right))
-  const activeToolGroups = (activeSession == null ? draftToolGroups : activeSession.Settings.tool_groups).filter(toolGroup => toolGroup !== 'web')
+  ])].filter(toolGroup => toolGroup !== WEB_TOOL_GROUP).sort((left, right) => left.localeCompare(right))
+  const activeToolGroups = (activeSession == null ? draftToolGroups : activeSession.Settings.tool_groups).filter(toolGroup => toolGroup !== WEB_TOOL_GROUP)
   const plugins = activeSession == null ? (newSessionConcierge?.plugins ?? []) : [...new Set([...(sessionConcierge?.plugins ?? []), ...(activeSession.Settings.plugins ?? [])])]
     .sort((left, right) => left.localeCompare(right))
   const activePlugins = activeSession == null ? draftPlugins : activeSession.Settings.plugins
@@ -1101,10 +1156,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     onCancelSteering={handleCancelSteering}
         files={pendingFiles}
         onFilesChange={handleFilesChange}
-        generationOptions={generationOptions}
-        onGenerationOptionsChange={handleGenerationOptionsChange}
+        // The composer reads and writes the effective 联网 state: a session whose
+        // web tool group is not active yet shows up as off, so switching it on
+        // is exactly what adds the group.
+        generationOptions={{ ...generationOptions, webSearch: webSearchActive }}
+        webSearchAvailable={webSearchAvailable}
+        onReasoningEffortChange={handleReasoningEffortChange}
+        onWebSearchToggle={handleWebSearchToggle}
     authorizationMode={authorizationMode}
-    authorizationDisabled={streaming || resolvedSessionId == null}
     onAuthorizationModeChange={handleAuthorizationModeChange}
         toolGroups={toolGroups}
         activeToolGroups={activeToolGroups}
@@ -1128,11 +1187,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       />}
     </div>
   )
-}
-
-function composerReasoningEffort(effort: string): ReasoningEffort {
-  if (effort === 'low' || effort === 'high' || effort === 'max') return effort
-  return 'none'
 }
 
 function appendReasoningActivity(current: StreamActivity[], sequence: number, content: string): StreamActivity[] {
