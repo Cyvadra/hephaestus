@@ -379,6 +379,11 @@ func insertChain(tx *gorm.DB, sessionID uint, parentID *uint, msgs []store.ChatM
 	for i := range msgs {
 		msgs[i].SessionID = sessionID
 		msgs[i].ParentMessageID = parent
+		// Postgres rejects text that is not valid UTF-8, and tool output
+		// (e.g. a command printing Latin-1, or a byte-truncated buffer)
+		// can contain it; one bad row would otherwise fail the whole turn.
+		msgs[i].Content = strings.ToValidUTF8(msgs[i].Content, "\uFFFD")
+		msgs[i].ReasoningContent = strings.ToValidUTF8(msgs[i].ReasoningContent, "\uFFFD")
 		if msgs[i].Status == "" {
 			msgs[i].Status = store.MessageStatusComplete
 		}
