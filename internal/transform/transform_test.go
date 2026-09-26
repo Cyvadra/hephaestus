@@ -19,7 +19,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *llm.Client {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		handler(w, r)

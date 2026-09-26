@@ -26,7 +26,7 @@ func TestCallStreamReturnsOnFinishReasonWithoutDoneOrEOF(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -76,7 +76,7 @@ func TestCallAttachesToolExampleToDescription(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
@@ -112,7 +112,7 @@ func TestCallRoutesLocalModelAlias(t *testing.T) {
 			t.Fatalf("official request path = %q, want /models", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 	}))
 	defer official.Close()
 
@@ -156,7 +156,7 @@ func TestCallOmitsOrphanToolResultsFromLegacyInterruptedTurn(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -206,7 +206,7 @@ func TestCallAttachesOnlyFinalUserVisualUploads(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"},{"id":"deepseek-v4-flash-vision-exp"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"},{"id":"deepseek-flash"}]}`))
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -336,7 +336,7 @@ func TestContinueStreamUsesAssistantPrefixCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		requestPath = r.URL.Path
@@ -398,7 +398,7 @@ func TestRawCallRetriesWithProviderMaxTokens(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		var request ds4.ChatRequest
@@ -459,7 +459,7 @@ func TestCallStreamAbortsDegenerateReasoning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -538,7 +538,7 @@ func TestCallStreamGuardDisabledHonoursConfig(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
