@@ -206,7 +206,7 @@ func TestCallAttachesOnlyFinalUserVisualUploads(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"},{"id":"deepseek-flash"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
