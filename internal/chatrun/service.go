@@ -22,7 +22,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const runTimeout = 30 * time.Minute
+// runTimeout is a backstop for a wedged turn, not a work budget. It is large
+// because a parent turn blocks on fork/await for delegated children doing
+// long coding, research, or background work; users can cancel at any time.
+const runTimeout = 8 * time.Hour
 
 // defaultCancelGracePeriod gives cooperative executors time to flush their
 // final state before a cancellation is finalized independently of the

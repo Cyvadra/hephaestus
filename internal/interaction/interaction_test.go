@@ -108,23 +108,18 @@ func TestSubagentInheritsParentAutomaticApproval(t *testing.T) {
 	}
 }
 
-func TestSubagentPermissionAutoApprovesAfterTimeout(t *testing.T) {
+func TestSubagentPermissionAutoApprovesByDefault(t *testing.T) {
 	manager := NewManager()
-	manager.subagentApprovalTimeout = 10 * time.Millisecond
 	manager.RegisterSubagent(8, 7)
-	events := make(chan Event, 1)
-	ctx := WithReporter(context.Background(), func(event Event) { events <- event })
+	ctx := WithReporter(context.Background(), func(event Event) {
+		t.Errorf("subagent should not prompt, got %s", event.Type)
+	})
 
-	done := make(chan error, 1)
-	go func() { done <- manager.RequestPermission(ctx, 8, "Allow command?", "test") }()
-	<-events
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("timed-out subagent request should be approved: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("subagent permission did not auto-approve")
+	if err := manager.RequestPermission(ctx, 8, "Allow command?", "test"); err != nil {
+		t.Fatalf("subagent request should be approved: %v", err)
+	}
+	if manager.AutoApprove(7) {
+		t.Fatal("parent approval policy must not change")
 	}
 }
 

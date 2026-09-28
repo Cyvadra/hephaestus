@@ -94,7 +94,12 @@ func (t SubagentTool) Execute(ctx context.Context, args map[string]any) *toolkit
 			return toolkit.ErrorResult("fork: " + err.Error())
 		}
 		if run.Status != store.SubagentRunSucceeded {
-			return toolkit.ErrorResult(fmt.Sprintf("fork run %d %s: %s", run.ID, run.Status, run.Error))
+			// Partial output from a failed child is still useful work; never drop it.
+			message := fmt.Sprintf("fork run %d %s: %s", run.ID, run.Status, run.Error)
+			if strings.TrimSpace(run.Result) != "" {
+				message += "\nPartial result before failure:\n" + run.Result
+			}
+			return toolkit.ErrorResult(message)
 		}
 		return toolkit.NewToolResult(fmt.Sprintf("fork run %d completed:\n%s", run.ID, run.Result))
 	}
