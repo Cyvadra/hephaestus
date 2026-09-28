@@ -14,6 +14,7 @@ import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutpu
 import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
 import { isTerminalSubagentStatus } from '../lib/subagentRuns'
 import { conciergeComposerOptions, composerReasoningEffort, rememberWebSearchPreference, sessionOptionOverrides, supportsWebSearch, webSearchSelectable, WEB_TOOL_GROUP, type AuthorizationMode } from '../lib/composerOptions'
+import { useStickToBottom } from '../lib/useStickToBottom'
 import i18n from '../i18n'
 
 const WIDE_CHAT_HISTORY_STORAGE_KEY = 'hephaestus.wideChatHistory'
@@ -166,13 +167,16 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const [previousUserMessage, setPreviousUserMessage] = useState<UserMessageNavigationItem | null>(null)
   const [showBackToBottom, setShowBackToBottom] = useState(false)
   const [wideChatHistory, setWideChatHistory] = useState(() => localStorage.getItem(WIDE_CHAT_HISTORY_STORAGE_KEY) === 'true')
+  // A reply that completes while the user reads elsewhere keeps its reasoning
+  // expanded, as it was while streaming, so nothing collapses under them.
+  const [reasoningOpenMessageId, setReasoningOpenMessageId] = useState<number | null>(null)
   const messagesPaneRef = useRef<HTMLDivElement>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesContentRef = useRef<HTMLDivElement>(null)
+  const { stuckRef, setStuck, scrollToBottom, handleScroll: handleStickScroll } = useStickToBottom(messagesPaneRef, messagesContentRef)
   const streamAbortRef = useRef<AbortController | null>(null)
   const streamSessionRef = useRef<number | null>(null)
   const currentSessionRef = useRef<number | null>(sessionId)
 	const viewEpochRef = useRef(0)
-  const shouldAutoScrollRef = useRef(true)
   // optionsOwnerRef names whose composer options are mounted (`session:<id>` or
   // `draft:<project>\0<concierge>`), so async loads cannot clobber the user's
   // choices and a draft cannot inherit the previous session's values.
@@ -237,12 +241,12 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     createdSessionRef.current = null
     // A pending ?highlight= scrolls to a specific message once messages load,
     // so the default jump-to-bottom must not fight it on this session's first render.
-    shouldAutoScrollRef.current = new URLSearchParams(window.location.search).get('highlight') == null
+    setStuck(new URLSearchParams(window.location.search).get('highlight') == null)
     highlightedMessageRef.current = null
     lockedUserMessageIdRef.current = null
     setPreviousUserMessage(null)
     setShowBackToBottom(false)
-  }, [sessionId, clearStreamingPresentation])
+  }, [sessionId, clearStreamingPresentation, setStuck])
 
   // The child's chat run ends slightly before its subagent run is finalized,
   // so keep refreshing the run until it reaches a terminal status.
@@ -281,6 +285,22 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       optionsOwnerRef.current = owner
     }
   }, [])
+
+  // Swaps the streamed reply for the stored one in a single commit: clearing
+  // the stream before the history arrives would blank the list and jolt the
+  // scroll position.
+  const settleStream = useCallback(async (targetSessionId: number, epoch: number, isCurrent: () => boolean, leafId: number | undefined) => {
+    if (leafId != null && !stuckRef.current) setReasoningOpenMessageId(leafId)
+    try {
+      await loadHistory(targetSessionId, undefined, epoch)
+    } catch (cause) {
+      if (isCurrent()) setError(String(cause))
+    }
+    if (!isCurrent()) return false
+    if (leafId != null) setLocalLeafId(leafId)
+    clearStreamingPresentation()
+    return true
+  }, [clearStreamingPresentation, loadHistory, stuckRef])
 
   // Automatic approval is runtime state on the server, so a draft always starts
   // from the asking default and only carries "allow all" into createSession.
@@ -331,12 +351,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setStreamingText,
         setStreamingActivities,
         onSessionUpdated,
-        onDone: async () => {
+        onDone: async data => {
           if (!isCurrent()) return
-          clearStreamingPresentation()
-          void loadHistory(resolvedSessionId, undefined, epoch).catch((cause: unknown) => {
-            if (isCurrent()) setError(String(cause))
-          })
+          await settleStream(resolvedSessionId, epoch, isCurrent, data.message?.ID)
         },
         onError: setError,
 			isCurrent,
@@ -355,7 +372,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       controller.abort()
       if (streamAbortRef.current === controller) streamAbortRef.current = null
     }
-  }, [clearStreamingPresentation, resolvedSessionId, loadHistory, onSessionUpdated])
+  }, [resolvedSessionId, onSessionUpdated, settleStream])
 
   useEffect(() => {
     void listConcierges(project ?? undefined).then(items => {
@@ -377,10 +394,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   // 避免从顶部做一次跨全高的平滑滚动（会给人“被硬控”的感觉）。
   useLayoutEffect(() => {
     if (searchParams.get('highlight') != null && highlightedMessageRef.current == null) return
-    if (!shouldAutoScrollRef.current) return
-    const pane = messagesPaneRef.current
-    if (pane) pane.scrollTop = pane.scrollHeight
-  }, [messages, searchParams])
+    if (stuckRef.current) scrollToBottom()
+  }, [messages, searchParams, scrollToBottom, stuckRef])
 
   // Scroll to and briefly highlight a message deep-linked via ?highlight=,
   // e.g. from a chat history search result. Guarded by a ref (rather than
@@ -399,12 +414,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     window.setTimeout(() => el.classList.remove('message-highlighted'), 2000)
     setSearchParams(params => { params.delete('highlight'); return params }, { replace: true })
   }, [messages, searchParams, setSearchParams])
-
-  // 流式输出过程中：增量内容很短，平滑跟随到底部更符合直觉。
-  useEffect(() => {
-    if (!shouldAutoScrollRef.current) return
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [streamingText, streamingActivities])
 
   const handleHeaderTitleSubmit = useCallback(async () => {
     if (resolvedSessionId == null) return
@@ -561,7 +570,6 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const pane = messagesPaneRef.current
     if (!pane) return
     const distanceFromBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight
-    shouldAutoScrollRef.current = distanceFromBottom < 40
     const isNavigationVisible = pane.scrollTop >= HISTORY_NAV_TOP_THRESHOLD && distanceFromBottom >= HISTORY_NAV_BOTTOM_THRESHOLD
     setShowBackToBottom(isNavigationVisible)
     if (!isNavigationVisible) {
@@ -622,8 +630,14 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     const pane = messagesPaneRef.current
     if (!pane) return
     lockedUserMessageIdRef.current = null
+    stuckRef.current = true
     pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
-  }, [])
+  }, [stuckRef])
+
+  const handlePaneScroll = useCallback(() => {
+    handleStickScroll()
+    syncScrollNavigation()
+  }, [handleStickScroll, syncScrollNavigation])
   useEffect(() => {
     if (resolvedSessionId != null || newSessionConcierge == null) return
     setDraftToolGroups(newSessionConcierge.default_tool_groups)
@@ -695,7 +709,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setStreaming(true)
     setStreamingText('')
     setStreamingActivities([])
-    shouldAutoScrollRef.current = true
+    setStuck(true)
     setOptimisticUserMessage({
       ID: -Date.now(),
       SessionID: resolvedSessionId ?? 0,
@@ -757,12 +771,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           const uploads = data.metadata?.uploads as UploadResult | undefined
           setUploadWarnings(uploads?.warnings ?? [])
           if (!isCurrent()) return
-          clearStreamingPresentation()
           completed = true
-          if (data.message) setLocalLeafId(data.message.ID)
-          void loadHistory(targetSessionId!, undefined, epoch).catch((cause: unknown) => {
-            if (isCurrent()) setError(String(cause))
-          })
+          await settleStream(targetSessionId!, epoch, isCurrent, data.message?.ID)
         },
         onError: setError,
 			isCurrent,
@@ -778,7 +788,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setPendingSteering(null)
       }
     }
-  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, activeSession, t])
+  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, activeSession, t, setStuck, settleStream])
 
   const runExistingSessionStream = useCallback(async (
     messageId: number,
@@ -792,7 +802,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setStreamingText('')
     setStreamingActivities([])
     setActiveMessageId(messageId)
-    shouldAutoScrollRef.current = true
+    setStuck(true)
     const controller = new AbortController()
     streamAbortRef.current = controller
     streamSessionRef.current = resolvedSessionId
@@ -806,13 +816,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         onSessionUpdated,
         onDone: async data => {
           if (!isCurrent()) return
-          clearStreamingPresentation()
-          setActiveMessageId(null)
           completed = true
-          if (data.message) setLocalLeafId(data.message.ID)
-          void loadHistory(resolvedSessionId, undefined, epoch).catch((cause: unknown) => {
-            if (isCurrent()) setError(String(cause))
-          })
+          if (await settleStream(resolvedSessionId, epoch, isCurrent, data.message?.ID)) setActiveMessageId(null)
         },
         onError: setError,
         isCurrent,
@@ -830,7 +835,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setActiveMessageId(null)
       }
     }
-  }, [clearStreamingPresentation, loadHistory, onSessionUpdated, resolvedSessionId])
+  }, [loadHistory, onSessionUpdated, resolvedSessionId, setStuck, settleStream])
 
   const handleRegenerate = useCallback(async (messageId: number) => {
     if (resolvedSessionId == null) return
@@ -1054,7 +1059,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         )}
       </header>
       <div className={'messages-region' + (wideChatHistory && !isNewSession ? ' wide-chat-history' : '')}>
-        <div className="messages-pane" ref={messagesPaneRef} onScroll={syncScrollNavigation}>
+        <div className="messages-pane" ref={messagesPaneRef} onScroll={handlePaneScroll}>
+        <div ref={messagesContentRef}>
         {isNewSession ? (
           <div className="empty-state-card">
             <h2>{isChoosingConcierge ? t('chat.concierge.select') : t('chat.concierge.start')}</h2>
@@ -1102,6 +1108,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
               branchMessage={item.branchMessage}
               processMessages={item.processMessages}
               childrenMap={childrenMap}
+              defaultReasoningOpen={item.message.ID === reasoningOpenMessageId}
               onBranchSwitch={setLocalLeafId}
               onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID)}
               onEditAssistant={(content) => handleEditAssistant(item.message.ID, content)}
@@ -1155,7 +1162,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
             {!activeSubagentRun.result && <small>{t('session.subagentNoResult')}</small>}
           </div>
         )}
-          <div ref={bottomRef} />
+        </div>
         </div>
         {showBackToBottom && (
           <button

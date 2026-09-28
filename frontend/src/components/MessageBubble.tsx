@@ -13,6 +13,7 @@ interface Props {
   branchMessage?: ChatMessage
   processMessages?: ChatMessage[]
   childrenMap: Map<number | null, ChatMessage[]>
+  defaultReasoningOpen?: boolean
   onBranchSwitch: (leafId: number) => void
   onEditResend: (newText: string) => void
   onEditAssistant: (content: string) => Promise<void>
@@ -25,13 +26,13 @@ interface Props {
   onContinue?: () => void
 }
 
-export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, readOnly = false, onFork, onRegenerate, onContinue }: Props) {
+export default function MessageBubble({ msg, branchMessage, processMessages, childrenMap, defaultReasoningOpen = false, onBranchSwitch, onEditResend, onEditAssistant, editSaving = false, editDisabled = false, forkDisabled = false, readOnly = false, onFork, onRegenerate, onContinue }: Props) {
   const { t, i18n } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [userEditWidth, setUserEditWidth] = useState<number | null>(null)
   const [editText, setEditText] = useState(msg.Content)
   const [copied, setCopied] = useState(false)
-  const [reasoningPinned, setReasoningPinned] = useState(false)
+  const [reasoningPinned, setReasoningPinned] = useState(defaultReasoningOpen)
   const [reasoningHovered, setReasoningHovered] = useState(false)
   const [systemPinned, setSystemPinned] = useState(false)
   const [systemHovered, setSystemHovered] = useState(false)
