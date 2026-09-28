@@ -8,3 +8,7 @@ export const subagentSessionTarget = (run: SubagentRunSummary): number | null =>
 
 export const subagentStatusKey = (status: SubagentRunStatus): `configuration.runs.${SubagentRunStatus}` =>
   `configuration.runs.${status}`
+
+/** Reports whether a run has stopped for good and can no longer be steered. */
+export const isTerminalSubagentStatus = (status: SubagentRunStatus): boolean =>
+  status !== 'pending' && status !== 'running'

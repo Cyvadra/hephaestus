@@ -109,6 +109,10 @@ export const getHistory = (sessionId: number, signal?: AbortSignal) =>
 export const getSubagentRun = (runId: number, signal?: AbortSignal) =>
   fetchJSON<SubagentRunDetail>(`${BASE}/subagent-runs/${runId}`, { signal })
 
+/** Stops a subagent run; its partial output is kept on the run. */
+export const cancelSubagentRun = (runId: number) =>
+  fetchJSON<{ status: string }>(`${BASE}/subagent-runs/${runId}/cancel`, { method: 'POST' })
+
 export const getActiveChatRun = (sessionId: number) =>
   fetchJSON<ChatRun>(`${BASE}/sessions/${sessionId}/chat-run`)
 

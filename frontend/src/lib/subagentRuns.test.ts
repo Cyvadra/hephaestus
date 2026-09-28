@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Session, SubagentRunSummary } from '../api/types'
-import { sessionSubagentRuns, subagentSessionTarget, subagentStatusKey } from './subagentRuns'
+import { isTerminalSubagentStatus, sessionSubagentRuns, subagentSessionTarget, subagentStatusKey } from './subagentRuns'
 
 const session = (runs?: SubagentRunSummary[]) => ({ subagent_runs: runs } as Session)
 
@@ -15,6 +15,14 @@ describe('subagent run sidebar helpers', () => {
     const ready = { ...running, child_session_id: 42 }
     expect(subagentSessionTarget(running)).toBeNull()
     expect(subagentSessionTarget(ready)).toBe(42)
+  })
+
+  it('treats only pending and running runs as live', () => {
+    expect(isTerminalSubagentStatus('pending')).toBe(false)
+    expect(isTerminalSubagentStatus('running')).toBe(false)
+    for (const status of ['succeeded', 'failed', 'cancelled', 'interrupted'] as const) {
+      expect(isTerminalSubagentStatus(status)).toBe(true)
+    }
   })
 
   it('maps statuses to the existing run translation namespace', () => {

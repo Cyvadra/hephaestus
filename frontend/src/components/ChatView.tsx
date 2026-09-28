@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, typ
 import { useSearchParams } from 'react-router-dom'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { cancelActiveChatRun, cancelSteering, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, sendCommand, setAutomaticApproval, updateSession } from '../api/client'
+import { cancelActiveChatRun, cancelSteering, cancelSubagentRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, sendCommand, setAutomaticApproval, updateSession } from '../api/client'
 import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, SteeringMode, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
@@ -12,6 +12,7 @@ import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import Markdown from './Markdown'
 import { appendTerminalOutput, renderTerminalOutput } from '../lib/terminalOutput'
 import { parseAttachmentPrefix, pendingAttachmentPrefix } from '../lib/attachments'
+import { isTerminalSubagentStatus } from '../lib/subagentRuns'
 import { conciergeComposerOptions, composerReasoningEffort, rememberWebSearchPreference, sessionOptionOverrides, supportsWebSearch, webSearchSelectable, WEB_TOOL_GROUP, type AuthorizationMode } from '../lib/composerOptions'
 import i18n from '../i18n'
 
@@ -242,6 +243,20 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setPreviousUserMessage(null)
     setShowBackToBottom(false)
   }, [sessionId, clearStreamingPresentation])
+
+  // The child's chat run ends slightly before its subagent run is finalized,
+  // so keep refreshing the run until it reaches a terminal status.
+  useEffect(() => {
+    if (activeSubagentRun == null || streaming || isTerminalSubagentStatus(activeSubagentRun.status)) return
+    const runId = activeSubagentRun.id
+    const epoch = viewEpochRef.current
+    const timer = window.setTimeout(() => {
+      void getSubagentRun(runId).then(run => {
+        if (epoch === viewEpochRef.current) setActiveSubagentRun(run)
+      }).catch(() => {})
+    }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [activeSubagentRun, streaming])
 
   const loadHistory = useCallback(async (targetSessionId: number, signal?: AbortSignal, epoch = viewEpochRef.current) => {
     const h = await getHistory(targetSessionId, signal)
@@ -629,18 +644,27 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
 
   const stopActiveRun = useCallback(async () => {
     if (resolvedSessionId == null) return
+    // A subagent child is stopped through its subagent run, which then ends
+    // as cancelled and keeps its partial output; cancelling only the child's
+    // chat run would record the delegation as failed.
+    const subagentRunId = activeSession?.ID === resolvedSessionId ? activeSession.ParentSubagentRunID : null
     try {
       streamAbortRef.current?.abort()
       clearStreamingPresentation()
       setPendingSteering(null)
-      await cancelActiveChatRun(resolvedSessionId)
+      if (subagentRunId != null) {
+        await cancelSubagentRun(subagentRunId)
+      } else {
+        await cancelActiveChatRun(resolvedSessionId)
+      }
     } catch (cause) {
       setError(String(cause))
     }
-  }, [resolvedSessionId, clearStreamingPresentation])
+  }, [resolvedSessionId, activeSession, clearStreamingPresentation])
 
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
-    const isCommand = text.trimStart().startsWith('/')
+    // Everything but /stop typed into a live subagent child is steering text.
+    const isCommand = text.trimStart().startsWith('/') && activeSession?.ParentSubagentRunID == null
     if (streaming && resolvedSessionId != null && text.trim() === '/stop') {
       await stopActiveRun()
       return
@@ -754,7 +778,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setPendingSteering(null)
       }
     }
-  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, t])
+  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, activeSession, t])
 
   const runExistingSessionStream = useCallback(async (
     messageId: number,
@@ -937,6 +961,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const isNewSession = resolvedSessionId == null && path.length === 0 && !streaming
   const headerTitle = activeSession?.Title || (resolvedSessionId == null ? t('chat.session.new') : t('chat.session.unnamed', { id: resolvedSessionId }))
   const isSubagentSession = activeSession?.ParentSubagentRunID != null
+  // A subagent session accepts only steering and stop, and only while its run
+  // is live: a new turn in a finished child would never report back.
+  const subagentRunLive = isSubagentSession && streaming && activeSubagentRun != null && !isTerminalSubagentStatus(activeSubagentRun.status)
   const conciergeName = activeSession?.SourceConcierge || selectedConcierge?.name
   const conciergeNickname = concierges.find(concierge => concierge.name === conciergeName)?.nickname || conciergeName || t('chat.concierge.notSelected')
   const toolGroups = activeSession == null ? (newSessionConcierge?.tool_groups ?? []) : [...new Set([
@@ -1120,7 +1147,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         {uploadWarnings.length > 0 && (
           <div className="upload-warning-block">{uploadWarnings.map(warning => <div key={warning}>{warning}</div>)}</div>
         )}
-        {isSubagentSession && activeSubagentRun && (activeSubagentRun.status === 'failed' || activeSubagentRun.status === 'interrupted') && (
+        {isSubagentSession && activeSubagentRun && (activeSubagentRun.status === 'failed' || activeSubagentRun.status === 'interrupted' || activeSubagentRun.status === 'cancelled') && (
           <div className="subagent-terminal-detail">
             <strong>{t('session.subagentOutcome')}</strong>
             {activeSubagentRun.error && <p>{activeSubagentRun.error}</p>}
@@ -1142,7 +1169,8 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
           </button>
         )}
       </div>
-      {!isSubagentSession && <Composer
+      {(!isSubagentSession || subagentRunLive) && <Composer
+        steeringOnly={isSubagentSession}
         focusKey={resolvedSessionId == null ? `new:${isChoosingConcierge}` : String(resolvedSessionId)}
         onSend={(text, files) => handleSend(text, files)}
         commandHelp={commandHelp}

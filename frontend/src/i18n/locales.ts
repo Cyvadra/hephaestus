@@ -63,6 +63,7 @@ export const resources = {
         },
         compose: {
           generating: '生成中…',
+          subagentSteerPlaceholder: '向运行中的子任务发送指令…',
           placeholder: '请输入你的问题…',
           webSearch: '联网',
           webSearchEnabled: '联网已开启',
@@ -361,6 +362,7 @@ export const resources = {
         },
         compose: {
           generating: 'Generating…',
+          subagentSteerPlaceholder: 'Send an instruction to this running subagent…',
           placeholder: 'Ask anything…',
           webSearch: 'Web',
           webSearchEnabled: 'Web search is on',

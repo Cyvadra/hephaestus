@@ -33,6 +33,8 @@ interface Props {
   onPluginToggle: (plugin: string, active: boolean) => void
   authorizationMode: AuthorizationMode
   onAuthorizationModeChange: (mode: AuthorizationMode) => void
+  /** Only steer or stop the live run: hides commands and generation settings. */
+  steeringOnly?: boolean
 }
 
 const reasoningChoices: ReasoningEffort[] = [
@@ -52,7 +54,7 @@ function getStoredSendShortcut(): SendShortcut {
   return sendShortcutChoices.includes(stored as SendShortcut) ? stored as SendShortcut : 'enter'
 }
 
-export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, steeringMode, onSteeringModeChange, pendingSteering, onCancelSteering, disabled, files, onFilesChange, generationOptions, webSearchAvailable, onReasoningEffortChange, onWebSearchToggle, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, onAuthorizationModeChange }: Props) {
+export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoading, onCommandHelpRequest, onStop, steeringMode, onSteeringModeChange, pendingSteering, onCancelSteering, disabled, files, onFilesChange, generationOptions, webSearchAvailable, onReasoningEffortChange, onWebSearchToggle, toolGroups, activeToolGroups, onToolGroupToggle, plugins = [], pluginDescriptions = {}, activePlugins = [], onPluginToggle, authorizationMode, onAuthorizationModeChange, steeringOnly = false }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -64,7 +66,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
   const [sendShortcutMenuOpen, setSendShortcutMenuOpen] = useState(false)
   const [sendShortcut, setSendShortcut] = useState<SendShortcut>(getStoredSendShortcut)
 
-  const isCommand = text.trimStart().startsWith('/')
+  const isCommand = !steeringOnly && text.trimStart().startsWith('/')
   const controlsDisabled = disabled || isCommand
   const reasoningLabel = reasoningChoices.includes(generationOptions.reasoningEffort)
     ? t(`chat.reasoning.${generationOptions.reasoningEffort}`)
@@ -92,7 +94,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
 
   const handleTextChange = (value: string) => {
     setText(value)
-    if (value.trimStart().startsWith('/')) onCommandHelpRequest()
+    if (!steeringOnly && value.trimStart().startsWith('/')) onCommandHelpRequest()
   }
 
   const submit = () => {
@@ -214,12 +216,12 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
             value={text}
             onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}
-            placeholder={disabled ? t('chat.compose.generating') : t('chat.compose.placeholder')}
+            placeholder={steeringOnly ? t('chat.compose.subagentSteerPlaceholder') : disabled ? t('chat.compose.generating') : t('chat.compose.placeholder')}
             rows={3}
             className="composer-textarea"
           />
           <div className="composer-action-row">
-            <div className="composer-generation-controls">
+            {!steeringOnly && <div className="composer-generation-controls">
               <div
                 className="composer-reasoning-control"
                 ref={reasoningRef}
@@ -308,7 +310,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
                   onToggle={onPluginToggle}
                 />
               )}
-            </div>
+            </div>}
             <div className="composer-submit-controls">
               {disabled ? (
                 <>
