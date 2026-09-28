@@ -126,6 +126,8 @@ type EditRequest struct {
 type ReplayedMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// MessageID lets transports resend files delivered with an assistant message.
+	MessageID uint `json:"-"`
 }
 
 // NewService wires the command dispatcher to its dependencies.
@@ -982,8 +984,8 @@ func (s *Service) last(sessionID uint, args []string) ([]ReplayedMessage, error)
 	}
 	messages := make([]ReplayedMessage, 0, count)
 	for index := len(path) - 1; index >= 0 && len(messages) < count; index-- {
-		if path[index].Role == "assistant" && path[index].Content != "" {
-			messages = append(messages, ReplayedMessage{Role: "assistant", Content: path[index].Content})
+		if path[index].Role == "assistant" && s.replayable(path[index]) {
+			messages = append(messages, ReplayedMessage{Role: "assistant", Content: path[index].Content, MessageID: path[index].ID})
 		}
 	}
 	reverseReplayed(messages)
@@ -1012,12 +1014,30 @@ func (s *Service) replay(sessionID uint, args []string) ([]ReplayedMessage, erro
 	}
 	messages := make([]ReplayedMessage, 0, len(path)-start)
 	for _, message := range path[start:] {
-		if message.Content == "" || (message.Role != "user" && message.Role != "assistant") {
-			continue
+		if message.Role == "user" && message.Content != "" {
+			messages = append(messages, ReplayedMessage{Role: message.Role, Content: message.Content})
+		} else if message.Role == "assistant" && s.replayable(message) {
+			messages = append(messages, ReplayedMessage{Role: message.Role, Content: message.Content, MessageID: message.ID})
 		}
-		messages = append(messages, ReplayedMessage{Role: message.Role, Content: message.Content})
 	}
 	return messages, nil
+}
+
+// replayable reports whether an assistant message has text or delivered files.
+func (s *Service) replayable(message store.ChatMessage) bool {
+	if message.Content != "" {
+		return true
+	}
+	attachments, err := s.sessions.MessageAttachments(message.ID)
+	if err != nil {
+		return false
+	}
+	for _, attachment := range attachments {
+		if attachment.Kind == store.MessageAttachmentAssistantDelivery {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) activePath(sessionID uint) ([]store.ChatMessage, error) {

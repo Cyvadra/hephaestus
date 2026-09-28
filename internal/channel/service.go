@@ -314,7 +314,12 @@ func (s *Service) process(ctx context.Context, message channels.InboundMessage) 
 			}
 			if executeErr == nil {
 				for _, replayed := range result.ReplayedMessages {
-					_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: formatReplayedMessage(replayed)})
+					if replayed.Content != "" {
+						_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: formatReplayedMessage(replayed)})
+					}
+					if replayed.Role == "assistant" && replayed.MessageID != 0 {
+						s.sendAttachments(ctx, external, message.ChatID, sessionID, replayed.MessageID)
+					}
 				}
 			}
 			return
@@ -557,6 +562,10 @@ func (s *Service) sendAttachments(ctx context.Context, external channels.Channel
 		return
 	}
 	for _, attachment := range attachments {
+		if attachment.Kind != store.MessageAttachmentAssistantDelivery {
+			continue
+		}
+		// Re-resolve on every send so moved or deleted files are skipped.
 		resolved, delivery, err := tools.ResolveProjectFile(s.projects.Path(*projectRow), attachment.Path)
 		if err == nil {
 			_ = fileChannel.SendFile(ctx, chatID, channels.Attachment{Path: resolved, Name: delivery.Name, MIME: delivery.MIME})
