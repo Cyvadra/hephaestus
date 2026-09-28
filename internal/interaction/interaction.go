@@ -99,11 +99,11 @@ type response struct {
 // calls queue behind the visible request, which keeps `/interact approve` and
 // `/interact deny` unambiguous without requiring a request id in the command.
 type Manager struct {
-	mu                      sync.Mutex
-	nextID                  uint64
-	pending                 map[uint]*pending
-	changed                 map[uint]chan struct{}
-	autoApprove             map[uint]bool
+	mu          sync.Mutex
+	nextID      uint64
+	pending     map[uint]*pending
+	changed     map[uint]chan struct{}
+	autoApprove map[uint]bool
 	parent      map[uint]uint
 }
 

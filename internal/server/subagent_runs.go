@@ -19,7 +19,6 @@ type subagentRunResponse struct {
 	Mode            store.SubagentMode      `json:"mode"`
 	Schedule        store.SubagentSchedule  `json:"schedule"`
 	Status          store.SubagentRunStatus `json:"status"`
-	Depth           int                     `json:"depth"`
 	Category        store.SubagentCategory  `json:"category"`
 	Label           string                  `json:"label"`
 	Result          string                  `json:"result,omitempty"`
@@ -38,7 +37,7 @@ type subagentRunSummary struct {
 }
 
 func publicSubagentRun(run store.SubagentRun) subagentRunResponse {
-	return subagentRunResponse{ID: run.ID, ParentSessionID: run.ParentSessionID, ParentRunID: run.ParentRunID, ChildSessionID: run.ChildSessionID, Mode: run.Mode, Schedule: run.Schedule, Status: run.Status, Depth: run.Depth, Category: run.Category, Label: run.Label, Result: run.Result, Error: run.Error}
+	return subagentRunResponse{ID: run.ID, ParentSessionID: run.ParentSessionID, ParentRunID: run.ParentRunID, ChildSessionID: run.ChildSessionID, Mode: run.Mode, Schedule: run.Schedule, Status: run.Status, Category: run.Category, Label: run.Label, Result: run.Result, Error: run.Error}
 }
 
 func publicSubagentRunSummary(run store.SubagentRun) subagentRunSummary {

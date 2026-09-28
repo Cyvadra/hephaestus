@@ -25,7 +25,7 @@ func TestDeleteRejectsActiveWork(t *testing.T) {
 		{
 			name: "subagent run",
 			create: func(db *gorm.DB, session store.Session) error {
-				return db.Create(&store.SubagentRun{ParentSessionID: session.ID, ProjectID: session.ProjectID, Mode: store.SubagentModeSpawn, Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Depth: 1, Label: "active", Prompt: "work"}).Error
+				return db.Create(&store.SubagentRun{ParentSessionID: session.ID, ProjectID: session.ProjectID, Mode: store.SubagentModeSpawn, Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Label: "active", Prompt: "work"}).Error
 			},
 		},
 	} {

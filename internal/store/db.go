@@ -46,6 +46,13 @@ func Open(databaseURL string) (*gorm.DB, error) {
 	if err := recreateActiveChatRunIndex(db); err != nil {
 		return nil, err
 	}
+	// Subagents never delegate, so runs no longer record a nesting depth.
+	// The legacy column is NOT NULL without a default and would reject inserts.
+	if db.Migrator().HasColumn(&SubagentRun{}, "depth") {
+		if err := db.Migrator().DropColumn(&SubagentRun{}, "depth"); err != nil {
+			return nil, fmt.Errorf("store: drop subagent_runs.depth: %w", err)
+		}
+	}
 	for _, model := range []any{
 		&registry.Identity{}, &registry.Impression{}, &registry.ToolGroup{},
 		&registry.Concierge{}, &registry.Workflow{}, &registry.Job{},

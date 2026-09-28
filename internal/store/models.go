@@ -169,7 +169,6 @@ type SubagentRun struct {
 	Mode            SubagentMode      `gorm:"size:16;not null"`
 	Schedule        SubagentSchedule  `gorm:"size:16;not null"`
 	Status          SubagentRunStatus `gorm:"size:32;not null;index:idx_subagent_parent_status,priority:2;index"`
-	Depth           int               `gorm:"not null"`
 	Category        SubagentCategory  `gorm:"size:32;not null;default:general"`
 	Label           string            `gorm:"size:255;not null"`
 	Prompt          string            `gorm:"type:text;not null"`

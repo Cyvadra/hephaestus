@@ -113,9 +113,8 @@ func TestApplyTurnOptionsWithoutOverridesPreservesDefaults(t *testing.T) {
 func TestChildSessionToolsetExcludesSubagentTools(t *testing.T) {
 	tools := []toolkit.Tool{
 		namedTool{name: "shell"},
-		namedTool{name: "spawn"},
-		namedTool{name: "fork"},
-		namedTool{name: "await"},
+		delegatingTool{namedTool{name: "spawn"}},
+		delegatingTool{namedTool{name: "subagent_steer"}},
 	}
 
 	if got := filterChildSessionTools(store.Session{}, tools); len(got) != len(tools) {
@@ -169,6 +168,10 @@ func TestStaticContextRendersActiveImpressionMessages(t *testing.T) {
 		t.Fatalf("rendered static context = %+v", messages)
 	}
 }
+
+type delegatingTool struct{ namedTool }
+
+func (delegatingTool) Delegating() {}
 
 type namedTool struct {
 	name string

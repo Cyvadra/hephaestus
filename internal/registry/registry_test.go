@@ -124,6 +124,7 @@ func TestLoad_RepositoryConfigExamples(t *testing.T) {
 		"ask_questions":     true,
 		"send_notification": true,
 		"spawn":             true, "fork": true, "await": true,
+		"subagent_list": true, "subagent_status": true, "subagent_steer": true, "subagent_stop": true,
 	}
 	if err := reg.Validate(knownTools, map[string]bool{"environment": true, "metaphysics": true}); err != nil {
 		t.Fatalf("Validate repository config: %v", err)

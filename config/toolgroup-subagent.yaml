@@ -3,3 +3,7 @@ tools:
   - spawn
   - fork
   - await
+  - subagent_list
+  - subagent_status
+  - subagent_steer
+  - subagent_stop

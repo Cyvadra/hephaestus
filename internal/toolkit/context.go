@@ -59,11 +59,10 @@ func WorkspaceFromContext(ctx context.Context) (string, bool) {
 type subagentContextKey struct{}
 
 // SubagentContext identifies the delegated run currently executing. RunID is
-// zero for a root chat turn; Depth is zero at the root.
+// zero for a root chat turn.
 type SubagentContext struct {
 	RunID           uint
 	ParentSessionID uint
-	Depth           int
 }
 
 func WithSubagentContext(ctx context.Context, value SubagentContext) context.Context {

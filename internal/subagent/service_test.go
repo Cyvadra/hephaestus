@@ -57,7 +57,7 @@ func newTestRun(t *testing.T, db *gorm.DB, schedule store.SubagentSchedule, stat
 	}
 	run := &store.SubagentRun{
 		ParentSessionID: session.ID, ProjectID: project.ID, Mode: store.SubagentModeSpawn,
-		Schedule: schedule, Status: status, Depth: 1, Category: store.SubagentCategoryGeneral, Label: marker, Prompt: "test",
+		Schedule: schedule, Status: status, Category: store.SubagentCategoryGeneral, Label: marker, Prompt: "test",
 	}
 	if err := db.Create(run).Error; err != nil {
 		t.Fatalf("create run: %v", err)
@@ -72,7 +72,7 @@ func newTestRun(t *testing.T, db *gorm.DB, schedule store.SubagentSchedule, stat
 
 func TestFinishCreatesBackgroundEvent(t *testing.T) {
 	db := openTestDB(t)
-	service := New(db, 2)
+	service := New(db)
 	run := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunRunning)
 
 	if err := service.finish(run, store.SubagentRunSucceeded, 0, "completed", nil); err != nil {
@@ -96,7 +96,7 @@ func TestFinishCreatesBackgroundEvent(t *testing.T) {
 
 func TestNotificationLeaseCanReleaseAndAcknowledge(t *testing.T) {
 	db := openTestDB(t)
-	service := New(db, 2)
+	service := New(db)
 	run := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunRunning)
 	if err := service.finish(run, store.SubagentRunSucceeded, 0, "completed", nil); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestNotificationLeaseCanReleaseAndAcknowledge(t *testing.T) {
 
 func TestReconcileCreatesMissingTerminalEvent(t *testing.T) {
 	db := openTestDB(t)
-	service := New(db, 2)
+	service := New(db)
 	run := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunSucceeded)
 	run.Result = "legacy result"
 	if err := db.Model(run).Update("result", run.Result).Error; err != nil {
@@ -145,7 +145,7 @@ func TestReconcileCreatesMissingTerminalEvent(t *testing.T) {
 
 func TestBackfillChildSessionIDsLinksExistingChild(t *testing.T) {
 	db := openTestDB(t)
-	service := New(db, 2)
+	service := New(db)
 	run := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunFailed)
 	child := store.Session{ProjectID: run.ProjectID, ParentSubagentRunID: &run.ID, SourceConcierge: "child", Settings: datatypes.NewJSONType(store.SessionSettings{Identity: "test"})}
 	if err := db.Create(&child).Error; err != nil {
@@ -165,16 +165,8 @@ func TestBackfillChildSessionIDsLinksExistingChild(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsMaximumDepth(t *testing.T) {
-	service := New(nil, 2)
-	_, err := service.create(Request{Depth: 2}, store.SubagentModeSpawn, store.SubagentScheduleBackground)
-	if !errors.Is(err, ErrMaxDepth) {
-		t.Fatalf("create error = %v, want ErrMaxDepth", err)
-	}
-}
-
 func TestCreateRejectsInvalidCategory(t *testing.T) {
-	service := New(nil, 2)
+	service := New(nil)
 	_, err := service.create(Request{Category: "unknown"}, store.SubagentModeSpawn, store.SubagentScheduleBackground)
 	if !errors.Is(err, ErrInvalidCategory) {
 		t.Fatalf("create error = %v, want ErrInvalidCategory", err)
@@ -194,7 +186,7 @@ func TestCancelByParentChatRunStopsOnlyOwnedBackgroundRuns(t *testing.T) {
 	if err := db.Create(&parentSession).Error; err != nil {
 		t.Fatal(err)
 	}
-	service := New(db, 2)
+	service := New(db)
 	started := make(chan struct{})
 	service.SetExecutor(blockingExecutor{started: started, once: &sync.Once{}})
 	parentChatRunID := uint(time.Now().UnixNano())
@@ -209,7 +201,7 @@ func TestCancelByParentChatRunStopsOnlyOwnedBackgroundRuns(t *testing.T) {
 	unrelated := &store.SubagentRun{
 		ParentSessionID: parentSession.ID, ParentChatRunID: &otherChatRunID, ProjectID: project.ID,
 		Mode: store.SubagentModeSpawn, Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunPending,
-		Depth: 1, Category: store.SubagentCategoryGeneral, Label: "unrelated", Prompt: "test",
+		Category: store.SubagentCategoryGeneral, Label: "unrelated", Prompt: "test",
 	}
 	if err := db.Create(unrelated).Error; err != nil {
 		t.Fatal(err)
@@ -249,18 +241,18 @@ func TestCancelByParentChatRunStopsOnlyOwnedBackgroundRuns(t *testing.T) {
 
 func TestListByParentSessionsIncludesSpawnAndForkAndOrders(t *testing.T) {
 	db := openTestDB(t)
-	service := New(db, 2)
+	service := New(db)
 	older := newTestRun(t, db, store.SubagentScheduleBackground, store.SubagentRunSucceeded)
 	newer := &store.SubagentRun{
 		ParentSessionID: older.ParentSessionID, ProjectID: older.ProjectID, Mode: store.SubagentModeSpawn,
-		Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Depth: 1, Category: store.SubagentCategoryBackground, Label: "newer", Prompt: "test",
+		Schedule: store.SubagentScheduleBackground, Status: store.SubagentRunRunning, Category: store.SubagentCategoryBackground, Label: "newer", Prompt: "test",
 	}
 	if err := db.Create(newer).Error; err != nil {
 		t.Fatal(err)
 	}
 	foreground := &store.SubagentRun{
 		ParentSessionID: older.ParentSessionID, ProjectID: older.ProjectID, Mode: store.SubagentModeFork,
-		Schedule: store.SubagentScheduleForeground, Status: store.SubagentRunSucceeded, Depth: 1, Category: store.SubagentCategoryResearch, Label: "fork", Prompt: "test",
+		Schedule: store.SubagentScheduleForeground, Status: store.SubagentRunSucceeded, Category: store.SubagentCategoryResearch, Label: "fork", Prompt: "test",
 	}
 	if err := db.Create(foreground).Error; err != nil {
 		t.Fatal(err)

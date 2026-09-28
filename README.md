@@ -256,7 +256,6 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 | `HEPHAESTUS_ENV_TIMEZONE` | 必需 | IANA 时区，用于时间、农历与四柱计算。 |
 | `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | 首轮环境上下文使用的天气服务回退顺序。 |
 | `HEPHAESTUS_FIXED_PLUGINS` | `environment,metaphysics,session_summary` | 每个 Session 固定启用、不可停用的 Plugin。 |
-| `HEPHAESTUS_SUBAGENT_MAX_DEPTH` | `2` | `spawn` / `fork` 的最大递归委派深度。 |
 | `HEPHAESTUS_PROXY_URL` | 无 | 仅供 `make deploy`：为 PM2 进程注入出站代理；留空则不注入。 |
 | `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | 仅供 `make deploy`：代理排除列表。 |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | 无 | 接收警告和错误通知的企业微信 Webhook。 |
@@ -314,11 +313,17 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 
 ## Subagent
 
-在 Concierge 中启用 `subagent` Tool Group 后，模型可以获得三个受控委派工具：
+在 Concierge 中启用 `subagent` Tool Group 后，模型可以获得以下受控委派工具：
 
 - `spawn`：后台启动独立 Child Session，并立即返回运行 ID。
 - `fork`：从当前对话播种独立 Child Session，并等待结果。
-- `await`：等待调用时已存在的直属后台任务。
+- `await`：等待调用时已存在的直属后台任务；可用 `run_ids` 指定任务，用 `timeout_seconds` 提前返回（未完成的任务标记 `still_running`）。
+- `subagent_list`：列出自己委派的任务（可只看运行中的）。
+- `subagent_status`：不等待地查看任务状态、运行中的最新输出，或完成后的结果（失败或停止时保留部分输出）。
+- `subagent_steer`：向运行中的任务发送新指令，于下一个工具边界送达；`interrupt` 会跳过其下一次工具调用。
+- `subagent_stop`：停止运行中的任务，部分输出保留。
+
+以上工具只能操作调用者直接委派的任务。Subagent 的权限请求默认自动批准；单轮运行上限为 8 小时。
 
 后台任务的结果不会只停留在临时内存。完成事件会先持久化；若父 Session 正在运行，结果会在下一次模型边界注入；若 Session 空闲，系统会自动恢复一轮，让父 Agent 消化这项新信息。
 

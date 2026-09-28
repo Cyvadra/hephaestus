@@ -2494,9 +2494,6 @@ const docTemplate = `{
                 "child_session_id": {
                     "type": "integer"
                 },
-                "depth": {
-                    "type": "integer"
-                },
                 "error": {
                     "type": "string"
                 },

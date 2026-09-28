@@ -39,3 +39,10 @@ type Example interface {
 type Audited interface {
 	Audited() bool
 }
+
+// Delegating is an optional Tool capability marking tools that start,
+// inspect, or control subagents. Subagents never delegate, so child sessions
+// drop every tool that implements it.
+type Delegating interface {
+	Delegating()
+}

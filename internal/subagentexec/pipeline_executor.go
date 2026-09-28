@@ -12,6 +12,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/interaction"
 	"github.com/Cyvadra/hephaestus/internal/session"
+	"github.com/Cyvadra/hephaestus/internal/steering"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/subagent"
 	"gorm.io/datatypes"
@@ -88,28 +89,36 @@ func (e *PipelineExecutor) ExecuteSubagent(ctx context.Context, run *store.Subag
 	if err != nil {
 		return child.ID, "", fmt.Errorf("subagent: start child chat run: %w", err)
 	}
-	terminal, err := e.chatRuns.Wait(ctx, chatRun.ID)
+	childID, result, runErr := e.awaitChild(ctx, child.ID, chatRun.ID)
+	if dropped, ok := e.chatRuns.TakeSubagentSteering(chatRun.ID); ok {
+		result += fmt.Sprintf("\n\n[Undelivered steering: the subagent finished its turn before reaching a tool boundary, so this instruction was never seen: %q]", dropped)
+	}
+	return childID, result, runErr
+}
+
+func (e *PipelineExecutor) awaitChild(ctx context.Context, childID, chatRunID uint) (uint, string, error) {
+	terminal, err := e.chatRuns.Wait(ctx, chatRunID)
 	if err != nil {
-		_ = e.chatRuns.Cancel(chatRun.ID)
-		terminal, err = e.chatRuns.Wait(context.Background(), chatRun.ID)
+		_ = e.chatRuns.Cancel(chatRunID)
+		terminal, err = e.chatRuns.Wait(context.Background(), chatRunID)
 		if err != nil {
-			return child.ID, "", err
+			return childID, "", err
 		}
 	}
 	result, resultErr := e.resultText(terminal)
 	if resultErr != nil {
-		return child.ID, terminal.Snapshot.Data().Content, resultErr
+		return childID, terminal.Snapshot.Data().Content, resultErr
 	}
 	switch terminal.Status {
 	case store.ChatRunSucceeded:
-		return child.ID, result, nil
+		return childID, result, nil
 	case store.ChatRunCancelled:
-		return child.ID, result, context.Canceled
+		return childID, result, context.Canceled
 	default:
 		if terminal.Error == "" {
 			terminal.Error = string(terminal.Status)
 		}
-		return child.ID, result, errors.New(terminal.Error)
+		return childID, result, errors.New(terminal.Error)
 	}
 }
 
@@ -122,6 +131,51 @@ func (e *PipelineExecutor) resultText(run *store.ChatRun) (string, error) {
 		return "", fmt.Errorf("subagent: load final message: %w", err)
 	}
 	return message.Content, nil
+}
+
+// ChildProgress returns the streamed content of the child's active turn.
+func (e *PipelineExecutor) ChildProgress(childSessionID uint) (string, bool, error) {
+	run, err := e.chatRuns.ActiveForSession(childSessionID)
+	if errors.Is(err, chatrun.ErrRunNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	content, err := e.chatRuns.LiveContent(context.Background(), run.ID)
+	if err != nil {
+		return "", false, err
+	}
+	return content, true, nil
+}
+
+// SteerChild queues an instruction for the child's active turn. Aggressive
+// steering also skips the child's next selected tool call. The caller has
+// already checked that the subagent run is not terminal, so a missing chat
+// run means the child is still starting unless one already ended; a
+// cancelling one counts as finished. Steering the child never claims is
+// reported as undelivered on the run's result.
+func (e *PipelineExecutor) SteerChild(childSessionID uint, text string, aggressive bool) (string, error) {
+	mode := steering.ModeNormal
+	if aggressive {
+		mode = steering.ModeAggressive
+	}
+	outcome, _, err := e.chatRuns.PutSteering(childSessionID, text, mode)
+	switch {
+	case errors.Is(err, chatrun.ErrRunNotFound):
+		// A child session whose chat run already ended is finishing, not starting.
+		var ended []uint
+		if findErr := e.db.Model(&store.ChatRun{}).Where("session_id = ?", childSessionID).Limit(1).Pluck("id", &ended).Error; findErr != nil {
+			return "", findErr
+		}
+		if len(ended) > 0 {
+			return "", subagent.ErrRunFinished
+		}
+		return "", subagent.ErrChildStarting
+	case errors.Is(err, chatrun.ErrRunFinished):
+		return "", subagent.ErrRunFinished
+	}
+	return string(outcome), err
 }
 
 func childPromptParentID(seed []store.ChatMessage) *uint {
@@ -158,4 +212,7 @@ func ForkSeed(messages []store.ChatMessage) ([]store.ChatMessage, error) {
 	return seed, nil
 }
 
-var _ subagent.Executor = (*PipelineExecutor)(nil)
+var (
+	_ subagent.Executor  = (*PipelineExecutor)(nil)
+	_ subagent.LiveChild = (*PipelineExecutor)(nil)
+)

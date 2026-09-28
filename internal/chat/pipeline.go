@@ -259,11 +259,13 @@ func filterChildSessionTools(sess store.Session, toolset []toolkit.Tool) []toolk
 	if sess.ParentSubagentRunID == nil {
 		return toolset
 	}
-	return filterTools(toolset, map[string]struct{}{
-		"spawn": {},
-		"fork":  {},
-		"await": {},
-	})
+	kept := make([]toolkit.Tool, 0, len(toolset))
+	for _, tool := range toolset {
+		if _, delegating := tool.(toolkit.Delegating); !delegating {
+			kept = append(kept, tool)
+		}
+	}
+	return kept
 }
 
 // resolveSettings sanitizes a session's settings against the current

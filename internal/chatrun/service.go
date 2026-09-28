@@ -186,7 +186,22 @@ func (s *Service) ReleaseSteering(runID uint, value agent.Steering) {
 // StartSteeringFallback atomically hands unresolved steering from a terminal
 // run to its successor. The instruction remains available when creating the
 // successor fails, so callers can retry rather than silently losing input.
+// Steering left on a subagent child's run is left for the subagent executor
+// to collect with TakeSubagentSteering: the subagent run owns that turn, and a
+// successor would run untracked and unstoppable.
 func (s *Service) StartSteeringFallback(sourceRunID, sessionID, projectID uint, request map[string]any, execute func(string) Execute) (*store.ChatRun, bool, error) {
+	// Most runs finish with no steering left; skip the query for them.
+	if _, ok := s.steering.Get(sourceRunID); !ok {
+		return nil, false, nil
+	}
+	// Load the source before locking: the query must not block other runs.
+	source, err := s.Get(sourceRunID)
+	if err != nil {
+		return nil, false, err
+	}
+	if source.SubagentRunID != nil {
+		return nil, false, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pending, ok := s.steering.Get(sourceRunID)
@@ -199,6 +214,15 @@ func (s *Service) StartSteeringFallback(sourceRunID, sessionID, projectID uint, 
 	}
 	s.steering.Finish(sourceRunID)
 	return run, true, nil
+}
+
+// TakeSubagentSteering removes and returns steering a finished subagent child
+// run never claimed, so the executor can report it as undelivered.
+func (s *Service) TakeSubagentSteering(runID uint) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending, ok := s.steering.Finish(runID)
+	return pending.Text, ok
 }
 
 // Start creates one pending run and executes it in a background goroutine.
@@ -572,6 +596,16 @@ func (s *Service) ActiveForSession(sessionID uint) (*store.ChatRun, error) {
 		return nil, ErrRunNotFound
 	}
 	return &run, nil
+}
+
+// LiveContent rebuilds the assistant content streamed so far by runID. The
+// stored snapshot is only written once the run finishes.
+func (s *Service) LiveContent(ctx context.Context, runID uint) (string, error) {
+	snapshot, err := s.snapshot(ctx, runID)
+	if err != nil {
+		return "", fmt.Errorf("chatrun: live content: %w", err)
+	}
+	return snapshot.Content, nil
 }
 
 // Wait blocks until runID reaches a terminal state or ctx is cancelled.

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Cyvadra/hephaestus/internal/agent"
 	"github.com/Cyvadra/hephaestus/internal/runctrl"
@@ -23,7 +24,6 @@ import (
 var (
 	ErrRunNotFound     = errors.New("subagent: run not found")
 	ErrRunFinished     = errors.New("subagent: run already finished")
-	ErrMaxDepth        = errors.New("subagent: maximum delegation depth reached")
 	ErrInvalidCategory = errors.New("subagent: invalid category")
 )
 
@@ -40,7 +40,6 @@ type Request struct {
 	ParentRunID     *uint
 	ParentChatRunID *uint
 	ProjectID       uint
-	Depth           int
 	Category        store.SubagentCategory
 	Label           string
 	Prompt          string
@@ -70,8 +69,8 @@ type completionPayload struct {
 // Service permits multiple concurrent background children per parent session.
 type Service struct {
 	db       *gorm.DB
-	maxDepth int
 	executor Executor
+	live     LiveChild
 	ctrl     *runctrl.Controller
 
 	mu      sync.Mutex
@@ -89,8 +88,8 @@ type Service struct {
 // pick it up. It is nil during Reconcile (dependencies not yet wired).
 func (s *Service) SetOnCompletion(fn func(sessionID uint)) { s.onCompletion = fn }
 
-func New(db *gorm.DB, maxDepth int) *Service {
-	return &Service{db: db, maxDepth: maxDepth, ctrl: runctrl.New(), done: map[uint]chan struct{}{}}
+func New(db *gorm.DB) *Service {
+	return &Service{db: db, ctrl: runctrl.New(), done: map[uint]chan struct{}{}}
 }
 
 func (s *Service) SetExecutor(executor Executor) { s.executor = executor }
@@ -124,9 +123,6 @@ func (s *Service) RunFork(ctx context.Context, req Request) (*store.SubagentRun,
 }
 
 func (s *Service) create(req Request, mode store.SubagentMode, schedule store.SubagentSchedule) (*store.SubagentRun, error) {
-	if req.Depth >= s.maxDepth {
-		return nil, fmt.Errorf("%w: depth %d, limit %d", ErrMaxDepth, req.Depth, s.maxDepth)
-	}
 	if !req.Category.Valid() {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidCategory, req.Category)
 	}
@@ -137,7 +133,7 @@ func (s *Service) create(req Request, mode store.SubagentMode, schedule store.Su
 	}
 	run := &store.SubagentRun{
 		ParentSessionID: req.ParentSessionID, ParentRunID: req.ParentRunID, ParentChatRunID: req.ParentChatRunID, ProjectID: req.ProjectID,
-		Mode: mode, Schedule: schedule, Status: store.SubagentRunPending, Depth: req.Depth + 1,
+		Mode: mode, Schedule: schedule, Status: store.SubagentRunPending,
 		Category: req.Category, Label: req.Label, Prompt: req.Prompt,
 	}
 	if len(req.Seed) > 0 {
@@ -181,7 +177,7 @@ func (s *Service) execute(ctx context.Context, runID uint) {
 		s.failRun(run, errors.New("subagent executor is not configured"))
 		return
 	}
-	execCtx := toolkit.WithSubagentContext(ctx, toolkit.SubagentContext{RunID: run.ID, ParentSessionID: run.ParentSessionID, Depth: run.Depth})
+	execCtx := toolkit.WithSubagentContext(ctx, toolkit.SubagentContext{RunID: run.ID, ParentSessionID: run.ParentSessionID})
 	childID, result, runErr := s.executor.ExecuteSubagent(execCtx, run)
 	status := store.SubagentRunSucceeded
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -358,18 +354,137 @@ func (s *Service) CancelByParentChatRun(chatRunID uint) {
 	}
 }
 
-// AwaitActiveDirect freezes and waits for the currently active direct spawn set.
-func (s *Service) AwaitActiveDirect(ctx context.Context, parentSessionID uint, parentRunID *uint) ([]store.SubagentRun, error) {
-	query := s.db.Where("parent_session_id = ? AND schedule = ? AND status IN ?", parentSessionID, store.SubagentScheduleBackground, []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning})
+// LiveChild reads and steers the in-flight turn of a child session.
+type LiveChild interface {
+	ChildProgress(childSessionID uint) (content string, active bool, err error)
+	SteerChild(childSessionID uint, text string, aggressive bool) (outcome string, err error)
+}
+
+// ErrChildStarting reports that a run has no child session to steer yet.
+var ErrChildStarting = errors.New("subagent: child session is still starting; retry shortly")
+
+const (
+	maxOwnedList    = 50
+	maxLiveProgress = 16 * 1024
+	maxStatusResult = 64 * 1024
+	maxStatusError  = 8 * 1024
+)
+
+func (s *Service) SetLiveChild(live LiveChild) { s.live = live }
+
+// ownedQuery scopes runs to those directly delegated by one agent: the main
+// agent of parentSessionID when parentRunID is nil, else that subagent run.
+func (s *Service) ownedQuery(parentSessionID uint, parentRunID *uint) *gorm.DB {
+	query := s.db.Where("parent_session_id = ?", parentSessionID)
 	if parentRunID == nil {
-		query = query.Where("parent_run_id IS NULL")
+		return query.Where("parent_run_id IS NULL")
+	}
+	return query.Where("parent_run_id = ?", *parentRunID)
+}
+
+// ownedRun loads runID only when the caller owns it. Runs owned by another
+// agent report ErrRunNotFound so their existence is not disclosed.
+func (s *Service) ownedRun(runID, parentSessionID uint, parentRunID *uint) (*store.SubagentRun, error) {
+	var run store.SubagentRun
+	result := s.ownedQuery(parentSessionID, parentRunID).Where("id = ?", runID).Limit(1).Find(&run)
+	if result.Error != nil {
+		return nil, fmt.Errorf("subagent: get run: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, ErrRunNotFound
+	}
+	return &run, nil
+}
+
+// ListOwned returns the caller's direct children, newest first.
+func (s *Service) ListOwned(parentSessionID uint, parentRunID *uint, activeOnly bool) ([]store.SubagentRun, error) {
+	query := s.ownedQuery(parentSessionID, parentRunID)
+	if activeOnly {
+		query = query.Where("status IN ?", []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning})
+	}
+	var runs []store.SubagentRun
+	err := query.Order("id desc").Limit(maxOwnedList).Find(&runs).Error
+	return runs, err
+}
+
+// RunStatus is one owned run with its latest live output when still active.
+type RunStatus struct {
+	Run      store.SubagentRun
+	Progress string
+}
+
+// Status reports an owned run. Active runs include the tail of the child's
+// in-flight output; finished runs carry their stored result and error.
+func (s *Service) Status(runID, parentSessionID uint, parentRunID *uint) (*RunStatus, error) {
+	run, err := s.ownedRun(runID, parentSessionID, parentRunID)
+	if err != nil {
+		return nil, err
+	}
+	status := &RunStatus{Run: *run}
+	status.Run.Result = transform.LimitTextBytes(run.Result, maxStatusResult)
+	status.Run.Error = transform.LimitTextBytes(run.Error, maxStatusError)
+	if run.Terminal() || run.ChildSessionID == nil || s.live == nil {
+		return status, nil
+	}
+	content, active, err := s.live.ChildProgress(*run.ChildSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("subagent: read child progress: %w", err)
+	}
+	if active {
+		status.Progress = tailBytes(content, maxLiveProgress)
+	}
+	return status, nil
+}
+
+// Steer delivers an instruction to an owned run's in-flight child turn.
+func (s *Service) Steer(runID, parentSessionID uint, parentRunID *uint, text string, aggressive bool) (string, error) {
+	run, err := s.ownedRun(runID, parentSessionID, parentRunID)
+	if err != nil {
+		return "", err
+	}
+	if run.Terminal() {
+		return "", ErrRunFinished
+	}
+	if run.ChildSessionID == nil || s.live == nil {
+		return "", ErrChildStarting
+	}
+	return s.live.SteerChild(*run.ChildSessionID, text, aggressive)
+}
+
+// StopOwned cancels an owned run. Partial child output is kept on the run.
+func (s *Service) StopOwned(runID, parentSessionID uint, parentRunID *uint) error {
+	if _, err := s.ownedRun(runID, parentSessionID, parentRunID); err != nil {
+		return err
+	}
+	return s.Cancel(runID)
+}
+
+// AwaitOwned waits for the named owned runs, or for the active direct spawn
+// set when ids is empty. A positive timeout stops waiting early and returns
+// the current state of every target, still-running ones included; only
+// finished runs have their completion events consumed. Results and errors are
+// truncated to the same limits as Status.
+func (s *Service) AwaitOwned(ctx context.Context, parentSessionID uint, parentRunID *uint, ids []uint, timeout time.Duration) ([]store.SubagentRun, error) {
+	query := s.ownedQuery(parentSessionID, parentRunID)
+	if len(ids) > 0 {
+		query = query.Where("id IN ?", ids)
 	} else {
-		query = query.Where("parent_run_id = ?", *parentRunID)
+		query = query.Where("schedule = ? AND status IN ?", store.SubagentScheduleBackground, []store.SubagentRunStatus{store.SubagentRunPending, store.SubagentRunRunning})
 	}
 	var targets []store.SubagentRun
 	if err := query.Order("id").Find(&targets).Error; err != nil {
 		return nil, err
 	}
+	if len(ids) > 0 && len(targets) != len(uniqueIDs(ids)) {
+		return nil, ErrRunNotFound
+	}
+	var expired <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		expired = timer.C
+	}
+wait:
 	for _, target := range targets {
 		s.mu.Lock()
 		done := s.done[target.ID]
@@ -379,25 +494,55 @@ func (s *Service) AwaitActiveDirect(ctx context.Context, parentSessionID uint, p
 		}
 		select {
 		case <-done:
+		case <-expired:
+			break wait
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
-	ids := make([]uint, len(targets))
-	for i := range targets {
-		ids[i] = targets[i].ID
-	}
-	if len(ids) == 0 {
+	if len(targets) == 0 {
 		return []store.SubagentRun{}, nil
 	}
+	targetIDs := make([]uint, len(targets))
+	for i := range targets {
+		targetIDs[i] = targets[i].ID
+	}
 	var runs []store.SubagentRun
-	if err := s.db.Where("id IN ?", ids).Order("id").Find(&runs).Error; err != nil {
+	if err := s.db.Where("id IN ?", targetIDs).Order("id").Find(&runs).Error; err != nil {
 		return nil, err
 	}
-	if err := s.consumeRunEvents(ids); err != nil {
+	finished := make([]uint, 0, len(runs))
+	for i := range runs {
+		runs[i].Result = transform.LimitTextBytes(runs[i].Result, maxStatusResult)
+		runs[i].Error = transform.LimitTextBytes(runs[i].Error, maxStatusError)
+		if runs[i].Terminal() {
+			finished = append(finished, runs[i].ID)
+		}
+	}
+	if err := s.consumeRunEvents(finished); err != nil {
 		return nil, err
 	}
 	return runs, nil
+}
+
+func uniqueIDs(ids []uint) map[uint]struct{} {
+	set := make(map[uint]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+// tailBytes keeps the most recent output, which best reflects live progress.
+func tailBytes(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := len(text) - limit
+	for cut < len(text) && !utf8.RuneStart(text[cut]) {
+		cut++
+	}
+	return "…" + text[cut:]
 }
 
 func (s *Service) Reconcile(recovery ...InterruptedResultSource) error {

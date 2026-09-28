@@ -136,7 +136,7 @@ func main() {
 			MaxChannelBytes: cfg.LLMGuardMaxChannelBytes,
 		})
 	sessions := session.New(db)
-	subagentSvc := subagent.New(db, cfg.SubagentMaxDepth)
+	subagentSvc := subagent.New(db)
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
 	toolReg.Register(tools.NewChatHistoryReadTool(db, sessions))
 	toolReg.Register(tools.NewCreateProjectTool(projects))
@@ -144,6 +144,10 @@ func main() {
 	toolReg.Register(tools.NewSpawnTool(db, subagentSvc))
 	toolReg.Register(tools.NewForkTool(db, subagentSvc))
 	toolReg.Register(tools.NewSubagentAwaitTool(subagentSvc))
+	toolReg.Register(tools.NewSubagentListTool(subagentSvc))
+	toolReg.Register(tools.NewSubagentStatusTool(subagentSvc))
+	toolReg.Register(tools.NewSubagentSteerTool(subagentSvc))
+	toolReg.Register(tools.NewSubagentStopTool(subagentSvc))
 	fileAccess := tools.FileAccessConfig{AllowOutsideProject: cfg.ProjectAccessOverride}
 	interactions := interaction.NewManager()
 	toolReg.Register(tools.NewAskQuestionsTool(interactions))
@@ -239,7 +243,9 @@ func main() {
 	if err := subagentSvc.Reconcile(chatRunSvc); err != nil {
 		log.Fatalf("subagents: reconcile stale runs: %v", err)
 	}
-	subagentSvc.SetExecutor(subagentexec.NewPipelineExecutor(db, sessions, pipeline, chatRunSvc, interactions))
+	subagentExecutor := subagentexec.NewPipelineExecutor(db, sessions, pipeline, chatRunSvc, interactions)
+	subagentSvc.SetExecutor(subagentExecutor)
+	subagentSvc.SetLiveChild(subagentExecutor)
 	// Deliver any completions that finished while their parent session was
 	// idle (or that were rebuilt by subagent Reconcile above).
 	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
