@@ -25,6 +25,9 @@ var (
 	ddgSnippet   = regexp.MustCompile(`<a class="result__snippet[^"]*".*?>([\s\S]*?)</a>`)
 )
 
+// searchUserAgent is sent by every scraping provider.
+const searchUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+
 type duckDuckGoSearch struct{ client *http.Client }
 
 func (duckDuckGoSearch) Name() string { return "duckduckgo" }
@@ -34,7 +37,7 @@ func (p duckDuckGoSearch) Search(ctx context.Context, query string, count int) (
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", searchUserAgent)
 	response, err := p.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -86,6 +89,9 @@ func extractDuckDuckGoResults(document string, count int) []SearchResult {
 type sogouSearch struct {
 	client   *http.Client
 	endpoint string
+	// pace, when set, blocks before each page request so multi-page searches
+	// stay inside the provider rate limit.
+	pace func(ctx context.Context) error
 }
 
 func (sogouSearch) Name() string { return "sogou" }
@@ -95,12 +101,17 @@ func (p sogouSearch) Search(ctx context.Context, query string, count int) ([]Sea
 	seenURLs := make(map[string]bool)
 	maxPages := min(3, (count+1)/2+1)
 	for page := 1; page <= maxPages && len(results) < count; page++ {
+		if page > 1 && p.pace != nil {
+			if err := p.pace(ctx); err != nil {
+				return nil, err
+			}
+		}
 		params := url.Values{"keyword": {query}, "v": {"5"}, "p": {fmt.Sprintf("%d", page)}}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.endpoint+"?"+params.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1")
+		req.Header.Set("User-Agent", searchUserAgent)
 		resp, err := p.client.Do(req)
 		if err != nil {
 			return nil, err

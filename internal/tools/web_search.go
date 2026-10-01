@@ -134,7 +134,9 @@ func NewWebSearchTool(config WebSearchConfig) *WebSearchTool {
 	tool := &WebSearchTool{
 		fixed: []Provider{
 			duckDuckGoSearch{client: client},
-			sogouSearch{client: client, endpoint: "https://wap.sogou.com/web/searchList.jsp"},
+			sogouSearch{client: client, endpoint: "https://wap.sogou.com/web/searchList.jsp", pace: func(ctx context.Context) error {
+				return sharedWebProviderQueues.wait(ctx, "sogou")
+			}},
 		},
 		random:   newLockedRandom(),
 		notifier: config.Notifier,

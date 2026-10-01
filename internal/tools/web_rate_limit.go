@@ -8,6 +8,10 @@ import (
 
 const webProviderQPS = 2
 
+// webProviderIntervals overrides the default spacing for scraped providers
+// that are stricter about automated traffic.
+var webProviderIntervals = map[string]time.Duration{"sogou": time.Second}
+
 type webProviderQueue struct {
 	requests chan webProviderRequest
 }
@@ -21,11 +25,14 @@ type webProviderQueues struct {
 	mu       sync.Mutex
 	queues   map[string]*webProviderQueue
 	interval time.Duration
+	// overrides holds per-provider spacing that replaces interval.
+	overrides map[string]time.Duration
 }
 
 func newWebProviderQueues() *webProviderQueues {
-	return newWebProviderQueuesWithInterval(time.Second / webProviderQPS)
-
+	q := newWebProviderQueuesWithInterval(time.Second / webProviderQPS)
+	q.overrides = webProviderIntervals
+	return q
 }
 
 func newWebProviderQueuesWithInterval(interval time.Duration) *webProviderQueues {
@@ -38,7 +45,11 @@ func (q *webProviderQueues) wait(ctx context.Context, provider string) error {
 	if queue == nil {
 		queue = &webProviderQueue{requests: make(chan webProviderRequest, 64)}
 		q.queues[provider] = queue
-		go queue.run(q.interval)
+		interval := q.interval
+		if override, ok := q.overrides[provider]; ok {
+			interval = override
+		}
+		go queue.run(interval)
 	}
 	q.mu.Unlock()
 
