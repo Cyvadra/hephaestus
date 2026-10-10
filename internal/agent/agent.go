@@ -9,6 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/Cyvadra/ds4"
@@ -76,6 +80,14 @@ type Request struct {
 	// ClaimNormalSteering claims a Normal instruction after a tool completes.
 	// Aggressive instructions remain pending for the next pre-execution gate.
 	ClaimNormalSteering func() (*Steering, error)
+	// ClaimAggressiveSteering claims an Aggressive instruction while tools
+	// run. A claimed instruction interrupts every running tool: after
+	// steerGracePeriod the tool processes get SIGTERM, then SIGKILL, and a
+	// tool still running after that is abandoned (see LateToolRecorder).
+	ClaimAggressiveSteering func() (*Steering, error)
+	// ReleaseSteering returns a claimed instruction that never reached the
+	// transcript, e.g. one claimed by a tool call abandoned mid-claim.
+	ReleaseSteering func(Steering)
 }
 
 type Notification struct {
@@ -120,6 +132,7 @@ type Runner struct {
 	interactions *interaction.Manager
 	db           *gorm.DB
 	notify       *notify.Notifier
+	lateTools    LateToolRecorder
 }
 
 // NewRunner wires the agent runtime to its dependencies. interactions may be
@@ -263,90 +276,243 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	return Result{Messages: toPersist, Deliveries: deliveries, Turn: turn, NotificationIDs: notificationIDs, Steering: steering}, nil
 }
 
+// toolExecution is one finished tool call of a batch.
+type toolExecution struct {
+	index    int
+	result   *toolkit.ToolResult
+	steering *Steering
+	endedAt  time.Time
+}
+
+// toolCallState is the per-call execution state runToolCalls uses to
+// interrupt a call on a force steer.
+type toolCallState struct {
+	interrupter *toolkit.Interrupter
+	cancel      context.CancelFunc
+	detached    atomic.Bool
+	// signaled records the strongest signal actually delivered to the call's
+	// process, so the steering note never claims a signal that was not sent.
+	signaled  string
+	startedAt time.Time
+}
+
 // runToolCalls executes a single model response's independent tool calls
 // concurrently, runs the after-phase ToolCall hook for each with its
 // outcome, and appends the resulting tool messages to messages/toPersist in
 // the model's original order for deterministic persistence.
 func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, allowedTools map[string]toolkit.Tool, toolCalls []ds4.ToolCall, messages, toPersist []store.ChatMessage, turn plugin.TurnContext) ([]store.ChatMessage, []store.ChatMessage, plugin.TurnContext, []toolkit.FileDelivery, []Steering) {
 	results := make([]*toolkit.ToolResult, len(toolCalls))
-	type toolExecution struct {
-		index    int
-		result   *toolkit.ToolResult
-		steering *Steering
-	}
+	sessionScope := req.Scope == toolkit.ScopeSession
 	claimed := make([]*Steering, len(toolCalls))
 	completed := make(chan toolExecution, len(toolCalls))
-	for i, tc := range toolCalls {
-		var steering *Steering
-		var steeringErr error
-		if i == 0 && req.Scope == toolkit.ScopeSession && req.ClaimSteering != nil {
-			claimed, err := req.ClaimSteering()
-			if err != nil {
-				steeringErr = err
-			} else {
-				steering = claimed
+	calls := make([]toolCallState, len(toolCalls))
+	defer func() {
+		for idx := range calls {
+			if calls[idx].cancel != nil {
+				calls[idx].cancel()
 			}
 		}
+	}()
+	// inFlight reports whether call idx was started and has no result yet.
+	inFlight := func(idx int) bool { return results[idx] == nil && calls[idx].interrupter != nil }
+
+	// One pre-execution steering gate per batch: an Aggressive instruction
+	// skips every call in the batch, a Normal one joins the first result.
+	var gate *Steering
+	var gateErr error
+	if sessionScope && req.ClaimSteering != nil {
+		gate, gateErr = req.ClaimSteering()
+	}
+	running := 0
+	for i, tc := range toolCalls {
+		switch {
+		case gateErr != nil && i == 0:
+			// Fail only the first call, as the gate would have joined only
+			// its result; the rest of the batch still runs.
+			results[i] = toolkit.ErrorResult(fmt.Sprintf("agent: claim steering: %v", gateErr))
+			continue
+		case gate != nil && gate.Aggressive:
+			if i == 0 {
+				results[i] = toolkit.NewToolResult(formatSteering(gate))
+				claimed[i] = gate
+			} else {
+				results[i] = toolkit.NewToolResult(skippedBySteering)
+			}
+			continue
+		}
+		var steering *Steering
+		if i == 0 {
+			steering = gate
+		}
+		toolCtx, cancel := context.WithCancel(ctx)
+		calls[i].interrupter = &toolkit.Interrupter{}
+		calls[i].cancel = cancel
+		calls[i].startedAt = time.Now()
+		toolCtx = toolkit.WithInterrupter(toolCtx, calls[i].interrupter)
+		running++
 		go func(idx int, tc ds4.ToolCall) {
 			streamedBytes := 0
-			var result *toolkit.ToolResult
-			if steeringErr != nil {
-				result = toolkit.ErrorResult(fmt.Sprintf("agent: claim steering: %v", steeringErr))
-			} else if steering != nil && steering.Aggressive {
-				result = toolkit.NewToolResult(formatSteering(steering))
-			} else {
-				result = r.executeTool(ctx, req, allowedTools, tc, turn.History, func(chunk string) {
-					if req.OnDelta != nil {
-						chunk = transform.LimitToolExchangeContent(tc.Function.Arguments, chunk)
-						remaining := transform.MaxToolExchangeBytes - 1 - len(tc.Function.Arguments) - streamedBytes
-						chunk = transform.LimitTextBytes(chunk, remaining)
-						streamedBytes += len(chunk)
-						if chunk == "" {
-							return
-						}
-						req.OnDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
-							CallIndex: callIndex,
-							Index:     idx,
-							ID:        tc.ID,
-							Name:      tc.Function.Name,
-							Result:    chunk,
-							Status:    "calling",
-						}})
+			result := r.executeTool(toolCtx, req, allowedTools, tc, turn.History, func(chunk string) {
+				if req.OnDelta != nil && !calls[idx].detached.Load() {
+					chunk = transform.LimitToolExchangeContent(tc.Function.Arguments, chunk)
+					remaining := transform.MaxToolExchangeBytes - 1 - len(tc.Function.Arguments) - streamedBytes
+					chunk = transform.LimitTextBytes(chunk, remaining)
+					streamedBytes += len(chunk)
+					if chunk == "" {
+						return
 					}
-				})
-				if steering == nil && req.Scope == toolkit.ScopeSession && req.ClaimNormalSteering != nil {
-					claimed, err := req.ClaimNormalSteering()
-					if err != nil {
-						result = toolkit.ErrorResult(fmt.Sprintf("agent: claim normal steering: %v", err))
-					} else {
-						steering = claimed
-					}
+					req.OnDelta(StreamEvent{Type: "tool_output", ToolCall: &StreamToolCall{
+						CallIndex: callIndex,
+						Index:     idx,
+						ID:        tc.ID,
+						Name:      tc.Function.Name,
+						Result:    chunk,
+						Status:    "calling",
+					}})
 				}
-				if steering != nil {
-					result.ForLLM = appendSteering(result.ContentForLLM(), formatSteering(steering))
-					result.ArtifactTags = nil
+			})
+			if steering == nil && sessionScope && req.ClaimNormalSteering != nil && !calls[idx].detached.Load() {
+				claimed, err := req.ClaimNormalSteering()
+				if err != nil {
+					result = toolkit.ErrorResult(fmt.Sprintf("agent: claim normal steering: %v", err))
+				} else {
+					steering = claimed
 				}
 			}
-			completed <- toolExecution{index: idx, result: result, steering: steering}
+			if steering != nil {
+				result.ForLLM = appendSteering(result.ContentForLLM(), formatSteering(steering))
+				result.ArtifactTags = nil
+			}
+			completed <- toolExecution{index: idx, result: result, steering: steering, endedAt: time.Now()}
 		}(i, tc)
 	}
-	for remaining := len(toolCalls); remaining > 0; remaining-- {
+
+	// While tools run, poll for a force (Aggressive) steer. Once claimed it
+	// escalates against every still-running call: grace period, SIGTERM,
+	// SIGKILL, then abandonment, so the turn never waits on a stuck process.
+	var force *Steering
+	var forceAt time.Time
+	forceTarget := -1
+	stage := steerStageNone
+	var poll <-chan time.Time
+	if running > 0 && sessionScope && req.ClaimAggressiveSteering != nil {
+		ticker := time.NewTicker(steerPollInterval)
+		defer ticker.Stop()
+		poll = ticker.C
+	}
+	var stageC <-chan time.Time
+	forceNote := func(idx int, execution string, extra string) string {
+		text := ""
+		if idx == forceTarget {
+			text = force.Text
+		} else {
+			text = "(The user's steering instruction is attached to another tool result in this batch.)"
+		}
+		return "<user-steering mode=\"aggressive\" tool-execution=\"" + execution + "\"" + extra + ">\n" + text + "\n</user-steering>"
+	}
+	record := func(execution toolExecution) {
+		results[execution.index] = execution.result
+		claimed[execution.index] = execution.steering
+		if force != nil && calls[execution.index].interrupter != nil {
+			status := "completed"
+			extra := ""
+			if stage >= steerStageTerm {
+				status = "interrupted"
+				if signal := calls[execution.index].signaled; signal != "" {
+					extra = fmt.Sprintf(" signal=%q", signal)
+				}
+			}
+			execution.result.ForLLM = appendSteering(execution.result.ContentForLLM(), forceNote(execution.index, status, extra))
+			execution.result.ArtifactTags = nil
+		}
+	}
+	for pending := running; pending > 0; {
 		select {
 		case execution := <-completed:
-			results[execution.index] = execution.result
-			claimed[execution.index] = execution.steering
+			pending--
+			record(execution)
+		case <-poll:
+			steering, err := req.ClaimAggressiveSteering()
+			if err != nil || steering == nil {
+				continue
+			}
+			force, forceAt, stage, poll = steering, time.Now(), steerStageGrace, nil
+			for idx := range results {
+				if inFlight(idx) {
+					forceTarget = idx
+					break
+				}
+			}
+			stageC = time.After(steerGracePeriod)
+		case <-stageC:
+			switch stage {
+			case steerStageGrace:
+				stage, stageC = steerStageTerm, time.After(steerTermWait)
+				for idx := range results {
+					if !inFlight(idx) {
+						continue
+					}
+					if calls[idx].interrupter.Signal(syscall.SIGTERM) {
+						calls[idx].signaled = "SIGTERM"
+					} else {
+						calls[idx].cancel()
+					}
+				}
+			case steerStageTerm:
+				stage, stageC = steerStageKill, time.After(steerKillWait)
+				for idx := range results {
+					if !inFlight(idx) {
+						continue
+					}
+					if calls[idx].interrupter.Signal(syscall.SIGKILL) {
+						calls[idx].signaled = "SIGKILL"
+					}
+					calls[idx].cancel()
+				}
+			default:
+				// Take completions that raced the abandon tick as real
+				// results rather than mislabelling them abandoned.
+			drain:
+				for pending > 0 {
+					select {
+					case execution := <-completed:
+						pending--
+						record(execution)
+					default:
+						break drain
+					}
+				}
+				abandoned := 0
+				for idx := range results {
+					if !inFlight(idx) {
+						continue
+					}
+					calls[idx].detached.Store(true)
+					abandoned++
+					extra := ""
+					if process, ok := calls[idx].interrupter.Process(); ok {
+						extra = fmt.Sprintf(" pid=\"%d\"", process.PID)
+					}
+					results[idx] = toolkit.ErrorResult(abandonedByTool + "\n\n" + forceNote(idx, "abandoned", extra))
+				}
+				go r.collectAbandoned(req, toolCalls, calls, forceAt, abandoned, completed)
+				pending = 0
+			}
 		case <-ctx.Done():
 			for index := range results {
 				if results[index] == nil {
 					results[index] = toolkit.ErrorResult(ctx.Err().Error())
 				}
 			}
-			remaining = 0
+			pending = 0
 		}
 	}
 
 	var deliveries []toolkit.FileDelivery
 	var claimedSteering []Steering
+	if force != nil {
+		claimedSteering = append(claimedSteering, *force)
+	}
 	for toolIndex, tc := range toolCalls {
 		result := results[toolIndex]
 		if claimed[toolIndex] != nil {
@@ -383,6 +549,160 @@ func (r *Runner) runToolCalls(ctx context.Context, req Request, callIndex int, a
 		turn.Messages = messages
 	}
 	return messages, toPersist, turn, deliveries, claimedSteering
+}
+
+const (
+	skippedBySteering = "Tool execution skipped: the user force-steered the run before this call started."
+	abandonedByTool   = "Tool execution abandoned: the process did not exit after SIGTERM and SIGKILL following the user's force steer. It may still be running; a completion notice will follow if it finishes."
+)
+
+// Force-steer escalation timings; variables so tests can shorten them.
+var (
+	steerGracePeriod  = 3 * time.Second
+	steerTermWait     = 10 * time.Second
+	steerKillWait     = 10 * time.Second
+	steerPollInterval = 250 * time.Millisecond
+)
+
+type steerStage int
+
+const (
+	steerStageNone steerStage = iota
+	steerStageGrace
+	steerStageTerm
+	steerStageKill
+)
+
+// LateToolResult is a tool call abandoned by a force steer that finished
+// after its turn moved on.
+type LateToolResult struct {
+	SessionID  uint      `json:"session_id"`
+	ToolCallID string    `json:"tool_call_id"`
+	Tool       string    `json:"tool"`
+	Arguments  string    `json:"arguments"`
+	PID        int       `json:"pid,omitempty"`
+	Command    string    `json:"command,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	SteeredAt  time.Time `json:"steered_at"`
+	EndedAt    time.Time `json:"ended_at"`
+	IsError    bool      `json:"is_error"`
+	Output     string    `json:"output"`
+}
+
+// LateToolRecorder durably records late tool completions so they reach the
+// session as notifications, like subagent completions.
+type LateToolRecorder interface {
+	RecordLateToolResult(LateToolResult) error
+}
+
+// SetLateToolRecorder enables late-completion notices for abandoned tools.
+func (r *Runner) SetLateToolRecorder(recorder LateToolRecorder) { r.lateTools = recorder }
+
+// lateToolOutputBytes bounds the output tail kept in a late notice;
+// lateToolFieldBytes bounds its arguments and command.
+const (
+	lateToolOutputBytes = 4 << 10
+	lateToolFieldBytes  = 2 << 10
+)
+
+// lateToolWaitLimit bounds how long abandoned calls are watched for a late
+// completion, so a call that never returns does not pin its turn forever.
+var lateToolWaitLimit = time.Hour
+
+// stripNUL removes NUL bytes, which Postgres rejects in text and jsonb.
+func stripNUL(text string) string { return strings.ReplaceAll(text, "\x00", "") }
+
+func truncateHead(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return transform.TrimUTF8Prefix(text, limit) + "…"
+}
+
+// collectAbandoned waits for the abandoned (detached) tool calls to finish and
+// records each as a late completion. completed is buffered, so finished calls
+// never block.
+func (r *Runner) collectAbandoned(req Request, toolCalls []ds4.ToolCall, calls []toolCallState, steeredAt time.Time, abandoned int, completed <-chan toolExecution) {
+	deadline := time.After(lateToolWaitLimit)
+	unfinished := map[int]bool{}
+	for index := range calls {
+		if calls[index].detached.Load() {
+			unfinished[index] = true
+		}
+	}
+	for remaining := abandoned; remaining > 0; {
+		var execution toolExecution
+		select {
+		case execution = <-completed:
+		case <-deadline:
+			log.Printf("agent: stopped waiting for %d abandoned tool call(s) after %s", remaining, lateToolWaitLimit)
+			r.recordGaveUp(req, toolCalls, calls, steeredAt, unfinished)
+			return
+		}
+		if !calls[execution.index].detached.Load() {
+			continue
+		}
+		delete(unfinished, execution.index)
+		remaining--
+		// The call may have claimed a Normal instruction just before it was
+		// detached; its result never reaches the transcript, so return it.
+		if execution.steering != nil && req.ReleaseSteering != nil {
+			req.ReleaseSteering(*execution.steering)
+		}
+		if r.lateTools == nil || req.Audit.SessionID == nil {
+			continue
+		}
+		tc := toolCalls[execution.index]
+		output := execution.result.ContentForLLM()
+		if len(output) > lateToolOutputBytes {
+			output = "…" + transform.TrimUTF8Suffix(output, lateToolOutputBytes)
+		}
+		late := LateToolResult{
+			SessionID:  *req.Audit.SessionID,
+			ToolCallID: tc.ID,
+			Tool:       tc.Function.Name,
+			Arguments:  stripNUL(truncateHead(tc.Function.Arguments, lateToolFieldBytes)),
+			StartedAt:  calls[execution.index].startedAt,
+			SteeredAt:  steeredAt,
+			EndedAt:    execution.endedAt,
+			IsError:    execution.result.IsError,
+			Output:     stripNUL(output),
+		}
+		if process, ok := calls[execution.index].interrupter.Process(); ok {
+			late.PID, late.Command, late.StartedAt = process.PID, stripNUL(truncateHead(process.Command, lateToolFieldBytes)), process.StartedAt
+		}
+		if err := r.lateTools.RecordLateToolResult(late); err != nil {
+			log.Printf("agent: record late result of tool call %s: %v", tc.ID, err)
+		}
+	}
+}
+
+// recordGaveUp records a notice for abandoned calls still unfinished when the
+// watcher stops, so the session learns they may still be running.
+func (r *Runner) recordGaveUp(req Request, toolCalls []ds4.ToolCall, calls []toolCallState, steeredAt time.Time, unfinished map[int]bool) {
+	if r.lateTools == nil || req.Audit.SessionID == nil {
+		return
+	}
+	for index := range unfinished {
+		tc := toolCalls[index]
+		late := LateToolResult{
+			SessionID:  *req.Audit.SessionID,
+			ToolCallID: tc.ID,
+			Tool:       tc.Function.Name,
+			Arguments:  stripNUL(truncateHead(tc.Function.Arguments, lateToolFieldBytes)),
+			StartedAt:  calls[index].startedAt,
+			SteeredAt:  steeredAt,
+			EndedAt:    time.Now(),
+			IsError:    true,
+			Output:     fmt.Sprintf("Stopped watching this call after %s; it may still be running.", lateToolWaitLimit),
+		}
+		if process, ok := calls[index].interrupter.Process(); ok {
+			late.PID, late.Command, late.StartedAt = process.PID, stripNUL(truncateHead(process.Command, lateToolFieldBytes)), process.StartedAt
+		}
+		if err := r.lateTools.RecordLateToolResult(late); err != nil {
+			log.Printf("agent: record unfinished tool call %s: %v", tc.ID, err)
+		}
+	}
 }
 
 func formatSteering(steering *Steering) string {

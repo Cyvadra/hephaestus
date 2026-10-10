@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { searchMessages, searchSessions } from '../api/client'
 import type { MessageSearchResult, Session } from '../api/types'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
+import { parseKeywordQuery } from '../lib/searchQuery'
 
 const FAST_DEBOUNCE_MS = 180
 const FULL_TEXT_DEBOUNCE_MS = 600
@@ -80,6 +81,7 @@ export default function SearchDialog({ project, onClose, onSelectSession, onSele
   }, [onClose])
 
   const trimmedQuery = query.trim()
+  const keywords = parseKeywordQuery(query)
 
   return createPortal(
     <div className="session-dialog-backdrop search-dialog-backdrop" role="presentation" onMouseDown={onClose}>
@@ -97,6 +99,11 @@ export default function SearchDialog({ project, onClose, onSelectSession, onSele
             <X aria-hidden="true" size={16} />
           </button>
         </div>
+        {keywords && (
+          <div className="search-dialog-mode" aria-live="polite">
+            {t('search.keywordMode', { keywords: keywords.join(' · ') })}
+          </div>
+        )}
         {error && <div className="sidebar-error" role="alert">{error}</div>}
         {trimmedQuery === '' ? (
           <div className="search-dialog-empty">{t('search.prompt')}</div>
@@ -124,7 +131,7 @@ export default function SearchDialog({ project, onClose, onSelectSession, onSele
               {messageResults.length === 0
                 ? <div className="search-dialog-empty">{messageLoading ? t('common.loading') : t('search.noResults')}</div>
                 : messageResults.map(result => (
-                  <button key={result.message_id} type="button" className="search-result-item" onClick={() => onSelectMessage(result.session_id, result.message_id)}>
+                  <button key={result.message_id || `session-${result.session_id}`} type="button" className="search-result-item" onClick={() => result.message_id ? onSelectMessage(result.session_id, result.message_id) : onSelectSession(result.session_id)}>
                     <span className="search-result-title">{result.session_title || t('session.unnamed', { id: result.session_id })}</span>
                     <span className="search-result-snippet">{result.snippet}</span>
                   </button>

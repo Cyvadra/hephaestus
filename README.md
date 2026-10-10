@@ -277,6 +277,8 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 | `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | 可直接纳入提示词的文本扩展名。 |
 | `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,gif,webp` | 经 MIME 校验后可直接作为视觉输入的扩展名。 |
 | `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | 可直接注入提示词的单个文本文件大小上限。 |
+| `HEPHAESTUS_UPLOAD_EXCERPT_HEAD_BYTES` | `4096` | 超过上限的文本文件注入的开头摘录字节数；非文本文件只注入路径与元数据。 |
+| `HEPHAESTUS_UPLOAD_EXCERPT_TAIL_BYTES` | `2048` | 超过上限的文本文件注入的结尾摘录字节数。 |
 | `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | 单个附件最大大小。 |
 | `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | 单条消息全部附件最大大小。 |
 | `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | 单条消息最多附件数。 |

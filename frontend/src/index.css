@@ -5189,6 +5189,12 @@ body {
 .search-dialog-fulltext-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover) }
 .search-dialog-fulltext-btn:disabled { cursor: not-allowed; opacity: .55 }
 
+.search-dialog-mode {
+    padding: 6px 12px 0;
+    color: var(--dsw-alias-label-tertiary);
+    font-size: 12px;
+}
+
 .search-dialog-empty {
     padding: 10px 4px;
     color: var(--dsw-alias-label-tertiary);

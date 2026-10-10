@@ -159,3 +159,92 @@ func TestSnippetAroundCentersOnMatch(t *testing.T) {
 		t.Fatalf("snippet exceeds expected bound: %q", snippet)
 	}
 }
+
+func TestParseSearchQuery(t *testing.T) {
+	cases := []struct {
+		query string
+		mode  SearchMode
+		terms int
+	}{
+		{"rocket", SearchModePhrase, 1},
+		{"rocket engine", SearchModeKeywords, 2},
+		{"a, b,c d", SearchModeKeywords, 4},
+		{"a b c d e", SearchModePhrase, 1},      // 4 delimiters
+		{"rocket engine.", SearchModePhrase, 1}, // punctuation
+		{"火箭 引擎", SearchModeKeywords, 2},
+		{"火箭，引擎", SearchModePhrase, 1},                        // full-width comma is punctuation
+		{strings.Repeat("x", 48) + " y", SearchModePhrase, 1}, // >= 50 runes
+	}
+	for _, tc := range cases {
+		got := ParseSearchQuery(tc.query)
+		if got.Mode != tc.mode || len(got.Terms) != tc.terms {
+			t.Errorf("ParseSearchQuery(%q) = %s/%d terms, want %s/%d", tc.query, got.Mode, len(got.Terms), tc.mode, tc.terms)
+		}
+	}
+}
+
+func TestSearchMatchesSimplifiedAndTraditional(t *testing.T) {
+	db := newSearchTestDB(t)
+	svc := New(db)
+	project := newSearchTestProject(t, db, "project-a")
+	traditional := newSearchTestSession(t, db, project.ID, "簡體與繁體", "")
+	simplified := newSearchTestSession(t, db, project.ID, "简体测试", "")
+	for _, query := range []string{"简体", "簡體"} {
+		results, err := svc.SearchByTitle(project.ID, query, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := map[uint]bool{}
+		for _, r := range results {
+			ids[r.ID] = true
+		}
+		if len(results) != 2 || !ids[traditional.ID] || !ids[simplified.ID] {
+			t.Errorf("query %q: got %+v", query, results)
+		}
+	}
+	if err := db.Create(&store.ChatMessage{SessionID: simplified.ID, Role: "user", Content: "這是繁體訊息", Timestamp: time.Now()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	results, err := svc.SearchMessages(project.ID, "这是繁体", 10, 0)
+	if err != nil || len(results) != 1 || !strings.Contains(results[0].Snippet, "這是繁體") {
+		t.Fatalf("results = %+v, err = %v", results, err)
+	}
+}
+
+func TestSearchKeywordsRequiresAllKeywordsPerSession(t *testing.T) {
+	db := newSearchTestDB(t)
+	svc := New(db)
+	project := newSearchTestProject(t, db, "project-a")
+	both := newSearchTestSession(t, db, project.ID, "Rocket notes", "")
+	onlyOne := newSearchTestSession(t, db, project.ID, "Rocket only", "")
+	titleOnly := newSearchTestSession(t, db, project.ID, "rocket engine summary", "rocket engine")
+	now := time.Now()
+	for _, msg := range []store.ChatMessage{
+		{SessionID: both.ID, Role: "user", Content: "the engine stalled", Timestamp: now},
+		{SessionID: onlyOne.ID, Role: "user", Content: "nothing relevant", Timestamp: now},
+	} {
+		if err := db.Create(&msg).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := svc.SearchMessages(project.ID, "rocket, engine", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[uint]MessageSearchResult{}
+	for _, r := range results {
+		got[r.SessionID] = r
+	}
+	if len(results) != 2 || got[both.ID].MessageID == 0 || !strings.Contains(got[both.ID].Snippet, "engine") {
+		t.Fatalf("results = %+v", results)
+	}
+	if r, ok := got[titleOnly.ID]; !ok || r.MessageID != 0 {
+		t.Fatalf("title-only match = %+v", r)
+	}
+
+	sessions, err := svc.SearchByTitle(project.ID, "engine rocket", 10)
+	if err != nil || len(sessions) != 1 || sessions[0].ID != titleOnly.ID {
+		t.Fatalf("sessions = %+v, err = %v", sessions, err)
+	}
+}

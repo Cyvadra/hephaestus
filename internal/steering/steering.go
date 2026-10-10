@@ -99,7 +99,7 @@ func (m *Manager) Cancel(runID uint) bool {
 
 // Claim atomically transfers the pending instruction to an agent lease.
 func (m *Manager) Claim(runID uint) (Lease, bool) {
-	return m.claim(runID, false)
+	return m.claimMode(runID, "")
 }
 
 // ClaimNormal transfers a pending Normal instruction to a lease without
@@ -107,17 +107,25 @@ func (m *Manager) Claim(runID uint) (Lease, bool) {
 // starts. It lets Normal steering submitted during execution join that tool's
 // result when the execution completes.
 func (m *Manager) ClaimNormal(runID uint) (Lease, bool) {
-	return m.claim(runID, true)
+	return m.claimMode(runID, ModeNormal)
 }
 
-func (m *Manager) claim(runID uint, normalOnly bool) (Lease, bool) {
+// ClaimAggressive transfers a pending Aggressive instruction to a lease,
+// leaving a Normal one for the tool-completion boundary. The agent polls it
+// while tools run so a force steer can interrupt them.
+func (m *Manager) ClaimAggressive(runID uint) (Lease, bool) {
+	return m.claimMode(runID, ModeAggressive)
+}
+
+// claimMode claims the pending instruction when mode is empty or matches it.
+func (m *Manager) claimMode(runID uint, mode Mode) (Lease, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	pending, ok := m.pending[runID]
 	if !ok {
 		return Lease{}, false
 	}
-	if normalOnly && pending.Mode != ModeNormal {
+	if mode != "" && pending.Mode != mode {
 		return Lease{}, false
 	}
 	delete(m.pending, runID)

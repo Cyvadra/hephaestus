@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -412,5 +413,52 @@ func TestSSHShellBackendCreatesOnlyDefaultProjectRoot(t *testing.T) {
 	}
 	if wrapper := backend.wrapper("pwd", defaultRoot+"/build", defaultRoot); strings.HasPrefix(wrapper, "mkdir -p ") {
 		t.Fatalf("did not expect explicit directory creation, got %q", wrapper)
+	}
+}
+
+func TestShellToolInterrupterSignalsProcessGroup(t *testing.T) {
+	baseCtx, _ := projectTestContext(t)
+	interrupter := &toolkit.Interrupter{}
+	ctx := toolkit.WithInterrupter(baseCtx, interrupter)
+	resultCh := make(chan *toolkit.ToolResult, 1)
+	go func() {
+		resultCh <- NewShellTool(true, 0).Execute(ctx, map[string]any{
+			"command": "trap 'printf ignored-term' TERM; while :; do sleep 1; done",
+		})
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if process, ok := interrupter.Process(); ok {
+			if process.PID == 0 || !strings.Contains(process.Command, "trap") {
+				t.Fatalf("process = %+v", process)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shell did not attach its process")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !interrupter.Signal(syscall.SIGTERM) {
+		t.Fatal("SIGTERM was not delivered")
+	}
+	select {
+	case result := <-resultCh:
+		t.Fatalf("command trapping SIGTERM exited early: %+v", result)
+	case <-time.After(1500 * time.Millisecond):
+	}
+	interrupter.Signal(syscall.SIGKILL)
+	select {
+	case result := <-resultCh:
+		if !result.IsError || !strings.Contains(result.ForLLM, "ignored-term") {
+			t.Fatalf("result = %+v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("shell command did not stop after SIGKILL")
+	}
+	if interrupter.Signal(syscall.SIGTERM) {
+		t.Fatal("signal delivered after the process exited")
 	}
 }

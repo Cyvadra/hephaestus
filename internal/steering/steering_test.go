@@ -102,3 +102,23 @@ func TestManagerSeparatesRuns(t *testing.T) {
 		t.Fatalf("run 2 pending = %#v, %v", pending, ok)
 	}
 }
+
+func TestClaimAggressiveLeavesNormalPending(t *testing.T) {
+	manager := NewManager()
+	if _, err := manager.Put(1, 2, "keep going", ModeNormal); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.ClaimAggressive(1); ok {
+		t.Fatal("claimed a normal instruction as aggressive")
+	}
+	if _, err := manager.Put(1, 2, "stop", ModeAggressive); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok := manager.ClaimAggressive(1)
+	if !ok || lease.Text != "stop" {
+		t.Fatalf("lease = %+v, ok = %v", lease, ok)
+	}
+	if _, ok := manager.Get(1); ok {
+		t.Fatal("aggressive instruction still pending after claim")
+	}
+}

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useRef, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowUp, Blocks, Check, ShieldCheck, Wrench, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { formatSize } from '../lib/attachments'
+import { filesFromClipboard, formatSize } from '../lib/attachments'
 import { toggleAuthorizationMode, toggleReasoningEffort, type AuthorizationMode } from '../lib/composerOptions'
 import type { GenerationOptions, ReasoningEffort, SteeringMode } from '../api/types'
 import { useHoverMenu } from '../lib/useHoverMenu'
@@ -117,6 +117,17 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
     }
   }
 
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (disabled || steeringOnly || isCommand) return
+    // Spreadsheets and rich-text editors put a rendered image beside the
+    // text; when there is text, let the browser paste it as usual.
+    if (e.clipboardData.types.includes('text/plain')) return
+    const pasted = filesFromClipboard(e.clipboardData.items)
+    if (pasted.length === 0) return
+    e.preventDefault()
+    onFilesChange([...files, ...pasted])
+  }
+
   const selectSendShortcut = (shortcut: SendShortcut) => {
     setSendShortcut(shortcut)
     localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, shortcut)
@@ -216,6 +227,7 @@ export default function Composer({ focusKey, onSend, commandHelp, commandHelpLoa
             value={text}
             onChange={e => handleTextChange(e.target.value)}
             onKeyDown={handleKey}
+            onPaste={handlePaste}
             placeholder={steeringOnly ? t('chat.compose.subagentSteerPlaceholder') : disabled ? t('chat.compose.generating') : t('chat.compose.placeholder')}
             rows={3}
             className="composer-textarea"

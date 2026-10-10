@@ -45,6 +45,7 @@ import (
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/subagent"
 	"github.com/Cyvadra/hephaestus/internal/subagentexec"
+	"github.com/Cyvadra/hephaestus/internal/toolevent"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
 	"github.com/Cyvadra/hephaestus/internal/tools"
 	"github.com/Cyvadra/hephaestus/internal/upload"
@@ -224,6 +225,10 @@ func main() {
 	}
 
 	agentRunner := agent.NewRunner(llmClient, pluginReg, interactions, db, notifier)
+	// Tool calls abandoned by a force steer report back when they finish.
+	toolEvents := toolevent.New(db)
+	agentRunner.SetLateToolRecorder(toolEvents)
+	notificationSource := toolevent.Combined{Subagents: subagentSvc, Tools: toolEvents}
 	workflowSvc := workflow.NewService(db, registryStore, toolReg, agentRunner, projects, notifier)
 	jobSvc := job.NewService(db, registryStore, workflowSvc, notifier)
 	if err := workflowSvc.Reconcile(); err != nil {
@@ -234,7 +239,7 @@ func main() {
 	}
 
 	pipeline := chat.NewPipeline(db, registryStore, toolReg, pluginReg, llmClient, agentRunner, sessions, notifier, projects, interactions)
-	pipeline.SetNotificationSource(subagentSvc)
+	pipeline.SetNotificationSource(notificationSource)
 	chatRunSvc := chatrun.New(db).WithMaxEventBytes(cfg.ChatRunMaxEventBytes)
 	pipeline.SetSteeringSource(chatRunSvc)
 	if err := chatRunSvc.Reconcile(); err != nil {
@@ -248,8 +253,9 @@ func main() {
 	subagentSvc.SetLiveChild(subagentExecutor)
 	// Deliver any completions that finished while their parent session was
 	// idle (or that were rebuilt by subagent Reconcile above).
-	dispatcher := resume.New(db, sessions, subagentSvc, chatRunSvc, pipeline)
+	dispatcher := resume.New(db, sessions, notificationSource, chatRunSvc, pipeline)
 	subagentSvc.SetOnCompletion(dispatcher.Deliver)
+	toolEvents.SetOnRecorded(dispatcher.Deliver)
 	steeringFallback := func(sessionID uint) func(string) chatrun.Execute {
 		return func(text string) chatrun.Execute {
 			return func(turnCtx context.Context, onDelta func(chat.StreamEvent)) (*chatrun.Result, error) {
@@ -297,6 +303,8 @@ func main() {
 		TextExtensions:     cfg.UploadTextExtensions,
 		ImageExtensions:    cfg.UploadImageExtensions,
 		InlineTextMaxBytes: cfg.UploadInlineTextMaxBytes,
+		ExcerptHeadBytes:   cfg.UploadExcerptHeadBytes,
+		ExcerptTailBytes:   cfg.UploadExcerptTailBytes,
 		FileMaxBytes:       cfg.UploadFileMaxBytes,
 		TotalMaxBytes:      cfg.UploadTotalMaxBytes,
 		MaxFiles:           cfg.UploadMaxFiles,

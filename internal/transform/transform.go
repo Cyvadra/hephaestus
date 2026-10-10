@@ -60,17 +60,19 @@ func LimitTextBytes(content string, limit int) string {
 	}
 	marker := "\n[... middle omitted ...]\n"
 	if len(marker) >= limit {
-		return trimUTF8Prefix(content, limit)
+		return TrimUTF8Prefix(content, limit)
 	}
 	retained := limit - len(marker)
 	headLimit := retained / 2
 	tailLimit := retained - headLimit
-	head := trimUTF8Prefix(content, headLimit)
-	tail := trimUTF8Suffix(content, tailLimit)
+	head := TrimUTF8Prefix(content, headLimit)
+	tail := TrimUTF8Suffix(content, tailLimit)
 	return head + marker + tail
 }
 
-func trimUTF8Prefix(content string, limit int) string {
+// TrimUTF8Prefix returns the longest prefix of content within limit bytes
+// that ends on a rune boundary.
+func TrimUTF8Prefix(content string, limit int) string {
 	if len(content) <= limit {
 		return content
 	}
@@ -81,7 +83,9 @@ func trimUTF8Prefix(content string, limit int) string {
 	return content[:end]
 }
 
-func trimUTF8Suffix(content string, limit int) string {
+// TrimUTF8Suffix returns the longest suffix of content within limit bytes
+// that starts on a rune boundary.
+func TrimUTF8Suffix(content string, limit int) string {
 	if len(content) <= limit {
 		return content
 	}

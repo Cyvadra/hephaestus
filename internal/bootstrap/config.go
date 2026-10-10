@@ -78,6 +78,8 @@ type Config struct {
 	UploadTextExtensions     []string
 	UploadImageExtensions    []string
 	UploadInlineTextMaxBytes int64
+	UploadExcerptHeadBytes   int64
+	UploadExcerptTailBytes   int64
 	UploadFileMaxBytes       int64
 	UploadTotalMaxBytes      int64
 	UploadMaxFiles           int
@@ -151,6 +153,8 @@ func Load() (*Config, error) {
 		UploadTextExtensions:     splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS", "md,markdown,txt,csv,json,yaml,yml,toml,xml")),
 		UploadImageExtensions:    splitExtensions(getenvDefault("HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS", "jpg,jpeg,png,gif,webp")),
 		UploadInlineTextMaxBytes: env.int64("HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES", 10<<10),
+		UploadExcerptHeadBytes:   env.int64("HEPHAESTUS_UPLOAD_EXCERPT_HEAD_BYTES", 4<<10),
+		UploadExcerptTailBytes:   env.int64("HEPHAESTUS_UPLOAD_EXCERPT_TAIL_BYTES", 2<<10),
 		UploadFileMaxBytes:       env.int64("HEPHAESTUS_UPLOAD_FILE_MAX_BYTES", 50<<20),
 		UploadTotalMaxBytes:      env.int64("HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES", 250<<20),
 		UploadMaxFiles:           env.int("HEPHAESTUS_UPLOAD_MAX_FILES", 5),

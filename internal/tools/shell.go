@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -262,7 +263,22 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	output := &streamingOutputWriter{ctx: execCtx}
 	cmd.Stdout = output
 	cmd.Stderr = output
-	err = cmd.Run()
+	if err = cmd.Start(); err == nil {
+		// Over SSH a local signal reaches only the ssh client, not the remote
+		// command, so the interrupter is not attached and the agent falls back
+		// to context cancellation without claiming a delivered signal.
+		_, remote := t.backend.(sshShellBackend)
+		if interrupter, ok := toolkit.InterrupterFromContext(ctx); ok && !remote {
+			process := cmd.Process
+			detach := interrupter.Attach(process.Pid, command, func(sig os.Signal) error {
+				return signalProcessGroup(process, sig)
+			})
+			err = cmd.Wait()
+			detach()
+		} else {
+			err = cmd.Wait()
+		}
+	}
 	cancelMu.Lock()
 	if forceKill != nil {
 		forceKill.Stop()

@@ -75,6 +75,7 @@ type NotificationSource interface {
 type SteeringSource interface {
 	ClaimSteering(uint) (*agent.Steering, error)
 	ClaimNormalSteering(uint) (*agent.Steering, error)
+	ClaimAggressiveSteering(uint) (*agent.Steering, error)
 	AcknowledgeSteering(uint, agent.Steering)
 	ReleaseSteering(uint, agent.Steering)
 }
@@ -972,23 +973,29 @@ func (p *Pipeline) converse(ctx context.Context, settings store.SessionSettings,
 	}
 	var claimSteering func() (*agent.Steering, error)
 	var claimNormalSteering func() (*agent.Steering, error)
+	var claimAggressiveSteering func() (*agent.Steering, error)
+	var releaseSteering func(agent.Steering)
 	if p.steering != nil {
 		if runID, ok := toolkit.ChatRunIDFromContext(ctx); ok {
 			claimSteering = func() (*agent.Steering, error) { return p.steering.ClaimSteering(runID) }
 			claimNormalSteering = func() (*agent.Steering, error) { return p.steering.ClaimNormalSteering(runID) }
+			claimAggressiveSteering = func() (*agent.Steering, error) { return p.steering.ClaimAggressiveSteering(runID) }
+			releaseSteering = func(value agent.Steering) { p.steering.ReleaseSteering(runID, value) }
 		}
 	}
 	result, err := p.agent.Run(ctx, agent.Request{
-		Identity:            identity,
-		Toolset:             toolset,
-		Plugins:             settings.Plugins,
-		Turn:                turn,
-		Scope:               toolkit.ScopeSession,
-		Audit:               agent.AuditOwner{SessionID: &turn.SessionID},
-		OwnerID:             turn.SessionID,
-		ClaimNotifications:  claimNotifications,
-		ClaimSteering:       claimSteering,
-		ClaimNormalSteering: claimNormalSteering,
+		Identity:                identity,
+		Toolset:                 toolset,
+		Plugins:                 settings.Plugins,
+		Turn:                    turn,
+		Scope:                   toolkit.ScopeSession,
+		Audit:                   agent.AuditOwner{SessionID: &turn.SessionID},
+		OwnerID:                 turn.SessionID,
+		ClaimNotifications:      claimNotifications,
+		ClaimSteering:           claimSteering,
+		ClaimNormalSteering:     claimNormalSteering,
+		ClaimAggressiveSteering: claimAggressiveSteering,
+		ReleaseSteering:         releaseSteering,
 		// Always stream so the agent takes the CallStream path even when
 		// no listener is attached.
 		OnDelta: func(event StreamEvent) {

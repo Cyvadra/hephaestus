@@ -1,4 +1,4 @@
-// Package resume delivers background-subagent completion events to their
+// Package resume delivers background-subagent and late tool completion events to their
 // root parent session as durable user messages. It is the delivery half of
 // the completion outbox: when a session is idle it auto-triggers a fresh
 // turn that feeds the completions in; when a turn is already running it
@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/Cyvadra/hephaestus/internal/agent"
 	"github.com/Cyvadra/hephaestus/internal/chat"
 	"github.com/Cyvadra/hephaestus/internal/chatrun"
 	"github.com/Cyvadra/hephaestus/internal/session"
@@ -27,15 +28,23 @@ const maxAutoResume = 3
 // session is idle, starts a background turn that persists them as a user
 // message and answers them.
 type Dispatcher struct {
-	db        *gorm.DB
-	sessions  *session.Service
-	subagents *subagent.Service
-	chatRuns  *chatrun.Service
-	pipeline  *chat.Pipeline
+	db       *gorm.DB
+	sessions *session.Service
+	source   Source
+	chatRuns *chatrun.Service
+	pipeline *chat.Pipeline
 }
 
-func New(db *gorm.DB, sessions *session.Service, subagents *subagent.Service, chatRuns *chatrun.Service, pipeline *chat.Pipeline) *Dispatcher {
-	return &Dispatcher{db: db, sessions: sessions, subagents: subagents, chatRuns: chatRuns, pipeline: pipeline}
+// Source claims and releases durable completion notifications, e.g. a
+// subagent.Service or a toolevent.Combined.
+type Source interface {
+	ClaimNotifications(uint) ([]agent.Notification, error)
+	ReleaseNotifications([]uint) error
+	PendingSessionIDs() ([]uint, error)
+}
+
+func New(db *gorm.DB, sessions *session.Service, source Source, chatRuns *chatrun.Service, pipeline *chat.Pipeline) *Dispatcher {
+	return &Dispatcher{db: db, sessions: sessions, source: source, chatRuns: chatRuns, pipeline: pipeline}
 }
 
 // Deliver claims and delivers the pending completion notifications for
@@ -43,7 +52,7 @@ func New(db *gorm.DB, sessions *session.Service, subagents *subagent.Service, ch
 // enforces one active run per session, so a loser of a race releases its
 // lease for the winner's steer path to consume.
 func (d *Dispatcher) Deliver(sessionID uint) {
-	notifications, err := d.subagents.ClaimNotifications(sessionID)
+	notifications, err := d.source.ClaimNotifications(sessionID)
 	if err != nil || len(notifications) == 0 {
 		return
 	}
@@ -52,7 +61,7 @@ func (d *Dispatcher) Deliver(sessionID uint) {
 		ids[i] = notifications[i].ID
 	}
 	release := func() {
-		if err := d.subagents.ReleaseNotifications(ids); err != nil {
+		if err := d.source.ReleaseNotifications(ids); err != nil {
 			log.Printf("resume: release notifications for session %d: %v", sessionID, err)
 		}
 	}
@@ -116,8 +125,8 @@ func (d *Dispatcher) consecutiveResumes(sessionID uint) (int, error) {
 // for startup, after Reconcile has rebuilt events for runs interrupted by a
 // restart.
 func (d *Dispatcher) Sweep() error {
-	var sessionIDs []uint
-	if err := d.db.Model(&store.SubagentEvent{}).Where("consumed_at IS NULL").Distinct().Pluck("parent_session_id", &sessionIDs).Error; err != nil {
+	sessionIDs, err := d.source.PendingSessionIDs()
+	if err != nil {
 		return fmt.Errorf("resume: list pending sessions: %w", err)
 	}
 	for _, id := range sessionIDs {

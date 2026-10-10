@@ -41,3 +41,21 @@ func interruptProcessGroup(process *os.Process) error {
 	}
 	return nil
 }
+
+// signalProcessGroup delivers sig to the command's whole process group. It
+// returns an error when no process received it.
+func signalProcessGroup(process *os.Process, sig os.Signal) error {
+	if process == nil {
+		return os.ErrProcessDone
+	}
+	if runtime.GOOS == "windows" {
+		return process.Kill()
+	}
+	signal, ok := sig.(syscall.Signal)
+	if !ok {
+		return process.Signal(sig)
+	}
+	// ESRCH is returned, not swallowed: callers report whether a signal was
+	// actually delivered.
+	return syscall.Kill(-process.Pid, signal)
+}

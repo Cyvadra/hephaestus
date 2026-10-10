@@ -661,7 +661,7 @@ const docTemplate = `{
         },
         "/search/messages": {
             "get": {
-                "description": "Slow tier of chat history search: case-insensitive substring match against message content, scoped to one Project, paginated.",
+                "description": "Slow tier of chat history search: case-insensitive, Simplified/Traditional-Chinese-insensitive match against message content, scoped to one Project, paginated. Keyword queries return one result per session whose title, summary and messages contain every keyword.",
                 "produces": [
                     "application/json"
                 ],
@@ -723,7 +723,7 @@ const docTemplate = `{
         },
         "/search/sessions": {
             "get": {
-                "description": "Fast tier of chat history search: case-insensitive substring match against Title/Summary, scoped to one Project.",
+                "description": "Fast tier of chat history search: case-insensitive, Simplified/Traditional-Chinese-insensitive match against Title/Summary, scoped to one Project. Short space/comma-separated queries require every keyword to match.",
                 "produces": [
                     "application/json"
                 ],

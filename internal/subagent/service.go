@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Cyvadra/hephaestus/internal/agent"
+	"github.com/Cyvadra/hephaestus/internal/outbox"
 	"github.com/Cyvadra/hephaestus/internal/runctrl"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/internal/toolkit"
@@ -31,7 +32,6 @@ const (
 	maxSeedBytes         = 256 * 1024
 	maxSubagentResult    = 192 * 1024
 	maxNotificationBytes = 2 * 1024
-	notificationLease    = 5 * time.Minute
 )
 
 // Request is the normalized input shared by spawn and fork tools.
@@ -615,34 +615,15 @@ func (s *Service) Shutdown() {
 	s.wg.Wait()
 }
 
+// notifications is the subagent_events outbox. Failed turns release their
+// leases; abandoned leases expire automatically.
+func (s *Service) notifications() outbox.Table {
+	return outbox.Table{DB: s.db, Model: &store.SubagentEvent{}, SessionColumn: "parent_session_id", Prefix: "Subagent completion (details available from subagent-runs API): "}
+}
+
 // ClaimNotifications leases unconsumed completion events in durable order.
-// Failed turns release their leases; abandoned leases expire automatically.
 func (s *Service) ClaimNotifications(sessionID uint) ([]agent.Notification, error) {
-	var events []store.SubagentEvent
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		expired := time.Now().Add(-notificationLease)
-		query := store.ForUpdate(tx, "SKIP LOCKED").
-			Where("parent_session_id = ? AND consumed_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)", sessionID, expired).Order("id")
-		if err := query.Find(&events).Error; err != nil {
-			return err
-		}
-		if len(events) == 0 {
-			return nil
-		}
-		ids := make([]uint, len(events))
-		for index := range events {
-			ids[index] = events[index].ID
-		}
-		now := time.Now()
-		return tx.Model(&store.SubagentEvent{}).Where("id IN ? AND consumed_at IS NULL", ids).Update("claimed_at", &now).Error
-	}); err != nil {
-		return nil, err
-	}
-	out := make([]agent.Notification, len(events))
-	for i := range events {
-		out[i] = agent.Notification{ID: events[i].ID, Text: "Subagent completion (details available from subagent-runs API): " + string(events[i].Payload)}
-	}
-	return out, nil
+	return s.notifications().ClaimNotifications(sessionID)
 }
 
 func (s *Service) AcknowledgeNotifications(ids []uint) error {
@@ -650,18 +631,16 @@ func (s *Service) AcknowledgeNotifications(ids []uint) error {
 }
 
 func (s *Service) AcknowledgeNotificationsTx(tx *gorm.DB, ids []uint) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	now := time.Now()
-	return tx.Model(&store.SubagentEvent{}).Where("id IN ? AND consumed_at IS NULL", ids).Updates(map[string]any{"consumed_at": &now, "claimed_at": nil}).Error
+	return s.notifications().AcknowledgeNotificationsTx(tx, ids)
 }
 
 func (s *Service) ReleaseNotifications(ids []uint) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	return s.db.Model(&store.SubagentEvent{}).Where("id IN ? AND consumed_at IS NULL", ids).Update("claimed_at", nil).Error
+	return s.notifications().ReleaseNotifications(ids)
+}
+
+// PendingSessionIDs lists parent sessions with unconsumed events.
+func (s *Service) PendingSessionIDs() ([]uint, error) {
+	return s.notifications().PendingSessionIDs()
 }
 
 func (s *Service) consumeRunEvents(runIDs []uint) error {

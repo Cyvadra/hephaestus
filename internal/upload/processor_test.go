@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,7 +22,7 @@ func TestProcessInlinesTextAndClassifiesVisualImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[file name]: uploads/2026-08-10/notes.md\n[file size]: 0.0 KB\n[file content begin]\n# Notes\n[file content end]\n\n[file name]: uploads/2026-08-10/scan.png\n[file size]: 0.0 KB\n\n"
+	want := "[file name]: uploads/2026-08-10/notes.md\n[file size]: 0.0 KB\n[file content begin]\n# Notes\n[file content end]\n\n[file name]: uploads/2026-08-10/scan.png\n[file size]: 0.0 KB\n[mime type]: image/png\n[image size]: 1x1\n\n"
 	if result.Prefix != want {
 		t.Fatalf("prefix = %q, want %q", result.Prefix, want)
 	}
@@ -101,6 +103,46 @@ func TestProcessDoesNotTreatUnsupportedImagesAsVisualInput(t *testing.T) {
 type filePart struct {
 	name    string
 	content string
+}
+
+func TestProcessExcerptsLargeTextHeadAndTail(t *testing.T) {
+	var content strings.Builder
+	for i := 0; i < 2000; i++ {
+		fmt.Fprintf(&content, "line %04d 中文\n", i)
+	}
+	result, err := newProcessor(t).Process(context.Background(), t.TempDir(), multipartFiles(t, filePart{name: "big.md", content: content.String()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := result.Prefix
+	attachment := result.Attachments[0]
+	if !attachment.ContentIncluded || !attachment.ContentTruncated {
+		t.Fatalf("attachment = %+v", attachment)
+	}
+	for _, want := range []string{"[file excerpt]: head/tail", "line 0000 中文\n", "line 1999 中文\n[file content end]", "[truncated: "} {
+		if !strings.Contains(prefix, want) {
+			t.Fatalf("prefix missing %q:\n%s", want, prefix)
+		}
+	}
+	if strings.Contains(prefix, "line 1000 ") || len(prefix) > 8<<10 {
+		t.Fatalf("excerpt too large (%d bytes)", len(prefix))
+	}
+}
+
+func TestProcessDescribesNonTextWithoutReadingContent(t *testing.T) {
+	result, err := newProcessor(t).Process(context.Background(), t.TempDir(), multipartFiles(t,
+		filePart{name: "data.bin", content: "secret-binary-content"},
+		filePart{name: "bad.txt", content: "\xff\xfe broken"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Prefix, "secret-binary-content") || strings.Contains(result.Prefix, "broken") || strings.Contains(result.Prefix, "[file content begin]") {
+		t.Fatalf("content leaked into prefix: %q", result.Prefix)
+	}
+	if !strings.Contains(result.Prefix, "[mime type]: text/plain") {
+		t.Fatalf("missing mime metadata: %q", result.Prefix)
+	}
 }
 
 func multipartFiles(t *testing.T, parts ...filePart) []*multipart.FileHeader {

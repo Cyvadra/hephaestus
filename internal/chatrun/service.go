@@ -171,6 +171,16 @@ func (s *Service) ClaimNormalSteering(runID uint) (*agent.Steering, error) {
 	return &agent.Steering{Token: lease.Token, Text: lease.Text}, nil
 }
 
+// ClaimAggressiveSteering claims an Aggressive instruction while tools run,
+// so the agent can interrupt them.
+func (s *Service) ClaimAggressiveSteering(runID uint) (*agent.Steering, error) {
+	lease, ok := s.steering.ClaimAggressive(runID)
+	if !ok {
+		return nil, nil
+	}
+	return &agent.Steering{Token: lease.Token, Text: lease.Text, Aggressive: true}, nil
+}
+
 // AcknowledgeSteering confirms that the tool result carrying the instruction
 // was durably persisted in the transcript.
 func (s *Service) AcknowledgeSteering(runID uint, value agent.Steering) {

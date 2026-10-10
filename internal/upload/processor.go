@@ -2,10 +2,15 @@
 package upload
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -30,10 +35,14 @@ type Config struct {
 	TextExtensions     []string
 	ImageExtensions    []string
 	InlineTextMaxBytes int64
-	FileMaxBytes       int64
-	TotalMaxBytes      int64
-	MaxFiles           int
-	Now                func() time.Time
+	// ExcerptHeadBytes and ExcerptTailBytes bound the head/tail excerpt of
+	// text files larger than InlineTextMaxBytes. Zero selects the defaults.
+	ExcerptHeadBytes int64
+	ExcerptTailBytes int64
+	FileMaxBytes     int64
+	TotalMaxBytes    int64
+	MaxFiles         int
+	Now              func() time.Time
 }
 
 // Attachment is the persisted representation returned to the API client.
@@ -44,6 +53,8 @@ type Attachment struct {
 	MIME            string `json:"mime"`
 	VisualInput     bool   `json:"visual_input"`
 	ContentIncluded bool   `json:"content_included"`
+	// ContentTruncated reports that only a head/tail excerpt was included.
+	ContentTruncated bool `json:"content_truncated,omitempty"`
 }
 
 // Result is the prompt prefix and client-visible processing outcome.
@@ -86,6 +97,12 @@ func New(config Config) (*Processor, error) {
 	if config.FileMaxBytes > config.TotalMaxBytes {
 		return nil, errors.New("upload: incompatible size limits")
 	}
+	if config.ExcerptHeadBytes <= 0 {
+		config.ExcerptHeadBytes = defaultExcerptHeadBytes
+	}
+	if config.ExcerptTailBytes <= 0 {
+		config.ExcerptTailBytes = defaultExcerptTailBytes
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -124,6 +141,7 @@ func (p *Processor) Process(_ context.Context, projectDir string, files []*multi
 	}
 
 	result := Result{Attachments: make([]Attachment, 0, len(files))}
+	var prefix strings.Builder
 	for _, file := range files {
 		name, err := safeName(file.Filename)
 		if err != nil {
@@ -140,16 +158,24 @@ func (p *Processor) Process(_ context.Context, projectDir string, files []*multi
 		}
 		relativePath := filepath.ToSlash(filepath.Join("uploads", filepath.Base(directory), filepath.Base(path)))
 		attachment := Attachment{Path: relativePath, Name: filepath.Base(path), Size: file.Size}
-		content := p.extractText(path, extension(name), file.Size)
+		text := p.extractText(path, extension(name), file.Size)
 		attachment.MIME = detectMIME(path)
 		_, imageExtension := p.imageExtensions[extension(name)]
 		attachment.VisualInput = imageExtension && media.SupportedVisual(attachment.MIME)
-		if content != "" {
-			attachment.ContentIncluded = true
+		attachment.ContentIncluded = text.content != ""
+		attachment.ContentTruncated = text.omittedBytes > 0
+		meta := fileMeta{text: text}
+		if text.content == "" {
+			// Non-text files are never read into the prompt: only describe them.
+			meta.mime = attachment.MIME
+			if imageExtension {
+				meta.dimensions = imageDimensions(path)
+			}
 		}
 		result.Attachments = append(result.Attachments, attachment)
-		result.Prefix += promptBlock(relativePath, file.Size, content)
+		prefix.WriteString(promptBlock(relativePath, file.Size, meta))
 	}
+	result.Prefix = prefix.String()
 	return result, nil
 }
 
@@ -193,18 +219,100 @@ func (p *Processor) persist(directory, name string, file *multipart.FileHeader) 
 	}
 }
 
-func (p *Processor) extractText(path, ext string, size int64) string {
-	if _, ok := p.textExtensions[ext]; ok && size <= p.config.InlineTextMaxBytes {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return ""
-		}
-		if !utf8.Valid(content) {
-			return ""
-		}
-		return string(content)
+const (
+	defaultExcerptHeadBytes = 4 << 10
+	defaultExcerptTailBytes = 2 << 10
+)
+
+// textContent is the prompt-visible text of an attachment: the whole file, or
+// a head/tail excerpt when omittedBytes > 0.
+type textContent struct {
+	content      string
+	omittedBytes int64
+}
+
+// extractText reads readable text files only. Small files are inlined whole;
+// larger ones contribute a line-aligned head and tail excerpt. Anything else
+// (media, binaries, invalid UTF-8) yields no content.
+func (p *Processor) extractText(path, ext string, size int64) textContent {
+	if _, ok := p.textExtensions[ext]; !ok {
+		return textContent{}
 	}
-	return ""
+	if size <= p.config.InlineTextMaxBytes || size <= p.config.ExcerptHeadBytes+p.config.ExcerptTailBytes {
+		content, err := os.ReadFile(path)
+		if err != nil || !readableText(content) {
+			return textContent{}
+		}
+		return textContent{content: string(content)}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return textContent{}
+	}
+	defer file.Close()
+	head := make([]byte, p.config.ExcerptHeadBytes)
+	if _, err := file.ReadAt(head, 0); err != nil {
+		return textContent{}
+	}
+	tail := make([]byte, p.config.ExcerptTailBytes)
+	tailStart := size - p.config.ExcerptTailBytes
+	if _, err := file.ReadAt(tail, tailStart); err != nil && !errors.Is(err, io.EOF) {
+		return textContent{}
+	}
+	// Align to line boundaries so the excerpt never splits a line or rune.
+	if cut := bytes.LastIndexByte(head, '\n'); cut > 0 {
+		head = head[:cut+1]
+	} else {
+		head = trimInvalidSuffix(head)
+	}
+	if cut := bytes.IndexByte(tail, '\n'); cut >= 0 && cut < len(tail)-1 {
+		tailStart += int64(cut + 1)
+		tail = tail[cut+1:]
+	} else {
+		trimmed := trimInvalidPrefix(tail)
+		tailStart += int64(len(tail) - len(trimmed))
+		tail = trimmed
+	}
+	if !readableText(head) || !readableText(tail) {
+		return textContent{}
+	}
+	omitted := tailStart - int64(len(head))
+	return textContent{
+		content:      strings.TrimSuffix(string(head), "\n") + fmt.Sprintf("\n... [truncated: %s omitted] ...\n", formatSize(omitted)) + strings.TrimSuffix(string(tail), "\n"),
+		omittedBytes: omitted,
+	}
+}
+
+func readableText(content []byte) bool {
+	return utf8.Valid(content) && bytes.IndexByte(content, 0) < 0
+}
+
+func trimInvalidSuffix(content []byte) []byte {
+	for i := 0; i < utf8.UTFMax && len(content) > 0 && !utf8.Valid(content); i++ {
+		content = content[:len(content)-1]
+	}
+	return content
+}
+
+func trimInvalidPrefix(content []byte) []byte {
+	for i := 0; i < utf8.UTFMax && len(content) > 0 && !utf8.RuneStart(content[0]); i++ {
+		content = content[1:]
+	}
+	return content
+}
+
+// imageDimensions decodes only the image header.
+func imageDimensions(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	config, _, err := image.DecodeConfig(file)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", config.Width, config.Height)
 }
 
 func detectMIME(path string) string {
@@ -221,10 +329,25 @@ func detectMIME(path string) string {
 	return http.DetectContentType(header[:count])
 }
 
-func promptBlock(path string, size int64, content string) string {
+type fileMeta struct {
+	text       textContent
+	mime       string
+	dimensions string
+}
+
+func promptBlock(path string, size int64, meta fileMeta) string {
 	block := fmt.Sprintf("[file name]: %s\n[file size]: %s\n", path, formatSize(size))
-	if content != "" {
-		block += "[file content begin]\n" + content + "\n[file content end]\n"
+	if meta.mime != "" {
+		block += "[mime type]: " + meta.mime + "\n"
+	}
+	if meta.dimensions != "" {
+		block += "[image size]: " + meta.dimensions + "\n"
+	}
+	if meta.text.content != "" {
+		if meta.text.omittedBytes > 0 {
+			block += "[file excerpt]: head/tail only; read the file for the full content\n"
+		}
+		block += "[file content begin]\n" + meta.text.content + "\n[file content end]\n"
 	}
 	return block + "\n"
 }

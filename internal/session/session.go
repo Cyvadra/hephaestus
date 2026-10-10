@@ -226,7 +226,7 @@ func deleteSessionTree(tx *gorm.DB, sessionID uint) error {
 	if err := tx.Where("run_id IN (?)", chatRunIDs).Delete(&store.ChatRunEvent{}).Error; err != nil {
 		return err
 	}
-	for _, model := range []any{&store.ChatRun{}, &store.MessageAttachment{}, &store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}} {
+	for _, model := range []any{&store.ChatRun{}, &store.MessageAttachment{}, &store.ChatMessage{}, &store.Compression{}, &store.PluginState{}, &store.ToolAudit{}, &store.ToolEvent{}} {
 		if err := tx.Where("session_id = ?", sessionID).Delete(model).Error; err != nil {
 			return err
 		}

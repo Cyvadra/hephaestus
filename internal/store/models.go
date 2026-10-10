@@ -196,6 +196,17 @@ type SubagentEvent struct {
 	CreatedAt       time.Time
 }
 
+// ToolEvent is a durable session-facing notice that a tool call abandoned by
+// a force steer has finally finished. It is delivered like SubagentEvent.
+type ToolEvent struct {
+	ID         uint           `gorm:"primaryKey;autoIncrement"`
+	SessionID  uint           `gorm:"not null;index:idx_tool_events_pending,priority:1"`
+	Payload    datatypes.JSON `gorm:"type:jsonb;not null"`
+	ClaimedAt  *time.Time     `gorm:"index"`
+	ConsumedAt *time.Time     `gorm:"index:idx_tool_events_pending,priority:2"`
+	CreatedAt  time.Time
+}
+
 // SessionSettings is the mutable, per-session snapshot of which identity,
 // impressions, tool groups and plugins are active. It starts as a copy of
 // the source Concierge and may diverge from it over the session's lifetime.

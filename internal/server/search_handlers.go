@@ -13,7 +13,7 @@ import (
 // searchSessions godoc
 //
 //	@Summary		Search session titles and summaries
-//	@Description	Fast tier of chat history search: case-insensitive substring match against Title/Summary, scoped to one Project.
+//	@Description	Fast tier of chat history search: case-insensitive, Simplified/Traditional-Chinese-insensitive match against Title/Summary, scoped to one Project. Short space/comma-separated queries require every keyword to match.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			project	query		string	false	"Project name (defaults to the default project)"
@@ -45,7 +45,7 @@ func (s *Server) searchSessions(c *gin.Context) {
 // searchMessages godoc
 //
 //	@Summary		Full-text search chat messages
-//	@Description	Slow tier of chat history search: case-insensitive substring match against message content, scoped to one Project, paginated.
+//	@Description	Slow tier of chat history search: case-insensitive, Simplified/Traditional-Chinese-insensitive match against message content, scoped to one Project, paginated. Keyword queries return one result per session whose title, summary and messages contain every keyword.
 //	@Tags			sessions
 //	@Produce		json
 //	@Param			project	query		string	false	"Project name (defaults to the default project)"
