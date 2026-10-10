@@ -1,0 +1,28 @@
+name: Dependency audit
+
+# Report-only: never modifies dependencies. Fixes arrive as reviewed
+# Dependabot PRs (see .github/dependabot.yml).
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  pull_request:
+    paths:
+      - frontend/package.json
+      - frontend/package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: npm audit (production deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Audit shipped dependencies
+        run: npm --prefix frontend audit --omit=dev --audit-level=high
