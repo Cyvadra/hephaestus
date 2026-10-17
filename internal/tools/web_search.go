@@ -227,7 +227,7 @@ func (t *WebSearchTool) selectedProviders() []Provider {
 	if len(t.primary) > 0 {
 		providers = append(providers, t.primary[t.random.IntN(len(t.primary))])
 	}
-	if len(t.occasional) > 0 && t.random.Float64() < 0.2 {
+	if len(t.occasional) > 0 && t.random.Float64() < 0.4 {
 		providers = append(providers, t.occasional[t.random.IntN(len(t.occasional))])
 	}
 	return providers

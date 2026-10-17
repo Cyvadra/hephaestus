@@ -292,12 +292,12 @@ func TestWebSearchSelectsProvidersByGroup(t *testing.T) {
 		fixed:      []Provider{fixedOne, fixedTwo},
 		primary:    []Provider{brave, tavily},
 		occasional: []Provider{serpapi, searxng},
-		random:     &stubRandom{ints: []int{1, 1}, float64s: []float64{0.19}},
+		random:     &stubRandom{ints: []int{1, 1}, float64s: []float64{0.39}},
 	}
 	if got, want := providerNames(tool.selectedProviders()), []string{"duckduckgo", "sogou", "tavily", "searxng"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("selected providers = %v, want %v", got, want)
 	}
-	tool.random = &stubRandom{float64s: []float64{0.2}}
+	tool.random = &stubRandom{float64s: []float64{0.4}}
 	if got, want := providerNames(tool.selectedProviders()), []string{"duckduckgo", "sogou", "brave"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("selected providers at threshold = %v, want %v", got, want)
 	}

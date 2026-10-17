@@ -39,10 +39,13 @@ process.stdin.on("end", () => {
 '
 
 for port in 9016 5173; do
-	if ! nc -z -w 5 127.0.0.1 "$port"; then
-		echo "deploy: port 127.0.0.1:$port is not reachable" >&2
-		exit 1
-	fi
+	# Restarted apps need a moment to bind; retry for up to 30s.
+	for attempt in $(seq 1 30); do
+		nc -z -w 1 127.0.0.1 "$port" && continue 2
+		sleep 1
+	done
+	echo "deploy: port 127.0.0.1:$port is not reachable" >&2
+	exit 1
 done
 
 pm2 status hephaestus-api hephaestus-web
