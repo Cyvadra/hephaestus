@@ -98,8 +98,13 @@ func (s *Service) Catalog() (Catalog, error) {
 	}, nil
 }
 
+// sortedMapKeys never returns nil so empty kinds encode as [] rather than null.
 func sortedMapKeys[T any](values map[string]T) []string {
-	return slices.Sorted(maps.Keys(values))
+	names := slices.Sorted(maps.Keys(values))
+	if names == nil {
+		names = []string{}
+	}
+	return names
 }
 
 func sortedBoolKeys(values map[string]bool) []string {
