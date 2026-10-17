@@ -67,9 +67,12 @@ func RenderSearchResults(providerNames []string, query string, results []SearchR
 	return strings.Join(lines, "\n")
 }
 
-// WebSearchConfig configures optional providers. DuckDuckGo and Sogou are
-// always enabled and need no configuration.
+// WebSearchConfig configures providers. When DeepSeekAPIKey is set, DeepSeek
+// search is the always-on provider; otherwise the scraped DuckDuckGo and Sogou
+// pair is used.
 type WebSearchConfig struct {
+	DeepSeekAPIKey                           string
+	DeepSeekBaseURL                          string
 	SearXNGBaseURL                           string
 	SerpAPIEngine                            string
 	BraveAPIKeys, TavilyAPIKeys, SerpAPIKeys []string
@@ -128,18 +131,24 @@ type WebSearchTool struct {
 }
 
 // NewWebSearchTool builds the provider groups used for per-request selection.
-// DuckDuckGo and Sogou are always present; API-backed providers are optional.
+// DeepSeek (or DuckDuckGo and Sogou without a key) is always present;
+// other API-backed providers are optional.
 func NewWebSearchTool(config WebSearchConfig) *WebSearchTool {
 	client := &http.Client{Timeout: 15 * time.Second}
 	tool := &WebSearchTool{
-		fixed: []Provider{
+		random:   newLockedRandom(),
+		notifier: config.Notifier,
+	}
+	if key := strings.TrimSpace(config.DeepSeekAPIKey); key != "" {
+		baseURL := strings.TrimRight(strings.TrimSpace(config.DeepSeekBaseURL), "/")
+		tool.fixed = []Provider{deepseekSearch{client: client, apiKey: key, baseURL: baseURL}}
+	} else {
+		tool.fixed = []Provider{
 			duckDuckGoSearch{client: client},
 			sogouSearch{client: client, endpoint: "https://wap.sogou.com/web/searchList.jsp", pace: func(ctx context.Context) error {
 				return sharedWebProviderQueues.wait(ctx, "sogou")
 			}},
-		},
-		random:   newLockedRandom(),
-		notifier: config.Notifier,
+		}
 	}
 	if len(config.BraveAPIKeys) > 0 {
 		tool.primary = append(tool.primary, braveSearch{client: client, keys: NewAPIKeyPool(config.BraveAPIKeys)})

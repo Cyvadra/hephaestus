@@ -164,7 +164,7 @@ func main() {
 		log.Fatalf("web fetch: %v", err)
 	}
 	toolReg.Register(webFetch)
-	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars, Notifier: notifier})
+	webSearch := tools.NewWebSearchTool(tools.WebSearchConfig{DeepSeekAPIKey: cfg.DeepSeekAPIKey, BraveAPIKeys: cfg.WebSearchBraveAPIKeys, TavilyAPIKeys: cfg.WebSearchTavilyAPIKeys, SerpAPIKeys: cfg.WebSearchSerpAPIKeys, SerpAPIEngine: cfg.WebSearchSerpAPIEngine, SearXNGBaseURL: cfg.WebSearchSearXNGBaseURL, LLMClient: llmClient, SummaryMaxChars: cfg.WebSearchSummaryMaxChars, Notifier: notifier})
 	toolReg.Register(webSearch)
 	shellTool, err := tools.NewShellToolWithConfig(tools.ShellConfig{
 		Enabled:         cfg.ShellEnabled,

@@ -35,6 +35,9 @@ type WebFetchConfig struct {
 	ChromePath       string
 	MaxChars         int
 	FirecrawlBaseURL string
+	// DeepSeekAPIKey and DeepSeekBaseURL configure the "deepseek" provider.
+	DeepSeekAPIKey  string
+	DeepSeekBaseURL string
 	// LLMClient, when set, enables LLM summarization of large fetched pages:
 	// content over SummaryMaxChars is condensed before it is returned to the
 	// calling agent. When nil, large pages are returned truncated only.
@@ -79,6 +82,17 @@ func NewWebFetchTool(config WebFetchConfig) (*WebFetchTool, error) {
 			maxChars:        maxChars,
 			summaryMaxChars: summaryMaxChars,
 			primary:         newFirecrawlWebFetchProvider(config.FirecrawlAPIKey, config.FirecrawlBaseURL),
+			fallback:        local,
+			summarizer:      summarizer,
+		}, nil
+	case "deepseek":
+		if strings.TrimSpace(config.DeepSeekAPIKey) == "" {
+			return nil, fmt.Errorf("DeepSeek API key is required")
+		}
+		return &WebFetchTool{
+			maxChars:        maxChars,
+			summaryMaxChars: summaryMaxChars,
+			primary:         newDeepSeekWebFetchProvider(config.DeepSeekAPIKey, config.DeepSeekBaseURL),
 			fallback:        local,
 			summarizer:      summarizer,
 		}, nil
