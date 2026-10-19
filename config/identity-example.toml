@@ -2,7 +2,7 @@
 # but the default Concierge continues to use identity-default.toml.
 name = "example"
 description = "Field-complete Identity example with optional sampling and injected messages."
-preferred_model = "deepseek-v4-flash"
+preferred_model = "deepseek-flash"
 # Supported values: "none", "low", "high", and "max".
 reasoning_effort = "low"
 context_window_tokens = 128000

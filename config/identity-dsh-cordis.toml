@@ -1,6 +1,6 @@
 name = "dsh-cordis"
 description = "Hephaestus harness architecture and configuration advisor inspired by DSH Cordis."
-preferred_model = "deepseek-v4-flash"
+preferred_model = "deepseek-flash"
 reasoning_effort = "high"
 context_window_tokens = 768000
 max_tokens = 256000

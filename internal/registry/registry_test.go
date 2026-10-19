@@ -22,7 +22,7 @@ func TestLoad_ValidConfigs(t *testing.T) {
 	writeFile(t, dir, "identity-default.toml", `
 name = "default"
 description = "test identity"
-preferred_model = "deepseek-v4-flash"
+preferred_model = "deepseek-flash"
 reasoning_effort = "none"
 context_window_tokens = 128000
 max_tokens = 1024
