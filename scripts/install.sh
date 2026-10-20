@@ -112,6 +112,9 @@ fi
 need_sudo() {
 	((${#sudo[@]} == 0)) && return 0
 	command -v sudo >/dev/null 2>&1 || die "sudo is required to install dependencies; re-run as root or install them yourself"
+	# Check passwordless (NOPASSWD) sudo first: `sudo -v` may still prompt for
+	# a password there, notably with sudo-rs on recent Ubuntu.
+	sudo -n true 2>/dev/null && return 0
 	sudo -v || die "sudo authentication failed"
 }
 
@@ -214,7 +217,7 @@ install_go() {
 	add_to_path /usr/local/go/bin go
 	# Module downloads from proxy.golang.org are often unreachable from
 	# mainland China; fall back to goproxy.cn when it is.
-	if ! curl -fsS --connect-timeout 5 -o /dev/null https://proxy.golang.org/; then
+	if [[ -z "${GOPROXY:-}" ]] && ! curl -fsS --connect-timeout 5 -o /dev/null https://proxy.golang.org/ 2>/dev/null; then
 		go env -w GOPROXY=https://goproxy.cn,direct
 		ok "set GOPROXY=https://goproxy.cn,direct"
 	fi
@@ -351,6 +354,32 @@ detect_timezone() {
 	echo "${tz:-UTC}"
 }
 
+# zone_coordinates TZ — prints "latitude longitude" in decimal degrees for an
+# IANA timezone, from the tzdata zone table; "0 0" when it is not listed.
+zone_coordinates() {
+	local table
+	for table in /usr/share/zoneinfo/zone1970.tab /usr/share/zoneinfo/zone.tab /var/db/timezone/zoneinfo/zone.tab; do
+		[[ -r "$table" ]] || continue
+		awk -v tz="$1" '
+			function degrees(s,   sign, d, m, sec, n) {
+				sign = substr(s, 1, 1) == "-" ? -1 : 1
+				s = substr(s, 2); n = length(s)
+				# ISO 6709: DDMM or DDMMSS for latitude, DDDMM or DDDMMSS for longitude.
+				if (n == 4 || n == 6) { d = substr(s, 1, 2); m = substr(s, 3, 2); sec = substr(s, 5, 2) }
+				else { d = substr(s, 1, 3); m = substr(s, 4, 2); sec = substr(s, 6, 2) }
+				return sign * (d + m / 60 + sec / 3600)
+			}
+			!/^#/ && $3 == tz {
+				match($2, /^[+-][0-9]+/)
+				printf "%.4f %.4f\n", degrees(substr($2, 1, RLENGTH)), degrees(substr($2, RLENGTH + 1))
+				found = 1; exit
+			}
+			END { exit !found }
+		' "$table" && return 0
+	done
+	echo "0 0"
+}
+
 if [[ -f .env && $reconfigure -eq 0 ]]; then
 	ok "keeping existing .env (run with --reconfigure to regenerate it)"
 else
@@ -381,23 +410,24 @@ else
 	ok "generated a random JWT signing secret"
 
 	echo
-	echo "  ${bold}Model provider${reset} — a DeepSeek API key, an OpenAI-compatible endpoint, or both."
-	ask deepseek_key "DeepSeek API key (leave empty to skip)"
-	ask local_model_url "OpenAI-compatible endpoint URL (leave empty to skip)"
-	while [[ -z "$deepseek_key" && -z "$local_model_url" ]]; do
+	echo "  ${bold}Model provider${reset} — a DeepSeek API key, or an OpenAI-compatible endpoint."
+	echo "  Get a DeepSeek key at https://platform.deepseek.com/api_keys"
+	while :; do
+		ask deepseek_key "DeepSeek API key (leave empty to use another endpoint)"
+		[[ -n "$deepseek_key" ]] && break
+		ask local_model_url "OpenAI-compatible endpoint URL"
+		[[ -n "$local_model_url" ]] && break
 		warn "at least one model provider is required"
-		ask deepseek_key "DeepSeek API key"
-		[[ -n "$deepseek_key" ]] || ask local_model_url "OpenAI-compatible endpoint URL"
 	done
 	set_env HEPHAESTUS_DEEPSEEK_API_KEY "$deepseek_key"
-	if [[ -n "$local_model_url" ]]; then
+	if [[ -n "${local_model_url:-}" ]]; then
 		set_env HEPHAESTUS_LOCAL_MODEL_URL "$local_model_url"
 		ask local_model_key "API key for that endpoint (leave empty if none)"
 		set_env HEPHAESTUS_LOCAL_MODEL_API_KEY "$local_model_key"
 	fi
 
 	echo
-	echo "  ${bold}Web fetch${reset} — Firecrawl (needs an API key) or a local headless Chrome/Chromium."
+	echo "  ${bold}Web fetch${reset} — Firecrawl (https://www.firecrawl.dev/app/api-keys) or a local headless Chrome/Chromium."
 	ask firecrawl_key "Firecrawl API key (leave empty to use local Chrome)"
 	if [[ -n "$firecrawl_key" ]]; then
 		set_env HEPHAESTUS_WEB_FETCH_PROVIDER firecrawl
@@ -408,33 +438,55 @@ else
 	fi
 
 	echo
-	echo "  ${bold}Location${reset} — used for weather and local time context."
-	ask location "City or place name" ""
-	while [[ -z "$location" ]]; do ask location "City or place name (required)"; done
-	coordinate='^-?[0-9]+(\.[0-9]+)?$'
-	while :; do
-		ask latitude "Latitude (-90 to 90)"
-		[[ "$latitude" =~ $coordinate ]] && awk -v v="$latitude" 'BEGIN { exit !(v >= -90 && v <= 90) }' && break
-		warn "not a valid latitude"
-	done
-	while :; do
-		ask longitude "Longitude (-180 to 180)"
-		[[ "$longitude" =~ $coordinate ]] && awk -v v="$longitude" 'BEGIN { exit !(v >= -180 && v <= 180) }' && break
-		warn "not a valid longitude"
-	done
-	ask timezone "IANA timezone" "$(detect_timezone)"
+	echo "  ${bold}Web search${reset} — optional extra providers; leave any empty to skip it."
+	echo "  Several keys for one provider may be given comma-separated."
+	echo "    Brave:   https://api-dashboard.search.brave.com/app/keys"
+	echo "    Tavily:  https://app.tavily.com/home"
+	echo "    SerpAPI: https://serpapi.com/manage-api-key"
+	echo "    SearXNG: the base URL of a self-hosted instance, see https://docs.searxng.org/"
+	ask brave_keys "Brave Search API key(s)"
+	ask tavily_keys "Tavily API key(s)"
+	ask serpapi_keys "SerpAPI API key(s)"
+	ask searxng_url "SearXNG base URL"
+	set_env HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS "$brave_keys"
+	set_env HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS "$tavily_keys"
+	set_env HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS "$serpapi_keys"
+	set_env HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL "$searxng_url"
+
+	echo
+	echo "  ${bold}QQ bot${reset} — optional; chat with Hephaestus from QQ."
+	echo "  Create a bot at https://q.qq.com/qqbot/dashboard and copy its AppID and AppSecret."
+	ask qq_app_id "QQ bot AppID (leave empty to skip)"
+	if [[ -n "$qq_app_id" ]]; then
+		while [[ -z "${qq_app_secret:-}" ]]; do ask qq_app_secret "QQ bot AppSecret (required with an AppID)"; done
+		set_env HEPHAESTUS_QQ_APP_ID "$qq_app_id"
+		set_env HEPHAESTUS_QQ_APP_SECRET "$qq_app_secret"
+		echo "  Leave the OpenID empty if you don't know it: the bot then replies to any"
+		echo "  sender with their own OpenID, which you copy into HEPHAESTUS_QQ_USER_OPENID"
+		echo "  in .env before running 'make deploy' again."
+		ask qq_openid "Your QQ user OpenID"
+		set_env HEPHAESTUS_QQ_USER_OPENID "$qq_openid"
+	fi
+
+	# Location and timezone come from the system timezone; edit .env to refine them.
+	timezone=$(detect_timezone)
+	read -r latitude longitude < <(zone_coordinates "$timezone")
+	location=${timezone##*/}
+	location=${location//_/ }
 	set_env HEPHAESTUS_ENV_LOCATION "$location"
 	set_env HEPHAESTUS_ENV_LATITUDE "$latitude"
 	set_env HEPHAESTUS_ENV_LONGITUDE "$longitude"
 	set_env HEPHAESTUS_ENV_TIMEZONE "$timezone"
+	echo
+	ok "location: $location ($latitude, $longitude), timezone $timezone — from the system timezone"
 
 	echo
 	ask proxy_url "Outbound HTTP proxy URL (leave empty for none)"
 	set_env HEPHAESTUS_PROXY_URL "$proxy_url"
 
 	ok "wrote $root/.env (mode 600)"
-	echo "  Optional features (QQ bot, search API keys, PostgreSQL, shell tool, ...) are"
-	echo "  documented in .env — edit it and run 'make deploy' to apply changes."
+	echo "  Other options (PostgreSQL, shell tool, ...) are documented in .env —"
+	echo "  edit it and run 'make deploy' to apply changes."
 fi
 
 mkdir -p data
@@ -487,3 +539,19 @@ cat <<EOF
     pm2 logs hephaestus-api    follow API logs
     make deploy                rebuild and restart after pulling or editing .env
 EOF
+
+if [[ $os == linux ]]; then
+	# Prefer the public IP as seen from outside; fall back to the first local address.
+	public_ip=$(fetch https://api.ipify.org https://4.ipw.cn https://ifconfig.me 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)
+	[[ "$public_ip" =~ ^[0-9a-fA-F:.]+$ ]] || public_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+	# SSH_CONNECTION is "client_ip client_port server_ip server_port".
+	ssh_port=$(awk '{print $4}' <<<"${SSH_CONNECTION:-}")
+	ssh_port_flag=''
+	[[ -n "$ssh_port" && "$ssh_port" != 22 ]] && ssh_port_flag="-p $ssh_port "
+	cat <<EOF
+
+  To open the Web UI from your own computer, forward the port over SSH there:
+    ssh -N ${ssh_port_flag}-L 8082:127.0.0.1:5173 $(id -un)@${public_ip:-<server-ip>}
+  then browse to http://127.0.0.1:8082
+EOF
+fi

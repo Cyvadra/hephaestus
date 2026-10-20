@@ -111,7 +111,7 @@ cd hephaestus
 ./scripts/install.sh
 ```
 
-The installer installs anything missing — git, make, curl and nc through your package manager (Homebrew on macOS, which must already be installed), Go and Node.js from their official tarballs on Linux, and PM2 through npm, with mainland China mirrors as a fallback. It then asks for the required settings (login, model provider, web fetch, location, optional proxy), generates `.env` with a random JWT secret and `600` permissions, then builds and starts both services under PM2 and optionally registers them to start at boot.
+The installer installs anything missing — git, make, curl and nc through your package manager (Homebrew on macOS, which must already be installed), Go and Node.js from their official tarballs on Linux, and PM2 through npm, with mainland China mirrors as a fallback. It then asks for your settings (login, model provider, web fetch, optional search providers and QQ bot, optional proxy), infers location and timezone from the system timezone, generates `.env` with a random JWT secret and `600` permissions, then builds and starts both services under PM2 and optionally registers them to start at boot.
 
 | Option | Effect |
 | --- | --- |
