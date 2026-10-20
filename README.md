@@ -1,116 +1,139 @@
 # Hephaestus
 
-> 为长期使用而生的个人 LLM Harness：让模型拥有身份、上下文、工具、记忆与可追溯的行动。
+English | [简体中文](./README_zh-cn.md)
 
-Hephaestus 是一个单用户 AI Agent 平台。它不把大语言模型当作一次性问答接口，而是提供一套可长期运行的 Agent 宿主环境：持久会话、分支历史、可组合的人格与上下文、受控工具调用、Project 工作区、自然语言工作流，以及后台子 Agent。
+> A personal LLM harness built for long-term use: give the model an identity, context, tools, memory, and traceable actions.
 
-你可以把它当作自己的 AI 操作台：聊天只是入口；真正的核心是一个能够持续积累上下文、在明确边界内采取行动、并留下完整工作痕迹的 Agent runtime。
+Hephaestus is a single-user AI agent platform. Instead of treating a large language model as a one-shot Q&A endpoint, it provides a long-running host environment for agents: persistent sessions, branching history, composable personas and context, controlled tool calls, Project workspaces, natural-language workflows, and background subagents.
 
-![会话侧栏](./docs/screenshots/session.jpg)
+Think of it as your own AI console. Chat is only the entry point; the core is an agent runtime that keeps accumulating context, acts within explicit boundaries, and leaves a complete record of its work.
 
-## 为什么是 Hephaestus
+![Session sidebar](./docs/screenshots/session.jpg)
 
-大模型本身只完成推理；实际可用的 Agent 还需要回答一组更难的问题：
+## Why Hephaestus
 
-- 这一轮模型是谁，它应遵循哪些长期原则？
-- 它看见的是哪条对话分支，旧历史如何在窗口有限时继续可用？
-- 它可以使用哪些工具，敏感操作谁来确认？
-- 工具、工作流和并发委派的结果如何回到对话，而不丢失上下文？
-- 当配置被修改、服务重启或回复中断时，运行痕迹如何保留？
+A model only does the reasoning. A usable agent also has to answer harder questions:
 
-Hephaestus 将这些问题收敛为一套清晰的运行模型：
+- Who is the model in this turn, and which long-term principles should it follow?
+- Which conversation branch does it see, and how does older history stay usable within a limited context window?
+- Which tools may it use, and who approves sensitive operations?
+- How do results from tools, workflows, and parallel delegation flow back into the conversation without losing context?
+- How is the trail of a run preserved when configuration changes, the service restarts, or a reply is interrupted?
+
+Hephaestus folds these questions into one clear runtime model:
 
 ```mermaid
 flowchart LR
-    U[用户 / Job / Workflow] --> S[Session 或执行上下文]
-    S --> C[上下文组装]
+    U[User / Job / Workflow] --> S[Session or execution context]
+    S --> C[Context assembly]
     C --> A[Agent Loop]
     A --> L[LLM]
-    L -->|最终回复| P[持久化与流式输出]
-    L -->|Tool Calls| T[受控工具执行]
+    L -->|Final reply| P[Persistence & streaming]
+    L -->|Tool Calls| T[Controlled tool execution]
     T --> A
-    T -->|委派| SA[Subagent]
-    SA -->|完成事件| A
+    T -->|Delegate| SA[Subagent]
+    SA -->|Completion event| A
 
     R[Identity / Impression / Tool Group / Plugin] --> C
-    H[分支历史 / Compression / Project] --> C
+    H[Branch history / Compression / Project] --> C
 ```
 
-## 关键能力
+## Key features
 
-### 可组合的 Agent 配方
+### Composable agent recipes
 
-每个 **Concierge** 是一个可复用的 Agent 配方，由以下部分按顺序组合：
+Each **Concierge** is a reusable agent recipe, composed in order from:
 
-- **Identity**：系统提示、注入消息、模型偏好与生成参数。
-- **Impression**：长期背景、行为原则、角色设定或 few-shot 消息序列。
-- **Tool Group**：以能力组形式向模型开放内置工具。
-- **Plugin**：在模型调用和工具循环的生命周期中运行的平台扩展。
+- **Identity**: system prompt, injected messages, model preference, and generation parameters.
+- **Impression**: long-term background, behavioral principles, character settings, or few-shot message sequences.
+- **Tool Group**: built-in tools exposed to the model as capability groups.
+- **Plugin**: platform extensions that run during the lifecycle of model calls and the tool loop.
 
-Session 从 Concierge 创建后拥有独立设置。你可以在不中断历史的前提下切换身份、启停 Impression、工具组或 Plugin。
+A Session created from a Concierge owns its settings from then on. You can switch identities and toggle Impressions, Tool Groups, or Plugins without breaking history.
 
-### 真正的 Agent Tool Loop
+### A real agent tool loop
 
-每轮执行都由统一的 Agent Runner 驱动：调用模型、解析工具调用、执行工具、将结果写回模型上下文，再持续循环直至生成最终回答。工具调用具备作用域过滤、输出限额、审计记录与敏感操作确认，不是简单的 Function Calling 透传。
+Every turn is driven by one Agent Runner: call the model, parse tool calls, execute tools, write results back into the model context, and loop until a final answer is produced. Tool calls get scope filtering, output limits, audit records, and confirmation for sensitive operations. This is not a thin function-calling passthrough.
 
-### 长期记忆，而非单线聊天记录
+### Long-term memory, not a single chat log
 
-会话保存完整消息树，当前活跃分支由 `active_leaf_message_id` 决定。编辑、重新生成和从旧消息继续对话都会形成可回看的分支，而非覆盖原记录。上下文接近模型窗口时，平台压缩较早历史，同时保留近期原始消息和可继续对话的关键信息。
+Each session stores the full message tree; the active branch is determined by `active_leaf_message_id`. Editing, regenerating, and continuing from an older message all create branches you can revisit instead of overwriting records. When context nears the model window, the platform compresses older history while keeping recent raw messages and the key information needed to continue.
 
-所有会话与消息都可全文检索：网页界面提供跨会话搜索，模型也可通过 `chat_history` 工具组自行查找和读取旧对话。检索不依赖向量数据库，PostgreSQL 下由 `pg_trgm` 索引加速，SQLite 同样可用。
+All sessions and messages are full-text searchable: the web UI offers cross-session search, and the model can find and read old conversations itself through the `chat_history` tool group. Search needs no vector database; on PostgreSQL it is accelerated by a `pg_trgm` index, and SQLite works too.
 
-### 运行中可转向，中断不丢失
+### Steer while running; interruptions lose nothing
 
-Agent 正在执行多步工具调用时，你不必等它跑完或整轮停止：
+While the agent is running a multi-step tool sequence, you don't have to wait or stop the whole turn:
 
-- **Steering**：用 `/steer <text>` 或界面中的转向控件追加指令，指令会在下一个工具调用边界注入。`normal` 模式让当前工具照常完成；`aggressive` 模式跳过即将执行的工具调用，让模型先读到你的新指令。
-- **中断保留**：`/stop` 或连接中断时，已生成的可见内容和已完成的工具交换都会保存，回复标记为未完成，之后可从该位置继续。若期间活跃分支已变化，结果会保留为可访问的非活跃分支。
-- **可靠收尾**：取消会沿子 Agent 链路级联；若某次运行在宽限期后仍未响应取消，平台会强制结束该运行，避免会话一直卡在 `running`。
+- **Steering**: use `/steer <text>` or the steering control in the UI to add an instruction, injected at the next tool-call boundary. `normal` mode lets the current tool finish; `aggressive` mode skips the pending tool calls so the model reads your new instruction first.
+- **Interruption preservation**: on `/stop` or a dropped connection, visible content already generated and completed tool exchanges are saved; the reply is marked incomplete and can be continued later. If the active branch changed meanwhile, the result is kept as an accessible inactive branch.
+- **Reliable shutdown**: cancellation cascades down subagent chains; if a run still ignores cancellation after a grace period, the platform force-terminates it so the session never stays stuck in `running`.
 
-### 需要时主动提问
+### Asks when it needs to
 
-启用 `ask_questions` 工具组后，模型在缺少关键信息时可以一次提出一至五个问题，每个问题提供二至五个选项并始终允许自由输入，而不是自行猜测。敏感工具调用则走独立的授权确认流程，网页界面与 QQ Channel 中都可答复。
+With the `ask_questions` tool group enabled, the model can ask one to five questions at once when key information is missing, each with two to five options and always allowing free-form input, instead of guessing. Sensitive tool calls go through a separate authorization flow, answerable from both the web UI and the QQ Channel.
 
-### 在界面中维护配置
+### Configuration in the UI
 
-网页端内置配置工作台，可直接新建、复制、编辑和删除 Identity、Impression、Tool Group、Concierge、Workflow 与 Job，保存前经过与启动时相同的完整校验。编辑 Identity 或 Impression 时，可以即时生成一条 AI 回复作为参考，确认效果后再保存。界面支持简体中文与英文，以及日间、夜间和跟随系统主题。
+The web app includes a configuration workbench for creating, duplicating, editing, and deleting Identities, Impressions, Tool Groups, Concierges, Workflows, and Jobs, with the same full validation used at startup applied before saving. While editing an Identity or Impression you can generate a sample AI reply on the spot to check the effect before saving. The UI supports Simplified Chinese and English, plus light, dark, and system themes.
 
-### Project 是 Agent 的工作现场
+### Projects are the agent's workspace
 
-Project 将会话、上传文件和工作目录组织在一起。模型可以在受控范围内检索历史、处理附件、访问 Project 文件、搜索网页，或在显式启用后执行本地或远程 Shell 命令。
+A Project groups sessions, uploaded files, and a working directory. Within controlled boundaries, the model can search history, process attachments, access Project files, search the web, or — once explicitly enabled — run local or remote shell commands.
 
-### Workflow、Job 与 Subagent
+### Workflows, Jobs, and Subagents
 
-- **Workflow**：将一项可重复工作拆成顺序执行的自然语言步骤；每一步都是独立、可持久化的 Agent Tool Loop。
-- **Job**：根据时间、会话活跃度和历史运行状态触发 Workflow。
-- **Subagent**：支持前台 `fork` 或后台 `spawn` 委派；后台任务完成后以持久事件回流父会话，空闲会话也能自动恢复一轮处理结果。
+- **Workflow**: breaks repeatable work into sequential natural-language steps; each step is an independent, persisted agent tool loop.
+- **Job**: triggers Workflows based on time, session activity, and past run state.
+- **Subagent**: supports foreground `fork` or background `spawn` delegation; background results flow back to the parent session as durable events, and idle sessions automatically resume a turn to process them.
 
-![带工具调用的对话](./docs/screenshots/chat.jpg)
+![Conversation with tool calls](./docs/screenshots/chat.jpg)
 
-## 快速开始
+## Quick start
 
-### 前置条件
+### Prerequisites
 
-- Go 1.26 或更高
-- Node.js 22 或更高，以及 npm
-- SQLite 或 PostgreSQL
-- 至少一个可用模型提供方：DeepSeek API，或 OpenAI 兼容的本地模型服务
+- macOS or Linux
+- Go 1.26.9 or newer
+- Node.js 22 or newer, with npm
+- At least one model provider: the DeepSeek API, or an OpenAI-compatible local model server
+- For the managed install: [PM2](https://pm2.keymetrics.io/) (the installer can install it) and `nc`
 
-Hephaestus 依赖一个带 `replace` 指令的 GoQQBot 分支，因此不支持 `go install`。请克隆仓库后构建：
+Hephaestus depends on a fork of GoQQBot through a `replace` directive, so `go install` is not supported. Clone the repository and build from source.
+
+### Guided install (recommended)
 
 ```sh
 git clone https://github.com/Cyvadra/hephaestus.git
 cd hephaestus
+./scripts/install.sh
+```
+
+The installer checks your toolchain, offers to install PM2, asks for the required settings (login, model provider, web fetch, location, optional proxy), generates `.env` with a random JWT secret and `600` permissions, then builds and starts both services under PM2 and optionally registers them to start at boot.
+
+| Option | Effect |
+| --- | --- |
+| `--no-start` | Stop after writing `.env`. |
+| `--reconfigure` | Regenerate `.env` even if one exists; the old file is backed up. |
+
+When it finishes, open `http://127.0.0.1:5173`.
+
+### Manual setup
+
+Build the server:
+
+```sh
 make build-server
 ```
 
-从仓库根目录配置环境变量。可以从 `.env.example` 开始：
+Create `.env` in the repository root from the template:
 
 ```sh
 cp .env.example .env
+chmod 600 .env
 ```
 
-至少设置认证、数据库、环境位置，以及一个模型来源：
+At minimum, set authentication, the database, the environment location, and one model source:
 
 ```dotenv
 HEPHAESTUS_AUTH_USERNAME=your-name
@@ -118,9 +141,13 @@ HEPHAESTUS_AUTH_PASSWORD=choose-a-strong-password
 HEPHAESTUS_JWT_SECRET=at-least-32-random-bytes
 HEPHAESTUS_DATABASE_URL=sqlite://./data/hephaestus.db
 
-# 二选一：DeepSeek 或本地 OpenAI-compatible 服务
+# Either DeepSeek or a local OpenAI-compatible server
 HEPHAESTUS_DEEPSEEK_API_KEY=your-api-key
 # HEPHAESTUS_LOCAL_MODEL_URL=http://127.0.0.1:11434/v1
+
+# Firecrawl is the default web fetch provider; set to local to use headless Chrome instead
+HEPHAESTUS_FIRECRAWL_API_KEY=your-firecrawl-key
+# HEPHAESTUS_WEB_FETCH_PROVIDER=local
 
 HEPHAESTUS_ENV_LOCATION=My Workspace
 HEPHAESTUS_ENV_LATITUDE=39.9042
@@ -128,19 +155,21 @@ HEPHAESTUS_ENV_LONGITUDE=116.4074
 HEPHAESTUS_ENV_TIMEZONE=Asia/Shanghai
 ```
 
-启动 API：
+A JWT secret can be generated with `openssl rand -hex 32`.
+
+Start the API:
 
 ```sh
 go run ./cmd/hephaestus
 ```
 
-默认监听 `http://127.0.0.1:9016`，Swagger API 文档位于：
+It listens on `http://127.0.0.1:9016` by default; Swagger API docs are at:
 
 ```text
 http://127.0.0.1:9016/swagger/index.html
 ```
 
-在另一个终端启动网页界面：
+In another terminal, start the web UI:
 
 ```sh
 cd frontend
@@ -148,269 +177,261 @@ npm install
 npm run dev
 ```
 
-默认访问地址：
+Then open:
 
 ```text
 http://127.0.0.1:5173
 ```
 
-## 首次使用
+## First use
 
-1. 创建一个 Project 和 Session。
-2. 选择 Concierge，或直接使用默认通用助理。
-3. 开始对话；模型会在当前 Session 的身份、上下文、Project 和工具边界内执行。
-4. 用斜杠命令查看或调整当前运行环境。
+1. Create a Project and a Session.
+2. Choose a Concierge, or use the default general assistant.
+3. Start chatting; the model acts within the current Session's identity, context, Project, and tool boundaries.
+4. Use slash commands to inspect or adjust the current runtime environment.
 
-常用本地命令不会写入聊天记录，也不会发送给模型：
+These local commands are not written to the chat history and are never sent to the model:
 
-| 命令 | 作用 |
+| Command | Purpose |
 | --- | --- |
-| `/help`、`/ping` | 查看命令帮助或服务连通性。 |
-| `/status` | 查看当前身份、Project、上下文估算和近期告警。 |
-| `/list <kind>`、`/detail <kind> <id>` | 浏览配置、会话、Project、Workflow 与 Job。 |
-| `/switch` | 切换 Identity、Concierge、Project 或其他 Session。 |
-| `/activate`、`/deactivate` | 调整当前 Session 的 Impression、Tool Group 或非固定 Plugin。 |
-| `/clear [true|false]` | 基于当前 Session 设置新建会话。 |
-| `/new [true|false]` | 从源 Concierge 当前设置新建会话。 |
-| `/stop` | 请求停止当前运行。 |
-| `/steer [normal\|aggressive] <text>` | 向运行中的任务追加指令；`/steer cancel` 撤回尚未送达的指令。 |
-| `/edit [n] <text>` | 编辑倒数第 `n` 条用户消息并重新发送，原记录保留为分支；`n` 默认为 1。 |
-| `/last [count]`、`/replay [count]` | 重新发送最近的助手回复或最近几轮对话，便于在外部 Channel 中回看。 |
-| `/interact approve\|deny` | 对敏感操作给出明确授权或拒绝。 |
-| `/interact auto-approve` | 为本进程内当前 Session 临时开启自动授权；`cancel-auto-approve` 关闭。 |
+| `/help`, `/ping` | Show command help or check service connectivity. |
+| `/status` | Show the current identity, Project, context estimate, and recent warnings. |
+| `/list <kind>`, `/detail <kind> <id>` | Browse configuration, sessions, Projects, Workflows, and Jobs. |
+| `/switch` | Switch Identity, Concierge, Project, or to another Session. |
+| `/activate`, `/deactivate` | Toggle the current Session's Impressions, Tool Groups, or non-fixed Plugins. |
+| `/clear [true\|false]` | Start a new session from the current Session's settings. |
+| `/new [true\|false]` | Start a new session from the source Concierge's current settings. |
+| `/stop` | Request that the current run stop. |
+| `/steer [normal\|aggressive] <text>` | Add an instruction to a running task; `/steer cancel` withdraws one not yet delivered. |
+| `/edit [n] <text>` | Edit the `n`-th most recent user message and resend it, keeping the original as a branch; `n` defaults to 1. |
+| `/last [count]`, `/replay [count]` | Resend the latest assistant reply or the last few turns, handy for reviewing in external Channels. |
+| `/interact approve\|deny` | Explicitly approve or deny a sensitive operation. |
+| `/interact auto-approve` | Temporarily enable auto-approval for the current Session in this process; `cancel-auto-approve` turns it off. |
 
-`/list <kind>` 显示的条目可以使用序号（如 `1` 或 `#1`）引用；`/switch session <ordinal|#session-id>` 可切换到另一条持久 Session。
+Items shown by `/list <kind>` can be referenced by ordinal (e.g. `1` or `#1`); `/switch session <ordinal|#session-id>` switches to another persistent Session.
 
-## 运行模型
+## Runtime model
 
-### 配置层与运行层
+### Configuration layer and runtime layer
 
-`config/` 中的 Identity、Impression、Tool Group、Concierge、Workflow 和 Job 是可读、可版本管理的基线配置。启动时，这些模板会同步至数据库；之后的运行时修改会被完整校验，并原子地用于新一轮执行。
+Identities, Impressions, Tool Groups, Concierges, Workflows, and Jobs in `config/` are readable, version-controllable baseline configuration. At startup these templates are synced to the database; later runtime edits are fully validated and applied atomically to new runs.
 
-配置变更不会悄悄改变已经开始的 Workflow 或 Job。运行会捕获自己的定义，保证执行记录可以解释和回看。
+Configuration changes never silently alter a Workflow or Job that has already started. Each run captures its own definition, so execution records stay explainable and reviewable.
 
-### Session 上下文
+### Session context
 
-每次模型调用前，系统会构建当前有效上下文：
+Before every model call, the system assembles the effective context:
 
 ```text
-渲染后的 Identity
-+ Identity 注入消息
-+ 有序 Impression
-+ Plugin 注入内容
-+ 当前分支可用的 Compression
-+ 当前分支近期历史
-+ Project 与附件上下文
-+ 本轮用户输入
-+ 当前允许的工具定义
+Rendered Identity
++ Identity injected messages
++ Ordered Impressions
++ Plugin injections
++ Compression available on the current branch
++ Recent history on the current branch
++ Project and attachment context
++ This turn's user input
++ Currently allowed tool definitions
 ```
 
-这也是 Hephaestus 与“把聊天记录原样塞回模型”的区别：模型看见的身份、记忆与能力始终来自明确的配置与运行状态。
+This is what separates Hephaestus from "stuffing the chat log back into the model": the identity, memory, and capabilities the model sees always come from explicit configuration and runtime state.
 
-### 工具、网页与附件
+### Tools, web, and attachments
 
-内置工具组覆盖聊天历史检索（`chat_history`）、Project 管理（`project`）、文件交付（`basic` 中的 `send_file`）、向用户提问（`ask_questions`）、网页搜索与获取（`web`）、Shell（`shell`）和子 Agent 委派（`subagent`）。新建的 Project 目录会附带一份 `AGENTS.md` 骨架，用于记录该工作区的约定。`web_search` 聚合 DuckDuckGo、Sogou 以及可选的 Brave、Tavily、SerpAPI、SearXNG；`web_fetch` 默认经由 Firecrawl，并可回退到本地无头浏览器。
+Built-in tool groups cover chat history search (`chat_history`), Project management (`project`), file delivery (`send_file` in `basic`), asking the user questions (`ask_questions`), web search and fetch (`web`), shell (`shell`), and subagent delegation (`subagent`). New Project directories come with an `AGENTS.md` skeleton for recording that workspace's conventions. `web_search` aggregates several search providers, with optional Brave, Tavily, SerpAPI, and SearXNG; `web_fetch` goes through Firecrawl by default and can fall back to a local headless browser.
 
-一条用户消息最多可附带五个附件。允许的小文本文件会直接进入本轮提示词；JPEG、PNG、GIF、WebP 可作为视觉输入发送给当前模型；其他文件仍会保存在 Project 中并保留受控引用。
+A user message can carry up to five attachments. Allowed small text files go straight into the prompt; JPEG, PNG, GIF, and WebP can be sent to the current model as vision input; other files are still saved to the Project with a controlled reference.
 
-Shell 默认关闭。启用后，高风险操作会要求确认；`/interact auto-approve` 的授权只存在于当前服务进程，重启后自动失效。
+Shell is off by default. When enabled, high-risk operations require confirmation; `/interact auto-approve` lasts only for the current server process and is cleared on restart.
 
-## 内置 Plugin
+## Built-in plugins
 
-Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXED_PLUGINS` 列出的 Plugin 对每个 Session 固定启用且不可停用，其余可在 Concierge 或 Session 中按需开关。
+Plugins run during the lifecycle of model calls and the tool loop. Plugins listed in `HEPHAESTUS_FIXED_PLUGINS` are always on for every Session and cannot be disabled; the rest can be toggled per Concierge or Session.
 
-| 名称 | 作用 |
+| Name | Purpose |
 | --- | --- |
-| `environment` | 在首条消息中注入时间、地点和天气等基础环境信息。 |
-| `metaphysics` | 在首条消息中注入黄历、四柱和奇门遁甲等玄学信息。 |
-| `session_summary` | 自动生成并定期更新会话标题和摘要。 |
-| `storyline_status` | 在每条助手回复后追加当前剧情状态。 |
-| `traditional-cc` | 将首条用户消息的简体中文转换为繁体中文。 |
-| `options` | 在回复后生成可选的下一条用户消息建议。 |
+| `environment` | Injects basic environment info such as time, location, and weather into the first message. |
+| `metaphysics` | Injects Chinese almanac, Four Pillars, and Qimen Dunjia information into the first message. |
+| `session_summary` | Automatically generates and periodically updates the session title and summary. |
+| `storyline_status` | Appends the current storyline state after each assistant reply. |
+| `traditional-cc` | Converts the first user message from Simplified to Traditional Chinese. |
+| `options` | Suggests possible next user messages after a reply. |
 
-## 配置参考
+## Configuration reference
 
-后端会读取进程环境变量以及工作目录中的可选 `.env` 文件。下表中“必需”代表对应功能启用时必须提供。
+The backend reads process environment variables plus an optional `.env` file in the working directory. "Required" below means required when the corresponding feature is enabled.
 
-| 环境变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `HEPHAESTUS_AUTH_USERNAME` | 必需 | 单用户登录名。 |
-| `HEPHAESTUS_AUTH_PASSWORD` | 必需 | 单用户登录密码；按设计以明文保存在 `.env`，请限制文件权限。 |
-| `HEPHAESTUS_JWT_SECRET` | 必需 | 至少 32 字节的 JWT 签名密钥；不要复用登录密码。 |
-| `HEPHAESTUS_DATABASE_URL` | 必需 | 会话、历史、配置和运行数据；本地可用 `sqlite://./data/hephaestus.db`。 |
-| `HEPHAESTUS_DEEPSEEK_API_KEY` | 本地模型未配置时必需 | 启用 DeepSeek 与基于 LLM 的网页内容压缩。 |
-| `HEPHAESTUS_LOCAL_MODEL_URL` | 无 | OpenAI-compatible 本地模型服务地址。 |
-| `HEPHAESTUS_LOCAL_MODEL_API_KEY` | 无 | 本地模型服务的可选 API Key。 |
-| `HEPHAESTUS_CONFIG_DIR` | `./config` | 默认 Registry 模板目录。 |
-| `HEPHAESTUS_LISTEN_ADDR` | `127.0.0.1:9016` | API 监听地址。 |
-| `HEPHAESTUS_COOKIE_SECURE` | `false` | 由反向代理终止 HTTPS 时设为 `true`，会话 Cookie 才会带上 `Secure`。 |
-| `HEPHAESTUS_PROJECTS_ROOT` | `./data/projects` | Project 目录根路径，支持 `~`。 |
-| `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE` | `false` | 允许文件工具访问 Project 与系统临时目录外的路径。 |
-| `HEPHAESTUS_SHELL_ENABLED` | `false` | 是否启用 Shell 工具。 |
-| `HEPHAESTUS_SHELL_BACKEND` | `local` | Shell 目标：`local` 或 `ssh`。 |
-| `HEPHAESTUS_SHELL_SSH_DESTINATION` | 无 | SSH Shell 启用时必需；可为 SSH config 别名或 `user@host`。 |
-| `HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT` | 无 | SSH Shell 启用时必需；远端 Project 根目录的绝对 POSIX 路径。 |
-| `HEPHAESTUS_ENV_LOCATION` | 必需 | 新 Session 首轮上下文中的位置名称。 |
-| `HEPHAESTUS_ENV_LATITUDE` | 必需 | 环境纬度，范围 `-90` 至 `90`。 |
-| `HEPHAESTUS_ENV_LONGITUDE` | 必需 | 环境经度，范围 `-180` 至 `180`。 |
-| `HEPHAESTUS_ENV_TIMEZONE` | 必需 | IANA 时区，用于时间、农历与四柱计算。 |
-| `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | 首轮环境上下文使用的天气服务回退顺序。 |
-| `HEPHAESTUS_FIXED_PLUGINS` | `environment,metaphysics,session_summary` | 每个 Session 固定启用、不可停用的 Plugin。 |
-| `HEPHAESTUS_PROXY_URL` | 无 | 仅供 `make deploy`：为 PM2 进程注入出站代理；留空则不注入。 |
-| `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | 仅供 `make deploy`：代理排除列表。 |
-| `HEPHAESTUS_WECOM_WEBHOOK_URL` | 无 | 接收警告和错误通知的企业微信 Webhook。 |
-| `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | 网页抓取实现：`firecrawl` 或 `local`。 |
-| `HEPHAESTUS_FIRECRAWL_API_KEY` | 使用 Firecrawl 时必需 | Firecrawl API Key。 |
-| `HEPHAESTUS_WEB_FETCH_CHROME_PATH` | 自动检测 | 本地抓取使用的 Chrome 或 Chromium 路径。 |
-| `HEPHAESTUS_WEB_FETCH_MAX_CHARS` | `16000` | 页面捕获文本上限，之后会摘要或截断。 |
-| `HEPHAESTUS_WEB_FETCH_SUMMARY_MAX_CHARS` | `4000` | LLM 生成页面摘要的最大长度。 |
-| `HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS` | 无 | 逗号分隔的 Brave Search API Key。 |
-| `HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS` | 无 | 逗号分隔的 Tavily API Key。 |
-| `HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS` | 无 | 逗号分隔的 SerpAPI API Key。 |
-| `HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE` | `google_light` | SerpAPI 搜索引擎标识。 |
-| `HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL` | 无 | 可选 SearXNG 服务地址。 |
-| `HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS` | `4000` | LLM 生成搜索摘要的最大长度。 |
-| `HEPHAESTUS_QQ_APP_ID` | 无 | 可选 QQ 频道 Bot AppID；三项 QQ 配置需要同时设置。 |
-| `HEPHAESTUS_QQ_APP_SECRET` | 无 | QQ Bot AppSecret。 |
-| `HEPHAESTUS_QQ_USER_OPENID` | 无 | 被允许接入此单用户部署的 QQ 用户 OpenID；留空时见下方 QQ Channel 一节。 |
-| `HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS` | `30` | 纯图片消息等待随后文字消息的时长。 |
-| `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | 可直接纳入提示词的文本扩展名。 |
-| `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,gif,webp` | 经 MIME 校验后可直接作为视觉输入的扩展名。 |
-| `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | 可直接注入提示词的单个文本文件大小上限。 |
-| `HEPHAESTUS_UPLOAD_EXCERPT_HEAD_BYTES` | `4096` | 超过上限的文本文件注入的开头摘录字节数；非文本文件只注入路径与元数据。 |
-| `HEPHAESTUS_UPLOAD_EXCERPT_TAIL_BYTES` | `2048` | 超过上限的文本文件注入的结尾摘录字节数。 |
-| `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | 单个附件最大大小。 |
-| `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | 单条消息全部附件最大大小。 |
-| `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | 单条消息最多附件数。 |
+| `HEPHAESTUS_AUTH_USERNAME` | required | Single-user login name. |
+| `HEPHAESTUS_AUTH_PASSWORD` | required | Single-user login password; stored in plaintext in `.env` by design, so restrict file permissions. |
+| `HEPHAESTUS_JWT_SECRET` | required | JWT signing secret of at least 32 bytes; do not reuse the login password. |
+| `HEPHAESTUS_DATABASE_URL` | required | Sessions, history, configuration, and run data; `sqlite://./data/hephaestus.db` works locally. |
+| `HEPHAESTUS_DEEPSEEK_API_KEY` | required without a local model | Enables DeepSeek and LLM-based web content condensing. |
+| `HEPHAESTUS_LOCAL_MODEL_URL` | none | OpenAI-compatible local model server URL. |
+| `HEPHAESTUS_LOCAL_MODEL_API_KEY` | none | Optional API key for the local model server. |
+| `HEPHAESTUS_CONFIG_DIR` | `./config` | Default registry template directory. |
+| `HEPHAESTUS_LISTEN_ADDR` | `127.0.0.1:9016` | API listen address. |
+| `HEPHAESTUS_COOKIE_SECURE` | `false` | Set to `true` when a reverse proxy terminates HTTPS so the session cookie gets `Secure`. |
+| `HEPHAESTUS_PROJECTS_ROOT` | `./data/projects` | Root path for Project directories; supports `~`. |
+| `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE` | `false` | Allow file tools to access paths outside the Project and system temp directories. |
+| `HEPHAESTUS_SHELL_ENABLED` | `false` | Enable the shell tool. |
+| `HEPHAESTUS_SHELL_BACKEND` | `local` | Shell target: `local` or `ssh`. |
+| `HEPHAESTUS_SHELL_SSH_DESTINATION` | none | Required for SSH shell; an SSH config alias or `user@host`. |
+| `HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT` | none | Required for SSH shell; absolute POSIX path of the remote Project root. |
+| `HEPHAESTUS_ENV_LOCATION` | required | Location name used in a new Session's first-turn context. |
+| `HEPHAESTUS_ENV_LATITUDE` | required | Latitude, `-90` to `90`. |
+| `HEPHAESTUS_ENV_LONGITUDE` | required | Longitude, `-180` to `180`. |
+| `HEPHAESTUS_ENV_TIMEZONE` | required | IANA timezone, used for time, lunar calendar, and Four Pillars calculations. |
+| `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | Fallback order of weather services for first-turn environment context. |
+| `HEPHAESTUS_FIXED_PLUGINS` | `environment,metaphysics,session_summary` | Plugins always enabled on every Session. |
+| `HEPHAESTUS_PROXY_URL` | none | Used only by `make deploy`: outbound proxy injected into the PM2 processes; nothing is injected when empty. |
+| `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | Used only by `make deploy`: proxy exclusion list. |
+| `HEPHAESTUS_WECOM_WEBHOOK_URL` | none | WeCom webhook that receives warning and error notifications. |
+| `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | Web fetch implementation: `firecrawl` or `local`. |
+| `HEPHAESTUS_FIRECRAWL_API_KEY` | required with Firecrawl | Firecrawl API key. |
+| `HEPHAESTUS_WEB_FETCH_CHROME_PATH` | auto-detected | Chrome or Chromium path for local fetching. |
+| `HEPHAESTUS_WEB_FETCH_MAX_CHARS` | `16000` | Cap on captured page text before it is summarized or truncated. |
+| `HEPHAESTUS_WEB_FETCH_SUMMARY_MAX_CHARS` | `4000` | Maximum length of LLM-generated page digests. |
+| `HEPHAESTUS_WEB_SEARCH_BRAVE_API_KEYS` | none | Comma-separated Brave Search API keys. |
+| `HEPHAESTUS_WEB_SEARCH_TAVILY_API_KEYS` | none | Comma-separated Tavily API keys. |
+| `HEPHAESTUS_WEB_SEARCH_SERPAPI_API_KEYS` | none | Comma-separated SerpAPI API keys. |
+| `HEPHAESTUS_WEB_SEARCH_SERPAPI_ENGINE` | `google_light` | SerpAPI engine identifier. |
+| `HEPHAESTUS_WEB_SEARCH_SEARXNG_BASE_URL` | none | Optional SearXNG instance URL. |
+| `HEPHAESTUS_WEB_SEARCH_SUMMARY_MAX_CHARS` | `4000` | Maximum length of LLM-generated search digests. |
+| `HEPHAESTUS_QQ_APP_ID` | none | Optional QQ Bot AppID; must be set together with the AppSecret. |
+| `HEPHAESTUS_QQ_APP_SECRET` | none | QQ Bot AppSecret. |
+| `HEPHAESTUS_QQ_USER_OPENID` | none | OpenID of the one QQ user allowed into this deployment; see [QQ Channel](#qq-channel) if left empty. |
+| `HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS` | `30` | How long an image-only message waits for a following text message. |
+| `HEPHAESTUS_UPLOAD_TEXT_EXTENSIONS` | `md,markdown,txt,csv,json,yaml,yml,toml,xml` | Text extensions that may be included directly in the prompt. |
+| `HEPHAESTUS_UPLOAD_IMAGE_EXTENSIONS` | `jpg,jpeg,png,gif,webp` | Extensions sent directly as vision input after MIME validation. |
+| `HEPHAESTUS_UPLOAD_INLINE_TEXT_MAX_BYTES` | `10240` | Size cap for a text file injected directly into the prompt. |
+| `HEPHAESTUS_UPLOAD_EXCERPT_HEAD_BYTES` | `4096` | Head excerpt bytes for oversized text files; non-text files contribute only path and metadata. |
+| `HEPHAESTUS_UPLOAD_EXCERPT_TAIL_BYTES` | `2048` | Tail excerpt bytes for oversized text files. |
+| `HEPHAESTUS_UPLOAD_FILE_MAX_BYTES` | `52428800` | Maximum size of one attachment. |
+| `HEPHAESTUS_UPLOAD_TOTAL_MAX_BYTES` | `262144000` | Maximum total attachment size per message. |
+| `HEPHAESTUS_UPLOAD_MAX_FILES` | `5` | Maximum attachments per message. |
 
-单文件上限不能超过单条消息附件总上限。
+The per-file limit cannot exceed the per-message total.
 
-### 失控输出保护
+### Runaway output guard
 
-模型偶尔会陷入退化循环，不断重复同一段字符且不返回 `finish_reason`。此时 `max_tokens`
-无法及时止损：流式响应会一直写入，直到 30 分钟的运行超时。守卫在流式读取过程中逐字节检测，
-一旦判定为退化即中止请求，并把重复片段从消息中截去，使其不会被持久化、也不会在下一轮作为
-上下文回灌给模型。被截断的消息以 `incomplete` 状态保存，保留退化开始之前的干净前缀。
+Models occasionally fall into a degenerate loop, repeating the same text without ever returning a `finish_reason`. `max_tokens` doesn't stop this in time: the stream keeps writing until the 30-minute run timeout. The guard inspects the stream byte by byte, aborts the request once output is judged degenerate, and trims the repeated segment from the message so it is neither persisted nor fed back as context next turn. The truncated message is saved as `incomplete`, keeping the clean prefix from before the degeneration began.
 
-三重检测按开销从低到高依次执行，分别作用于 content、reasoning 与每个工具调用的参数：单字节
-重复、滑动窗口压缩率（可捕获重复短语，而非仅重复字符）、以及绝对字节上限。窗口压缩率的默认
-阈值有较大余量：本仓库真实文本的最差 4KB 窗口压缩率为 28%~64%，而退化输出远低于此
-（重复单字符 0.61%、重复短语 1.53%、重复整句 3.56%）。默认 3.9% 高于全部三者、
-又距真实文本约 7 倍余量，因此单字符、短语与整句三种循环都能捕获。
+Three checks run in increasing order of cost on the content, the reasoning, and each tool call's arguments: single-byte runs, sliding-window compression ratio (which catches repeated phrases, not just repeated characters), and an absolute byte cap. The window-ratio default has generous headroom: the worst 4 KB window of real text in this repository compresses to 28–64%, while degenerate output is far lower (0.61% for a repeated character, 1.53% for a repeated phrase, 3.56% for a repeated sentence). The 3.9% default sits above all three and about 7× below real text, so character, phrase, and sentence loops are all caught.
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `HEPHAESTUS_LLM_REPETITION_GUARD_DISABLED` | `false` | 设为 `true` 完全关闭守卫。 |
-| `HEPHAESTUS_LLM_REPETITION_MAX_CHAR_RUN` | `1024` | 连续相同字节达到该长度即判定退化。 |
-| `HEPHAESTUS_LLM_REPETITION_WINDOW_BYTES` | `4096` | 压缩率检测所用的尾部窗口大小。 |
-| `HEPHAESTUS_LLM_REPETITION_MIN_BYTES` | `4096` | 低于该长度的通道不做任何检测，短回复不会误伤。 |
-| `HEPHAESTUS_LLM_REPETITION_RATIO_PERCENT` | `3.9` | 窗口压缩后小于原大小该百分比即判定退化，可用小数。 |
-| `HEPHAESTUS_LLM_MAX_CHANNEL_BYTES` | `8388608` | 单个通道的绝对上限，用于非重复型的失控输出。 |
-| `HEPHAESTUS_CHATRUN_MAX_EVENT_BYTES` | `16777216` | 单次运行持久化的流式载荷上限；超出即取消该运行。 |
+| `HEPHAESTUS_LLM_REPETITION_GUARD_DISABLED` | `false` | Set to `true` to disable the guard entirely. |
+| `HEPHAESTUS_LLM_REPETITION_MAX_CHAR_RUN` | `1024` | A run of identical bytes this long is judged degenerate. |
+| `HEPHAESTUS_LLM_REPETITION_WINDOW_BYTES` | `4096` | Size of the trailing window for the compression check. |
+| `HEPHAESTUS_LLM_REPETITION_MIN_BYTES` | `4096` | Channels shorter than this are not checked, so short replies are never affected. |
+| `HEPHAESTUS_LLM_REPETITION_RATIO_PERCENT` | `3.9` | A window compressing below this percentage of its size is judged degenerate; decimals allowed. |
+| `HEPHAESTUS_LLM_MAX_CHANNEL_BYTES` | `8388608` | Absolute cap per channel, for non-repetitive runaway output. |
+| `HEPHAESTUS_CHATRUN_MAX_EVENT_BYTES` | `16777216` | Cap on persisted streaming payload per run; exceeding it cancels the run. |
 
-最后一项是兜底：每个流式增量都会写入一行 `chat_run_events`，因此即使有绕过上述守卫的
-输出源，也不会无限增长。正常情况下 LLM 守卫会先触发。
+The last one is a backstop: every streaming delta writes a `chat_run_events` row, so even an output source that bypasses the guards above cannot grow without bound. Normally the LLM guard fires first.
 
-`HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES`、`HEPHAESTUS_BAIDU_OCR_API_KEY` 与 `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` 已废弃并会被忽略。`HEPHAESTUS_POSTGRES_DSN` 是 `HEPHAESTUS_DATABASE_URL` 的废弃别名，仍可用但启动时会打印提示。
+`HEPHAESTUS_UPLOAD_OCR_IMAGE_MAX_BYTES`, `HEPHAESTUS_BAIDU_OCR_API_KEY`, and `HEPHAESTUS_BAIDU_OCR_SECRET_KEY` are deprecated and ignored. `HEPHAESTUS_POSTGRES_DSN` is a deprecated alias of `HEPHAESTUS_DATABASE_URL`; it still works but prints a notice at startup.
 
-## Subagent
+## Subagents
 
-在 Concierge 中启用 `subagent` Tool Group 后，模型可以获得以下受控委派工具：
+With the `subagent` Tool Group enabled on a Concierge, the model gets these controlled delegation tools:
 
-- `spawn`：后台启动独立 Child Session，并立即返回运行 ID。
-- `fork`：从当前对话播种独立 Child Session，并等待结果。
-- `await`：等待调用时已存在的直属后台任务；可用 `run_ids` 指定任务，用 `timeout_seconds` 提前返回（未完成的任务标记 `still_running`）。
-- `subagent_list`：列出自己委派的任务（可只看运行中的）。
-- `subagent_status`：不等待地查看任务状态、运行中的最新输出，或完成后的结果（失败或停止时保留部分输出）。
-- `subagent_steer`：向运行中的任务发送新指令，于下一个工具边界送达；`interrupt` 会跳过其下一次工具调用。
-- `subagent_stop`：停止运行中的任务，部分输出保留。
+- `spawn`: start an independent child Session in the background and return a run ID immediately.
+- `fork`: seed an independent child Session from the current conversation and wait for the result.
+- `await`: wait for direct background tasks that existed at call time; select tasks with `run_ids` and return early with `timeout_seconds` (unfinished tasks are marked `still_running`).
+- `subagent_list`: list tasks it delegated (optionally only running ones).
+- `subagent_status`: check a task's state, latest output while running, or result when done, without waiting (partial output is kept on failure or stop).
+- `subagent_steer`: send a new instruction to a running task, delivered at the next tool boundary; `interrupt` skips its next tool call.
+- `subagent_stop`: stop a running task, keeping partial output.
 
-以上工具只能操作调用者直接委派的任务。Subagent 的权限请求默认自动批准；单轮运行上限为 8 小时。
+These tools only operate on tasks the caller delegated directly. Subagent permission requests are auto-approved by default; a single run is capped at 8 hours.
 
-后台任务的结果不会只停留在临时内存。完成事件会先持久化；若父 Session 正在运行，结果会在下一次模型边界注入；若 Session 空闲，系统会自动恢复一轮，让父 Agent 消化这项新信息。
+Background results don't live only in memory. Completion events are persisted first; if the parent Session is running, the result is injected at the next model boundary; if the Session is idle, the system automatically resumes a turn so the parent agent can digest it.
 
 ## QQ Channel
 
-设置 `HEPHAESTUS_QQ_APP_ID` 与 `HEPHAESTUS_QQ_APP_SECRET` 即可启用 QQ C2C Channel，两者必须同时提供。三项都不设置时，应用不会启动外部 Channel。
+Set `HEPHAESTUS_QQ_APP_ID` and `HEPHAESTUS_QQ_APP_SECRET` to enable the QQ C2C Channel; both must be provided. With none of the QQ variables set, no external Channel starts.
 
-`HEPHAESTUS_QQ_USER_OPENID` 限定唯一允许接入的用户。首次部署时可以留空：此时 Bot 会向任何发信人回复其自己的 OpenID 且不处理消息，便于取得该值后填回配置并重启。
+`HEPHAESTUS_QQ_USER_OPENID` restricts access to a single user. Leave it empty on first deployment: the bot then replies to any sender with their own OpenID and processes nothing, so you can copy the value into the config and restart.
 
-每个 QQ 会话会串行处理消息并绑定一个持久 Session；首次消息从默认 Concierge 创建 Session。`/new`、`/clear` 和 Session 切换会更新该绑定。外部 Channel 等待完整回复而不转发模型增量；附件会复制到 Session 的 Project，Agent 交付的文件也可回传到 QQ。
+Each QQ conversation processes messages serially and is bound to a persistent Session; the first message creates a Session from the default Concierge. `/new`, `/clear`, and Session switching update the binding. External Channels wait for the complete reply rather than forwarding model deltas; attachments are copied into the Session's Project, and files delivered by the agent can be sent back to QQ.
 
-权限请求作为独立提示发送，下一条 QQ 回复将作为决定。包含 `确认` 或 `yes`，或仅为 `y`、`1` 的回复会批准请求；未答复请求会按部署的超时策略自动处理。
+Permission requests are sent as separate prompts, and the next QQ reply is taken as the decision. A reply containing `确认` or `yes`, or consisting solely of `y` or `1`, approves the request; unanswered requests are handled by the deployment's timeout policy.
 
-## 远程 SSH Shell
+## Remote SSH shell
 
-设置 `HEPHAESTUS_SHELL_BACKEND=ssh` 后，既有的 `shell` 工具会在远端执行，工具名称和参数不变。服务通过系统 `ssh` 命令并使用 `BatchMode=yes`；请在启动前通过 `~/.ssh/config` 或 SSH agent 配置认证、主机密钥、端口和 `ProxyJump`。
+With `HEPHAESTUS_SHELL_BACKEND=ssh`, the existing `shell` tool runs remotely with the same name and parameters. The service uses the system `ssh` command with `BatchMode=yes`; configure authentication, host keys, ports, and `ProxyJump` via `~/.ssh/config` or an SSH agent before starting.
 
-对于名为 `default` 的 Project，本地文件工作区与远端 Shell 工作区是有意分离的：
+For a Project named `default`, the local file workspace and the remote shell workspace are intentionally separate:
 
 ```text
-本地：<HEPHAESTUS_PROJECTS_ROOT>/default
-远端：<HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT>/default
+Local:  <HEPHAESTUS_PROJECTS_ROOT>/default
+Remote: <HEPHAESTUS_SHELL_SSH_PROJECTS_ROOT>/default
 ```
 
-请在启用前创建并准备远端目录。SSH Shell 不同步本地 Project 文件、上传内容或 `AGENTS.md`；文件工具仍然访问本地 Project。相对 `working_directory` 相对于远端 Project，绝对路径代表远端绝对路径。默认仅允许当前远端 Project 与 `/tmp`；设置 `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE=true` 才允许其他远端路径。
+Create and prepare the remote directory before enabling this. The SSH shell does not sync local Project files, uploads, or `AGENTS.md`; file tools still access the local Project. A relative `working_directory` is relative to the remote Project, and absolute paths are remote absolute paths. By default only the current remote Project and `/tmp` are allowed; set `HEPHAESTUS_PROJECT_ACCESS_OVERRIDE=true` to allow other remote paths.
 
-## 部署
+## Deployment
 
-生产环境中，前端监听所有接口的 `5173` 端口；API 保持绑定在 `127.0.0.1:9016`，由 Vite 的同源 `/api` 代理访问。部署前请准备 Go、Node.js、PM2 和生产环境变量：
+In production, the frontend listens on port `5173` on all interfaces; the API stays bound to `127.0.0.1:9016` and is reached through Vite's same-origin `/api` proxy. `./scripts/install.sh` sets all of this up on a fresh machine. To deploy by hand, prepare Go, Node.js, PM2, and the production environment:
 
 ```sh
 cp .env.example .env
-# 编辑 .env 后继续
+# edit .env, then
 make deploy
 ```
 
-`make deploy` 会构建后端和前端、通过 PM2 创建或重启 `hephaestus-api` 与 `hephaestus-web`、保存 PM2 进程列表，并验证本机 `9016` 和 `5173` 端口可连接。每次修改 `.env` 后都应重新执行该命令。
+`make deploy` builds the backend and frontend, creates or restarts `hephaestus-api` and `hephaestus-web` under PM2, saves the PM2 process list, and verifies that local ports `9016` and `5173` are reachable. Re-run it after every `.env` change.
 
-仓库根目录的 `.env` 是生产配置的权威来源。服务启动时会用其中的值覆盖 PM2 或父进程遗留的同名变量，因此不会继续使用旧的模型地址或密钥。`make deploy-build` 仍只负责构建，适用于不需要重启服务的场景。
+The `.env` in the repository root is the authoritative source of production configuration. At startup its values override same-named variables left over from PM2 or the parent process, so stale model URLs or keys are never reused. `make deploy-build` only builds, for cases where no restart is needed.
 
-部署后可用 `curl -s 127.0.0.1:9016/healthz` 确认 API 存活及其构建版本。
+After deploying, `curl -s 127.0.0.1:9016/healthz` confirms the API is alive and shows its build version.
 
-不要将 HTTP 监听器直接暴露到互联网。请在 TLS 终止的反向代理后部署，并将 `/api` 转发到前端；后端 `9016` 端口应保持私有。此时必须设置 `HEPHAESTUS_COOKIE_SECURE=true`，否则会话 Cookie 不会带上 `Secure` 属性。前端采用 SPA 路由，生产静态主机或反向代理需要将未知的非 `/api` 路由回退至 `index.html`。
+Do not expose the HTTP listeners directly to the internet. Deploy behind a TLS-terminating reverse proxy that forwards `/api` to the frontend, and keep the backend port `9016` private. In that setup you must set `HEPHAESTUS_COOKIE_SECURE=true`, or session cookies won't carry the `Secure` attribute. The frontend uses SPA routing, so a production static host or reverse proxy must fall back to `index.html` for unknown non-`/api` routes.
 
-需要私有远程访问时，可使用 SSH 转发：
+For private remote access, use SSH forwarding:
 
 ```sh
 ssh -N -L 5173:127.0.0.1:5173 user@server
 ```
 
-然后访问 `http://127.0.0.1:5173`。
+Then open `http://127.0.0.1:5173`.
 
-## 验证
+## Verification
 
 ```sh
 make check   # go vet + golangci-lint + go test -race
 make build
 ```
 
-`make check` 需要 golangci-lint v1.64 或更高。单独的 `make test`、`make vet`、`make lint` 仍然可用。设置 `HEPHAESTUS_TEST_POSTGRES_DSN` 后可用 `make test-integration` 在真实 Postgres 上运行集成测试。
+`make check` requires golangci-lint v1.64 or newer. `make test`, `make vet`, and `make lint` are also available individually. With `HEPHAESTUS_TEST_POSTGRES_DSN` set, `make test-integration` runs integration tests against a real Postgres.
 
-服务运行后，`GET /healthz` 返回运行状态与构建版本，无需认证；`./hephaestus --version` 输出同一版本号。
+Once running, `GET /healthz` returns the service status and build version without authentication; `./hephaestus --version` prints the same version.
 
-## 设计边界
+## Design boundaries
 
-- Hephaestus 面向一个受信任的长期使用者，不是多租户协作平台。
-- 登录采用挑战摘要，密码不以明文传输；连续失败后需先完成工作量证明，详见 [`SECURITY.md`](./SECURITY.md)。
-- Project 是工作上下文与文件组织边界，不是多用户安全隔离边界。
-- 聊天历史检索不依赖向量数据库。
-- 配置、消息分支、工具调用和自动化运行优先保留，以便复盘、调试和继续工作。
-- 文件、Shell、网页抓取和外部 Channel 都可能触及外部系统；请结合部署环境审慎启用。
+- Hephaestus serves one trusted long-term user; it is not a multi-tenant collaboration platform.
+- Login uses a challenge digest so the password is never sent in plaintext; after repeated failures a proof-of-work is required first. See [`SECURITY.md`](./SECURITY.md).
+- A Project is a boundary for work context and file organization, not a multi-user security boundary.
+- Chat history search does not depend on a vector database.
+- Configuration, message branches, tool calls, and automated runs are preserved by preference, for review, debugging, and picking work back up.
+- Files, shell, web fetching, and external Channels can all reach external systems; enable them with care for your deployment environment.
 
-## 文档
+## Documentation
 
-- [`docs/release/Hephaestus.md`](./docs/release/Hephaestus.md)：核心概念与运行模型的完整说明。
-- [`SECURITY.md`](./SECURITY.md)：威胁模型、认证设计与部署要求。
-- [`CONTRIBUTING.md`](./CONTRIBUTING.md)：开发环境、检查命令与配置文件约定。
-- [`CHANGELOG.md`](./CHANGELOG.md)：版本变更记录。
+- [`docs/release/Hephaestus.md`](./docs/release/Hephaestus.md): full description of core concepts and the runtime model.
+- [`SECURITY.md`](./SECURITY.md): threat model, authentication design, and deployment requirements.
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md): development environment, check commands, and configuration file conventions.
+- [`CHANGELOG.md`](./CHANGELOG.md): release history.
 
-## 致谢
+## Acknowledgements
 
-初始 `pkg/channels` 实现改编自 PicoClaw 的 [`pkg/channels`](https://github.com/sipeed/picoclaw/tree/main/pkg/channels)，遵循 MIT License。
+The initial `pkg/channels` implementation is adapted from PicoClaw's [`pkg/channels`](https://github.com/sipeed/picoclaw/tree/main/pkg/channels), under the MIT License.
 
-部分 Agent Harness 实现与 Identity 配置参考 DeepSeek 的 [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness)，遵循 MIT License。
+Parts of the agent harness implementation and Identity configuration reference DeepSeek's [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness), under the MIT License.
 
-QQ Channel 使用 [GoQQBot](https://github.com/ProgramCX/GoQQBot) 的分支，遵循 MIT License。
+The QQ Channel uses a fork of [GoQQBot](https://github.com/ProgramCX/GoQQBot), under the MIT License.
 
-完整的第三方版权与许可声明见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。Hephaestus 自身以 GNU GPL v3 发布。
+Full third-party copyright and license notices are in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md). Hephaestus itself is released under the GNU GPL v3.
