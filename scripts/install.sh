@@ -252,6 +252,49 @@ install_node() {
 	fi
 }
 
+have_chrome() {
+	local name
+	for name in google-chrome google-chrome-stable chromium chromium-browser; do
+		command -v "$name" >/dev/null 2>&1 && return 0
+	done
+	[[ $os == macos && -d "/Applications/Google Chrome.app" ]]
+}
+
+# Best effort: Google Chrome on x86_64 Linux, the distribution's Chromium
+# elsewhere. Failure is not fatal since web fetch can fall back to DeepSeek.
+install_chrome() {
+	if [[ $os == macos ]]; then
+		brew install --cask google-chrome
+		return
+	fi
+	need_sudo
+	local tmp
+	tmp=$(mktemp -d)
+	if [[ $(uname -m) == x86_64 ]] && command -v apt-get >/dev/null 2>&1; then
+		download "$tmp/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb &&
+			"${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp/chrome.deb"
+	elif [[ $(uname -m) == x86_64 ]] && command -v dnf >/dev/null 2>&1; then
+		download "$tmp/chrome.rpm" https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm &&
+			"${sudo[@]}" dnf install -y "$tmp/chrome.rpm"
+	elif [[ $(uname -m) == x86_64 ]] && command -v yum >/dev/null 2>&1; then
+		download "$tmp/chrome.rpm" https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm &&
+			"${sudo[@]}" yum install -y "$tmp/chrome.rpm"
+	elif command -v apt-get >/dev/null 2>&1; then
+		"${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y chromium
+	elif command -v dnf >/dev/null 2>&1; then
+		"${sudo[@]}" dnf install -y chromium
+	elif command -v pacman >/dev/null 2>&1; then
+		"${sudo[@]}" pacman -S --needed --noconfirm chromium
+	elif command -v zypper >/dev/null 2>&1; then
+		"${sudo[@]}" zypper --non-interactive install chromium
+	elif command -v apk >/dev/null 2>&1; then
+		"${sudo[@]}" apk add --no-cache chromium
+	fi
+	local status=$?
+	rm -rf "$tmp"
+	return $status
+}
+
 install_pm2() {
 	if [[ -w "$(npm prefix -g)/lib" || -w "$(npm prefix -g)" ]]; then
 		npm install -g pm2
@@ -259,6 +302,9 @@ install_pm2() {
 		need_sudo
 		"${sudo[@]}" env "PATH=$PATH" npm install -g pm2
 	fi
+	# A Node.js installed outside /usr/local (e.g. /usr/local/lib/nodejs/...)
+	# puts global binaries in its own bin, which is often not on PATH.
+	command -v pm2 >/dev/null 2>&1 || add_to_path "$(npm prefix -g)/bin" npm-global
 }
 
 # ---------------------------------------------------------------------------
@@ -310,6 +356,19 @@ node_version=$(node --version | sed 's/^v//')
 version_ge "$node_version" "$min_node" || die "Node.js $node_version at $(command -v node) is too old; need $min_node+ (it shadows any newer install on PATH)"
 ok "node $node_version, npm $(npm --version)"
 ok "pm2 $(pm2 --version 2>/dev/null | tail -n 1)"
+
+# Chrome/Chromium backs the local web fetch provider; it is optional.
+if ! have_chrome; then
+	warn "missing: Chrome/Chromium (used by web fetch; DeepSeek is the fallback)"
+	if ((assume_yes)) || confirm "Install it automatically?"; then
+		install_chrome && hash -r
+	fi
+fi
+if have_chrome; then
+	ok "Chrome/Chromium found"
+else
+	warn "no Chrome/Chromium; web fetch will rely on Firecrawl or DeepSeek"
+fi
 
 # ---------------------------------------------------------------------------
 step "Configuring .env"
@@ -434,7 +493,7 @@ else
 		set_env HEPHAESTUS_FIRECRAWL_API_KEY "$firecrawl_key"
 	else
 		set_env HEPHAESTUS_WEB_FETCH_PROVIDER local
-		warn "web fetch will use a local Chrome/Chromium; make sure one is installed"
+		have_chrome || warn "no Chrome/Chromium installed; web fetch will fall back to DeepSeek"
 	fi
 
 	echo
