@@ -287,7 +287,7 @@ The backend reads process environment variables plus an optional `.env` file in 
 | `HEPHAESTUS_ENV_LONGITUDE` | required | Longitude, `-180` to `180`. |
 | `HEPHAESTUS_ENV_TIMEZONE` | required | IANA timezone, used for time, lunar calendar, and Four Pillars calculations. |
 | `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | Fallback order of weather services for first-turn environment context. |
-| `HEPHAESTUS_FIXED_PLUGINS` | `environment,metaphysics,session_summary` | Plugins always enabled on every Session. |
+| `HEPHAESTUS_FIXED_PLUGINS` | `environment,session_summary` | Plugins always enabled on every Session. |
 | `HEPHAESTUS_PROXY_URL` | none | Used only by `make deploy`: outbound proxy injected into the PM2 processes; nothing is injected when empty. |
 | `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | Used only by `make deploy`: proxy exclusion list. |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | none | WeCom webhook that receives warning and error notifications. |
@@ -433,7 +433,7 @@ Once running, `GET /healthz` returns the service status and build version withou
 
 The initial `pkg/channels` implementation is adapted from PicoClaw's [`pkg/channels`](https://github.com/sipeed/picoclaw/tree/main/pkg/channels), under the MIT License.
 
-Parts of the agent harness implementation and Identity configuration reference DeepSeek's [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness), under the MIT License.
+Parts of the agent harness implementation reference DeepSeek's [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness), under the MIT License.
 
 The QQ Channel uses a fork of [GoQQBot](https://github.com/ProgramCX/GoQQBot), under the MIT License.
 

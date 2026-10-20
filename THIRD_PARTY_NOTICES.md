@@ -38,7 +38,7 @@ SOFTWARE.
 
 <https://github.com/deepseek-ai/deepseek-harness>
 
-`config/identity-dsh-*.toml` 中的 Identity 配置，以及 Agent Harness 的部分实现思路参考自该项目。
+Agent Harness 的部分实现思路参考自该项目。
 
 MIT License
 

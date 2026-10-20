@@ -259,7 +259,7 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 | `HEPHAESTUS_ENV_LONGITUDE` | 必需 | 环境经度，范围 `-180` 至 `180`。 |
 | `HEPHAESTUS_ENV_TIMEZONE` | 必需 | IANA 时区，用于时间、农历与四柱计算。 |
 | `HEPHAESTUS_WEATHER_PROVIDERS` | `open_meteo,wttr,met_no` | 首轮环境上下文使用的天气服务回退顺序。 |
-| `HEPHAESTUS_FIXED_PLUGINS` | `environment,metaphysics,session_summary` | 每个 Session 固定启用、不可停用的 Plugin。 |
+| `HEPHAESTUS_FIXED_PLUGINS` | `environment,session_summary` | 每个 Session 固定启用、不可停用的 Plugin。 |
 | `HEPHAESTUS_PROXY_URL` | 无 | 仅供 `make deploy`：为 PM2 进程注入出站代理；留空则不注入。 |
 | `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | 仅供 `make deploy`：代理排除列表。 |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | 无 | 接收警告和错误通知的企业微信 Webhook。 |
@@ -413,7 +413,7 @@ make build
 
 初始 `pkg/channels` 实现改编自 PicoClaw 的 [`pkg/channels`](https://github.com/sipeed/picoclaw/tree/main/pkg/channels)，遵循 MIT License。
 
-部分 Agent Harness 实现与 Identity 配置参考 DeepSeek 的 [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness)，遵循 MIT License。
+部分 Agent Harness 实现参考 DeepSeek 的 [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness)，遵循 MIT License。
 
 QQ Channel 使用 [GoQQBot](https://github.com/ProgramCX/GoQQBot) 的分支，遵循 MIT License。
 
