@@ -2,9 +2,10 @@
 #
 # Interactive first-time setup for macOS and Linux.
 #
-#   ./scripts/install.sh               check dependencies, write .env, build, start under PM2
+#   ./scripts/install.sh               install missing dependencies, write .env, build, start under PM2
 #   ./scripts/install.sh --no-start    stop after writing .env
 #   ./scripts/install.sh --reconfigure regenerate .env even if one exists (the old one is backed up)
+#   ./scripts/install.sh --yes         install missing dependencies without asking
 #
 # Re-running is safe: an existing .env is kept unless --reconfigure is given,
 # and deployment is delegated to scripts/deploy.sh.
@@ -19,12 +20,14 @@ min_node=22
 
 start=1
 reconfigure=0
+assume_yes=0
 for arg in "$@"; do
 	case "$arg" in
 	--no-start) start=0 ;;
 	--reconfigure) reconfigure=1 ;;
+	-y | --yes) assume_yes=1 ;;
 	-h | --help)
-		sed -n '3,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		sed -n '3,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 		exit 0
 		;;
 	*)
@@ -95,51 +98,214 @@ Linux) os=linux ;;
 esac
 ok "$os ($(uname -m))"
 
-hint() {
-	case "$1:$os" in
-	go:macos) echo "brew install go   (or https://go.dev/dl/)" ;;
-	go:linux) echo "download Go $min_go+ from https://go.dev/dl/ (distribution packages are usually too old)" ;;
-	node:macos) echo "brew install node@$min_node" ;;
-	node:linux) echo "install Node.js $min_node+ via https://github.com/nvm-sh/nvm or https://nodejs.org/" ;;
-	nc:linux) echo "sudo apt install netcat-openbsd   (or: sudo dnf install nmap-ncat)" ;;
-	git:macos) echo "xcode-select --install" ;;
-	*) echo "install '$1' with your package manager" ;;
+# Dependencies are installed BT-Panel style: system packages through the
+# native package manager (Homebrew on macOS), Go and Node.js from their
+# official Linux tarballs into /usr/local, since distribution packages are
+# usually too old. Downloads fall back to mainland China mirrors.
+
+if [[ $EUID -eq 0 ]]; then
+	sudo=()
+else
+	sudo=(sudo)
+fi
+
+need_sudo() {
+	((${#sudo[@]} == 0)) && return 0
+	command -v sudo >/dev/null 2>&1 || die "sudo is required to install dependencies; re-run as root or install them yourself"
+	sudo -v || die "sudo authentication failed"
+}
+
+# fetch URL... — prints the first URL that downloads successfully.
+fetch() {
+	local url
+	for url in "$@"; do
+		curl -fsSL --connect-timeout 10 --retry 2 "$url" && return 0
+	done
+	return 1
+}
+
+# download OUT URL... — saves the first URL that downloads successfully.
+download() {
+	local out=$1 url
+	shift
+	for url in "$@"; do
+		echo "  downloading $url"
+		curl -fL --connect-timeout 10 --retry 2 --progress-bar -o "$out" "$url" && return 0
+	done
+	return 1
+}
+
+sha256_of() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+	else
+		shasum -a 256 "$1" | awk '{print $1}'
+	fi
+}
+
+linux_arch() {
+	case "$(uname -m)" in
+	x86_64 | amd64) echo "$1" ;;
+	aarch64 | arm64) echo "$2" ;;
+	*) die "unsupported architecture $(uname -m); install Go and Node.js yourself" ;;
 	esac
+}
+
+install_system_packages() {
+	if [[ $os == macos ]]; then
+		command -v brew >/dev/null 2>&1 || die "Homebrew is required on macOS; install it from https://brew.sh and re-run"
+		# git and make come with the Xcode Command Line Tools; nc ships with macOS.
+		if ! xcode-select -p >/dev/null 2>&1; then
+			xcode-select --install || true
+			die "finish installing the Xcode Command Line Tools, then re-run this script"
+		fi
+		return
+	fi
+	need_sudo
+	if command -v apt-get >/dev/null 2>&1; then
+		"${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get update -y
+		"${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y git make curl ca-certificates tar xz-utils netcat-openbsd
+	elif command -v dnf >/dev/null 2>&1; then
+		"${sudo[@]}" dnf install -y git make curl ca-certificates tar xz nmap-ncat
+	elif command -v yum >/dev/null 2>&1; then
+		"${sudo[@]}" yum install -y git make curl ca-certificates tar xz nmap-ncat
+	elif command -v pacman >/dev/null 2>&1; then
+		"${sudo[@]}" pacman -Sy --needed --noconfirm git make curl ca-certificates tar xz openbsd-netcat
+	elif command -v zypper >/dev/null 2>&1; then
+		"${sudo[@]}" zypper --non-interactive install git make curl ca-certificates tar xz netcat-openbsd
+	elif command -v apk >/dev/null 2>&1; then
+		"${sudo[@]}" apk add --no-cache bash git make curl ca-certificates tar xz netcat-openbsd
+	else
+		die "no supported package manager found; install git, make, curl, tar, xz and nc yourself"
+	fi
+}
+
+# Puts DIR on PATH for this run and for future login shells.
+add_to_path() {
+	local dir=$1 name=$2
+	case ":$PATH:" in *":$dir:"*) ;; *) export PATH="$dir:$PATH" ;; esac
+	if [[ $os == linux && -d /etc/profile.d ]]; then
+		printf 'case ":$PATH:" in *":%s:"*) ;; *) export PATH="%s:$PATH" ;; esac\n' "$dir" "$dir" |
+			"${sudo[@]}" tee "/etc/profile.d/$name.sh" >/dev/null
+	fi
+}
+
+install_go() {
+	if [[ $os == macos ]]; then
+		if brew list go >/dev/null 2>&1; then brew upgrade go || true; else brew install go; fi
+		return
+	fi
+	need_sudo
+	local arch version file tmp
+	arch=$(linux_arch amd64 arm64)
+	version=$(fetch https://go.dev/VERSION?m=text https://golang.google.cn/VERSION?m=text | head -n 1) ||
+		die "could not determine the latest Go version"
+	file="$version.linux-$arch.tar.gz"
+	tmp=$(mktemp -d)
+	download "$tmp/$file" "https://dl.google.com/go/$file" "https://golang.google.cn/dl/$file" ||
+		die "could not download $file"
+	local expected
+	expected=$(fetch "https://dl.google.com/go/$file.sha256" "https://golang.google.cn/dl/$file.sha256") ||
+		die "could not download the checksum for $file"
+	[[ "$(sha256_of "$tmp/$file")" == "${expected%% *}" ]] || die "checksum mismatch for $file"
+	"${sudo[@]}" rm -rf /usr/local/go
+	"${sudo[@]}" tar -C /usr/local -xzf "$tmp/$file"
+	rm -rf "$tmp"
+	add_to_path /usr/local/go/bin go
+	# Module downloads from proxy.golang.org are often unreachable from
+	# mainland China; fall back to goproxy.cn when it is.
+	if ! curl -fsS --connect-timeout 5 -o /dev/null https://proxy.golang.org/; then
+		go env -w GOPROXY=https://goproxy.cn,direct
+		ok "set GOPROXY=https://goproxy.cn,direct"
+	fi
+}
+
+install_node() {
+	if [[ $os == macos ]]; then
+		if brew list node >/dev/null 2>&1; then brew upgrade node || true; else brew install node; fi
+		return
+	fi
+	need_sudo
+	local arch mirror sums file tmp
+	arch=$(linux_arch x64 arm64)
+	for mirror in https://nodejs.org/dist https://npmmirror.com/mirrors/node; do
+		sums=$(fetch "$mirror/latest-v$min_node.x/SHASUMS256.txt") && break
+	done
+	[[ -n "${sums:-}" ]] || die "could not reach nodejs.org or its mirror"
+	file=$(awk -v suffix="-linux-$arch.tar.xz" 'substr($2, length($2) - length(suffix) + 1) == suffix { print $2; exit }' <<<"$sums")
+	[[ -n "$file" ]] || die "no Node.js $min_node build for linux-$arch"
+	tmp=$(mktemp -d)
+	download "$tmp/$file" "$mirror/latest-v$min_node.x/$file" || die "could not download $file"
+	[[ "$(sha256_of "$tmp/$file")" == "$(awk -v f="$file" '$2 == f { print $1 }' <<<"$sums")" ]] ||
+		die "checksum mismatch for $file"
+	# The tarball's bin/, lib/, include/ and share/ merge into /usr/local.
+	"${sudo[@]}" tar -C /usr/local --strip-components=1 --no-same-owner \
+		--exclude="*/CHANGELOG.md" --exclude="*/README.md" --exclude="*/LICENSE" -xJf "$tmp/$file"
+	rm -rf "$tmp"
+	add_to_path /usr/local/bin node
+	if [[ $mirror == *npmmirror* ]]; then
+		npm config set registry https://registry.npmmirror.com
+		ok "set the npm registry to https://registry.npmmirror.com"
+	fi
+}
+
+install_pm2() {
+	if [[ -w "$(npm prefix -g)/lib" || -w "$(npm prefix -g)" ]]; then
+		npm install -g pm2
+	else
+		need_sudo
+		"${sudo[@]}" env "PATH=$PATH" npm install -g pm2
+	fi
 }
 
 # ---------------------------------------------------------------------------
 step "Checking dependencies"
 
-missing=0
-for command in git make go node npm nc; do
-	if command -v "$command" >/dev/null 2>&1; then
-		continue
-	fi
-	warn "$command not found — $(hint "$command")"
-	missing=1
+missing_system=()
+for command in git make curl tar nc; do
+	command -v "$command" >/dev/null 2>&1 || missing_system+=("$command")
 done
-((missing == 0)) || die "install the missing tools above and re-run this script"
+[[ $os == linux ]] && ! command -v xz >/dev/null 2>&1 && missing_system+=(xz)
+
+go_ok=0
+if command -v go >/dev/null 2>&1 && version_ge "$(go env GOVERSION | sed 's/^go//')" "$min_go"; then go_ok=1; fi
+node_ok=0
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
+	version_ge "$(node --version | sed 's/^v//')" "$min_node"; then node_ok=1; fi
+pm2_ok=0
+command -v pm2 >/dev/null 2>&1 && pm2_ok=1
+
+todo=()
+((${#missing_system[@]} == 0)) || todo+=("system packages (${missing_system[*]})")
+((go_ok)) || todo+=("Go $min_go+")
+((node_ok)) || todo+=("Node.js $min_node+")
+((pm2_ok)) || todo+=("pm2")
+
+if ((${#todo[@]} > 0)); then
+	warn "missing: $(IFS=,; echo "${todo[*]}" | sed 's/,/, /g')"
+	if ((assume_yes == 0)) && ! confirm "Install them automatically?"; then
+		die "install the missing dependencies and re-run this script"
+	fi
+	((${#missing_system[@]} == 0)) || install_system_packages
+	((go_ok)) || install_go
+	((node_ok)) || install_node
+	hash -r
+	((pm2_ok)) || install_pm2
+	hash -r
+fi
+
+for command in git make curl nc go node npm; do
+	command -v "$command" >/dev/null 2>&1 || die "$command is still not available after installation"
+done
+command -v pm2 >/dev/null 2>&1 || die "pm2 installed but is not on PATH; add \"$(npm prefix -g)/bin\" to PATH and re-run"
 
 go_version=$(go env GOVERSION | sed 's/^go//')
-version_ge "$go_version" "$min_go" || die "Go $go_version is too old; need $min_go+ — $(hint go)"
+version_ge "$go_version" "$min_go" || die "Go $go_version at $(command -v go) is too old; need $min_go+ (it shadows any newer install on PATH)"
 ok "go $go_version"
 
 node_version=$(node --version | sed 's/^v//')
-version_ge "$node_version" "$min_node" || die "Node.js $node_version is too old; need $min_node+ — $(hint node)"
+version_ge "$node_version" "$min_node" || die "Node.js $node_version at $(command -v node) is too old; need $min_node+ (it shadows any newer install on PATH)"
 ok "node $node_version, npm $(npm --version)"
-
-if ! command -v pm2 >/dev/null 2>&1; then
-	warn "pm2 not found"
-	if confirm "Install pm2 globally with 'npm install -g pm2'?"; then
-		if ! npm install -g pm2; then
-			die "npm install -g pm2 failed; if it was a permissions error, configure a user-level npm prefix (https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally) or use nvm, then re-run"
-		fi
-		hash -r
-		command -v pm2 >/dev/null 2>&1 || die "pm2 installed but is not on PATH; add \"$(npm prefix -g)/bin\" to PATH and re-run"
-	else
-		die "pm2 is required to run the services"
-	fi
-fi
 ok "pm2 $(pm2 --version 2>/dev/null | tail -n 1)"
 
 # ---------------------------------------------------------------------------

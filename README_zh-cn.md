@@ -91,6 +91,8 @@ Project 将会话、上传文件和工作目录组织在一起。模型可以在
 
 ## 快速开始
 
+全新的 macOS 或 Linux 机器可直接运行 `./scripts/install.sh`：它会自动安装缺失的依赖（Go、Node.js、PM2 等；macOS 需已安装 Homebrew，Linux 需 sudo），交互式生成 `.env`，并通过 PM2 启动服务。以下为手动步骤。
+
 ### 前置条件
 
 - Go 1.26 或更高

@@ -97,7 +97,9 @@ A Project groups sessions, uploaded files, and a working directory. Within contr
 - Go 1.26.9 or newer
 - Node.js 22 or newer, with npm
 - At least one model provider: the DeepSeek API, or an OpenAI-compatible local model server
-- For the managed install: [PM2](https://pm2.keymetrics.io/) (the installer can install it) and `nc`
+- For the managed install: [PM2](https://pm2.keymetrics.io/) and `nc`
+
+The guided installer below installs all of these automatically (it needs `sudo` on Linux).
 
 Hephaestus depends on a fork of GoQQBot through a `replace` directive, so `go install` is not supported. Clone the repository and build from source.
 
@@ -109,11 +111,12 @@ cd hephaestus
 ./scripts/install.sh
 ```
 
-The installer checks your toolchain, offers to install PM2, asks for the required settings (login, model provider, web fetch, location, optional proxy), generates `.env` with a random JWT secret and `600` permissions, then builds and starts both services under PM2 and optionally registers them to start at boot.
+The installer installs anything missing — git, make, curl and nc through your package manager (Homebrew on macOS, which must already be installed), Go and Node.js from their official tarballs on Linux, and PM2 through npm, with mainland China mirrors as a fallback. It then asks for the required settings (login, model provider, web fetch, location, optional proxy), generates `.env` with a random JWT secret and `600` permissions, then builds and starts both services under PM2 and optionally registers them to start at boot.
 
 | Option | Effect |
 | --- | --- |
 | `--no-start` | Stop after writing `.env`. |
+| `--yes` | Install missing dependencies without asking. |
 | `--reconfigure` | Regenerate `.env` even if one exists; the old file is backed up. |
 
 When it finishes, open `http://127.0.0.1:5173`.
