@@ -50,8 +50,9 @@ type WebFetchTool struct {
 	maxChars        int
 	summaryMaxChars int
 	primary         webFetchProvider
-	fallback        webFetchProvider
-	summarizer      summarizeFunc
+	// fallbacks are tried in order when the primary provider fails.
+	fallbacks  []webFetchProvider
+	summarizer summarizeFunc
 }
 
 func NewWebFetchTool(config WebFetchConfig) (*WebFetchTool, error) {
@@ -71,34 +72,43 @@ func NewWebFetchTool(config WebFetchConfig) (*WebFetchTool, error) {
 		}
 	}
 	local := newLocalWebFetchProvider(config.ChromePath)
+	// DeepSeek is the last resort whenever its key is configured, so a host
+	// without Chrome can still fetch pages.
+	var deepseek webFetchProvider
+	if strings.TrimSpace(config.DeepSeekAPIKey) != "" {
+		deepseek = newDeepSeekWebFetchProvider(config.DeepSeekAPIKey, config.DeepSeekBaseURL)
+	}
+	tool := &WebFetchTool{maxChars: maxChars, summaryMaxChars: summaryMaxChars, summarizer: summarizer}
 	switch strings.ToLower(strings.TrimSpace(config.Provider)) {
 	case "local":
-		return &WebFetchTool{maxChars: maxChars, summaryMaxChars: summaryMaxChars, primary: local, summarizer: summarizer}, nil
+		tool.primary = local
+		tool.fallbacks = compactProviders(deepseek)
 	case "", "firecrawl":
 		if strings.TrimSpace(config.FirecrawlAPIKey) == "" {
 			return nil, fmt.Errorf("Firecrawl API key is required")
 		}
-		return &WebFetchTool{
-			maxChars:        maxChars,
-			summaryMaxChars: summaryMaxChars,
-			primary:         newFirecrawlWebFetchProvider(config.FirecrawlAPIKey, config.FirecrawlBaseURL),
-			fallback:        local,
-			summarizer:      summarizer,
-		}, nil
+		tool.primary = newFirecrawlWebFetchProvider(config.FirecrawlAPIKey, config.FirecrawlBaseURL)
+		tool.fallbacks = compactProviders(local, deepseek)
 	case "deepseek":
-		if strings.TrimSpace(config.DeepSeekAPIKey) == "" {
+		if deepseek == nil {
 			return nil, fmt.Errorf("DeepSeek API key is required")
 		}
-		return &WebFetchTool{
-			maxChars:        maxChars,
-			summaryMaxChars: summaryMaxChars,
-			primary:         newDeepSeekWebFetchProvider(config.DeepSeekAPIKey, config.DeepSeekBaseURL),
-			fallback:        local,
-			summarizer:      summarizer,
-		}, nil
+		tool.primary = deepseek
+		tool.fallbacks = compactProviders(local)
 	default:
 		return nil, fmt.Errorf("unsupported web fetch provider %q", config.Provider)
 	}
+	return tool, nil
+}
+
+func compactProviders(providers ...webFetchProvider) []webFetchProvider {
+	var out []webFetchProvider
+	for _, provider := range providers {
+		if provider != nil {
+			out = append(out, provider)
+		}
+	}
+	return out
 }
 
 func newWebFetchToolForTest(maxChars, summaryMaxChars int, primary, fallback webFetchProvider, summarizer summarizeFunc) *WebFetchTool {
@@ -108,7 +118,11 @@ func newWebFetchToolForTest(maxChars, summaryMaxChars int, primary, fallback web
 	if summaryMaxChars <= 0 {
 		summaryMaxChars = defaultWebFetchSummaryChars
 	}
-	return &WebFetchTool{maxChars: maxChars, summaryMaxChars: summaryMaxChars, primary: primary, fallback: fallback, summarizer: summarizer}
+	tool := &WebFetchTool{maxChars: maxChars, summaryMaxChars: summaryMaxChars, primary: primary, summarizer: summarizer}
+	if fallback != nil {
+		tool.fallbacks = []webFetchProvider{fallback}
+	}
+	return tool
 }
 
 func (WebFetchTool) Name() string { return "web_fetch" }
@@ -130,14 +144,18 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *toolki
 	if err := validatePublicURL(ctx, parsed, net.DefaultResolver); err != nil {
 		return toolkit.ErrorResult("web_fetch: " + err.Error())
 	}
-	text, primaryErr := t.fetch(ctx, t.primary, parsed)
-	if primaryErr != nil && t.fallback != nil {
-		text, err = t.fetch(ctx, t.fallback, parsed)
-		if err != nil {
-			return toolkit.ErrorResult(fmt.Sprintf("web_fetch: %s failed: %v; %s fallback failed: %v", t.primary.Name(), primaryErr, t.fallback.Name(), err))
+	text, err := t.fetch(ctx, t.primary, parsed)
+	if err != nil {
+		failures := []string{fmt.Sprintf("%s failed: %v", t.primary.Name(), err)}
+		for _, fallback := range t.fallbacks {
+			if text, err = t.fetch(ctx, fallback, parsed); err == nil {
+				break
+			}
+			failures = append(failures, fmt.Sprintf("%s fallback failed: %v", fallback.Name(), err))
 		}
-	} else if primaryErr != nil {
-		return toolkit.ErrorResult(fmt.Sprintf("web_fetch: %s failed: %v", t.primary.Name(), primaryErr))
+		if err != nil {
+			return toolkit.ErrorResult("web_fetch: " + strings.Join(failures, "; "))
+		}
 	}
 	if strings.TrimSpace(text) == "" {
 		return toolkit.ErrorResult("web_fetch: provider returned empty content")

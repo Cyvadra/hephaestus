@@ -263,7 +263,7 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 | `HEPHAESTUS_PROXY_URL` | 无 | 仅供 `make deploy`：为 PM2 进程注入出站代理；留空则不注入。 |
 | `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | 仅供 `make deploy`：代理排除列表。 |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | 无 | 接收警告和错误通知的企业微信 Webhook。 |
-| `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | 网页抓取实现：`firecrawl` 或 `local`。 |
+| `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | 网页抓取实现：`firecrawl`、`local` 或 `deepseek`。设置了 `HEPHAESTUS_DEEPSEEK_API_KEY` 时，DeepSeek 也会作为最后的备用。 |
 | `HEPHAESTUS_FIRECRAWL_API_KEY` | 使用 Firecrawl 时必需 | Firecrawl API Key。 |
 | `HEPHAESTUS_WEB_FETCH_CHROME_PATH` | 自动检测 | 本地抓取使用的 Chrome 或 Chromium 路径。 |
 | `HEPHAESTUS_WEB_FETCH_MAX_CHARS` | `16000` | 页面捕获文本上限，之后会摘要或截断。 |

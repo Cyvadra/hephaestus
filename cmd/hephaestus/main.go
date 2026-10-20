@@ -155,6 +155,7 @@ func main() {
 	webFetch, err := tools.NewWebFetchTool(tools.WebFetchConfig{
 		Provider:        cfg.WebFetchProvider,
 		FirecrawlAPIKey: cfg.FirecrawlAPIKey,
+		DeepSeekAPIKey:  cfg.DeepSeekAPIKey,
 		ChromePath:      cfg.WebFetchChromePath,
 		MaxChars:        cfg.WebFetchMaxChars,
 		SummaryMaxChars: cfg.WebFetchSummaryMaxChars,

@@ -225,8 +225,11 @@ func Load() (*Config, error) {
 	if cfg.ChannelImageTextWait <= 0 {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_CHANNEL_IMAGE_TEXT_WAIT_SECONDS must be positive")
 	}
-	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl or local")
+	if cfg.WebFetchProvider != "firecrawl" && cfg.WebFetchProvider != "local" && cfg.WebFetchProvider != "deepseek" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_WEB_FETCH_PROVIDER must be firecrawl, local or deepseek")
+	}
+	if cfg.WebFetchProvider == "deepseek" && cfg.DeepSeekAPIKey == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY is required when web fetch provider is deepseek")
 	}
 	if cfg.ShellBackend != "local" && cfg.ShellBackend != "ssh" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_SHELL_BACKEND must be local or ssh")

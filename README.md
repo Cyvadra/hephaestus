@@ -291,7 +291,7 @@ The backend reads process environment variables plus an optional `.env` file in 
 | `HEPHAESTUS_PROXY_URL` | none | Used only by `make deploy`: outbound proxy injected into the PM2 processes; nothing is injected when empty. |
 | `HEPHAESTUS_NO_PROXY` | `127.0.0.1,localhost` | Used only by `make deploy`: proxy exclusion list. |
 | `HEPHAESTUS_WECOM_WEBHOOK_URL` | none | WeCom webhook that receives warning and error notifications. |
-| `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | Web fetch implementation: `firecrawl` or `local`. |
+| `HEPHAESTUS_WEB_FETCH_PROVIDER` | `firecrawl` | Web fetch implementation: `firecrawl`, `local` or `deepseek`. DeepSeek is also the last fallback whenever `HEPHAESTUS_DEEPSEEK_API_KEY` is set. |
 | `HEPHAESTUS_FIRECRAWL_API_KEY` | required with Firecrawl | Firecrawl API key. |
 | `HEPHAESTUS_WEB_FETCH_CHROME_PATH` | auto-detected | Chrome or Chromium path for local fetching. |
 | `HEPHAESTUS_WEB_FETCH_MAX_CHARS` | `16000` | Cap on captured page text before it is summarized or truncated. |

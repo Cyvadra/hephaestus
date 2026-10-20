@@ -146,3 +146,14 @@ func TestWebFetchRuneTruncation(t *testing.T) {
 		t.Fatalf("unexpected rune truncation: %q", got)
 	}
 }
+
+func TestWebFetchToolTriesFallbacksInOrder(t *testing.T) {
+	primary := &fakeWebFetchProvider{name: "local", err: errors.New("chrome missing")}
+	tool := newWebFetchToolForTest(0, 0, primary, &fakeWebFetchProvider{name: "firecrawl", err: errors.New("down")}, nil)
+	last := &fakeWebFetchProvider{name: "deepseek", text: "deepseek content"}
+	tool.fallbacks = append(tool.fallbacks, last)
+	result := tool.Execute(context.Background(), map[string]any{"url": "https://example.com"})
+	if result.IsError || result.ForLLM != "deepseek content" || last.calls != 1 {
+		t.Fatalf("unexpected result: %+v, last calls=%d", result, last.calls)
+	}
+}
