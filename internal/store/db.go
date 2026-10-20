@@ -163,7 +163,18 @@ func openDialector(databaseURL string) (gorm.Dialector, error) {
 				return nil, fmt.Errorf("store: create SQLite database directory: %w", err)
 			}
 		}
-		return sqlite.Open(sqlitePath), nil
+		// Without a busy timeout, concurrent writers (chat runs, jobs, tool
+		// events) fail immediately with SQLITE_BUSY; WAL lets readers proceed
+		// alongside a writer.
+		sep := "?"
+		if strings.Contains(sqlitePath, "?") {
+			sep = "&"
+		}
+		pragmas := "_pragma=busy_timeout(10000)"
+		if sqlitePath != ":memory:" {
+			pragmas += "&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+		}
+		return sqlite.Open(sqlitePath + sep + pragmas), nil
 	}
 	if databaseURL == "" {
 		return nil, fmt.Errorf("store: database URL is required")
