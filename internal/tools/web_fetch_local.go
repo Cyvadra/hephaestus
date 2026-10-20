@@ -54,13 +54,18 @@ func (p *localWebFetchProvider) Fetch(ctx context.Context, target *url.URL) (str
 	if response.Status < 200 || response.Status >= 400 {
 		return "", fmt.Errorf("server returned HTTP %d", response.Status)
 	}
-	var finalURL, text string
-	if err := chromedp.Run(requestContext,
-		chromedp.WaitReady("body", chromedp.ByQuery),
-		chromedp.Poll(`document.readyState === "complete" && document.body.innerText.trim().length > 0`, nil, chromedp.WithPollingTimeout(5*time.Second)),
-		chromedp.Location(&finalURL),
-		chromedp.Text("body", &text, chromedp.ByQuery),
+	if err := chromedp.Do(requestContext,
+		chromedp.WaitReady(chromedp.CSS("body")),
+		chromedp.Poll[chromedp.Void](`document.readyState === "complete" && document.body.innerText.trim().length > 0`, chromedp.WithPollingTimeout(5*time.Second)),
 	); err != nil {
+		return "", fmt.Errorf("read page: %w", err)
+	}
+	finalURL, err := chromedp.Run(requestContext, chromedp.Location())
+	if err != nil {
+		return "", fmt.Errorf("read page: %w", err)
+	}
+	text, err := chromedp.Run(requestContext, chromedp.Text(chromedp.CSS("body")))
+	if err != nil {
 		return "", fmt.Errorf("read page: %w", err)
 	}
 	parsedFinalURL, err := url.Parse(finalURL)
