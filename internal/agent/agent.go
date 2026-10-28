@@ -750,6 +750,10 @@ func (r *Runner) executeTool(ctx context.Context, req Request, allowedTools map[
 	auditID := r.beginToolAudit(req.Audit, t, tc, args)
 	toolCtx := toolkit.WithSessionID(ctx, req.OwnerID)
 	toolCtx = toolkit.WithTurnMessages(toolCtx, turnMessages)
+	if req.Scope == toolkit.ScopeWorkflow {
+		// Workflow steps are unattended; approve tool permission requests.
+		toolCtx = toolkit.WithAutoApprove(toolCtx)
+	}
 	if reportOutput != nil {
 		toolCtx = toolkit.WithOutputReporter(toolCtx, reportOutput)
 	}
@@ -808,6 +812,11 @@ func (r *Runner) trackConsecutiveToolCall(ctx context.Context, req Request, last
 		*consecutiveToolCalls = 1
 	}
 	if *consecutiveToolCalls <= maxConsecutiveToolCalls {
+		return nil
+	}
+	if req.Scope == toolkit.ScopeWorkflow {
+		// Workflow steps are unattended; auto-approve and reset the counter.
+		*consecutiveToolCalls = 1
 		return nil
 	}
 	if r.interactions == nil || req.OnInteraction == nil {

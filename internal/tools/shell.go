@@ -210,7 +210,7 @@ func (t *ShellTool) run(ctx context.Context, args map[string]any) *toolkit.ToolR
 	}
 	requiresConfirmation, _ := args["requires_confirmation"].(bool)
 	denied, _ := deniedCommand(command)
-	if requiresConfirmation || denied {
+	if (requiresConfirmation || denied) && !toolkit.AutoApproveFromContext(ctx) {
 		if t.interactions == nil {
 			return toolkit.ErrorResult("shell: command requires interactive approval, but interactions are not configured")
 		}

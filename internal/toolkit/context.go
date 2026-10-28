@@ -99,3 +99,17 @@ func TurnMessagesFromContext(ctx context.Context) ([]store.ChatMessage, bool) {
 	messages, ok := ctx.Value(turnMessagesContextKey{}).([]store.ChatMessage)
 	return append([]store.ChatMessage(nil), messages...), ok
 }
+
+type autoApproveContextKey struct{}
+
+// WithAutoApprove marks ctx as an unattended run (a workflow step) whose
+// permission requests are approved without asking: no human can answer them.
+func WithAutoApprove(ctx context.Context) context.Context {
+	return context.WithValue(ctx, autoApproveContextKey{}, true)
+}
+
+// AutoApproveFromContext reports whether WithAutoApprove marked ctx.
+func AutoApproveFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(autoApproveContextKey{}).(bool)
+	return v
+}
