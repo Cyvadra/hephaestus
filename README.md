@@ -273,6 +273,10 @@ The backend reads process environment variables plus an optional `.env` file in 
 | `HEPHAESTUS_DEEPSEEK_API_KEY` | required without a local model | Enables DeepSeek and LLM-based web content condensing. |
 | `HEPHAESTUS_LOCAL_MODEL_URL` | none | OpenAI-compatible local model server URL. |
 | `HEPHAESTUS_LOCAL_MODEL_API_KEY` | none | Optional API key for the local model server. |
+| `HEPHAESTUS_ANTHROPIC_URL` | none | Anthropic Messages API server URL without `/v1`, e.g. `https://api.anthropic.com`. |
+| `HEPHAESTUS_ANTHROPIC_API_KEY` | none | API key for the Anthropic backend. |
+| `HEPHAESTUS_ANTHROPIC_WORKSPACE` | none | Optional workspace ID, required for keys not scoped to one workspace. |
+| `HEPHAESTUS_ANTHROPIC_MODELS` | none | Optional comma-separated model names for servers without a models endpoint. |
 | `HEPHAESTUS_CONFIG_DIR` | `./config` | Default registry template directory. |
 | `HEPHAESTUS_LISTEN_ADDR` | `127.0.0.1:9016` | API listen address. |
 | `HEPHAESTUS_COOKIE_SECURE` | `false` | Set to `true` when a reverse proxy terminates HTTPS so the session cookie gets `Secure`. |

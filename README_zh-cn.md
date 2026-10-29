@@ -245,6 +245,10 @@ Plugin 在模型调用与工具循环的生命周期中运行。`HEPHAESTUS_FIXE
 | `HEPHAESTUS_DEEPSEEK_API_KEY` | 本地模型未配置时必需 | 启用 DeepSeek 与基于 LLM 的网页内容压缩。 |
 | `HEPHAESTUS_LOCAL_MODEL_URL` | 无 | OpenAI-compatible 本地模型服务地址。 |
 | `HEPHAESTUS_LOCAL_MODEL_API_KEY` | 无 | 本地模型服务的可选 API Key。 |
+| `HEPHAESTUS_ANTHROPIC_URL` | 无 | Anthropic Messages API 服务地址（不含 `/v1`），如 `https://api.anthropic.com`。 |
+| `HEPHAESTUS_ANTHROPIC_API_KEY` | 无 | Anthropic 后端的 API Key。 |
+| `HEPHAESTUS_ANTHROPIC_WORKSPACE` | 无 | 可选 workspace ID，未限定单一 workspace 的 Key 需要设置。 |
+| `HEPHAESTUS_ANTHROPIC_MODELS` | 无 | 可选，逗号分隔的模型名，用于不提供 models 接口的服务。 |
 | `HEPHAESTUS_CONFIG_DIR` | `./config` | 默认 Registry 模板目录。 |
 | `HEPHAESTUS_LISTEN_ADDR` | `127.0.0.1:9016` | API 监听地址。 |
 | `HEPHAESTUS_COOKIE_SECURE` | `false` | 由反向代理终止 HTTPS 时设为 `true`，会话 Cookie 才会带上 `Secure`。 |

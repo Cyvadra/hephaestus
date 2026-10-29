@@ -64,6 +64,23 @@ func NewWithLocalModel(apiKey, localURL, localAPIKey string) *Client {
 	return &Client{ds4: client}
 }
 
+// WithAnthropic adds an Anthropic Messages API backend at url (excluding the
+// /v1 segment) to model routing. It is a no-op when url is empty. models, when
+// non-empty, registers model names instead of discovering them.
+func (c *Client) WithAnthropic(url, apiKey, workspace string, models []string) *Client {
+	if url == "" {
+		return c
+	}
+	c.ds4.WithAnthropicURL(url).WithAnthropicKey(apiKey)
+	if workspace != "" {
+		c.ds4.WithAnthropicWorkspace(workspace)
+	}
+	if len(models) > 0 {
+		c.ds4.WithAnthropicModels(models...)
+	}
+	return c
+}
+
 // NewWithBaseURL creates a Client authenticated with apiKey that sends
 // requests to baseURL instead of the provider default. It exists for
 // self-hosted endpoints and for tests that point at a stub server.

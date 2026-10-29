@@ -128,6 +128,7 @@ func main() {
 		log.Fatalf("project: ensure default: %v", err)
 	}
 	llmClient := llm.NewWithLocalModel(cfg.DeepSeekAPIKey, cfg.LocalModelURL, cfg.LocalModelAPIKey).
+		WithAnthropic(cfg.AnthropicURL, cfg.AnthropicAPIKey, cfg.AnthropicWorkspace, cfg.AnthropicModels).
 		WithGuard(llm.GuardConfig{
 			Disabled:        cfg.LLMGuardDisabled,
 			MaxCharRun:      cfg.LLMGuardMaxCharRun,
