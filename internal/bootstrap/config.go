@@ -35,6 +35,13 @@ type Config struct {
 	// endpoint. When set, ds4 routes identities by their preferred model name.
 	LocalModelURL    string
 	LocalModelAPIKey string
+	// Anthropic* configure an optional Anthropic Messages API backend
+	// (api.anthropic.com or a compatible server). AnthropicModels registers
+	// model names statically for servers without GET /v1/models.
+	AnthropicURL       string
+	AnthropicAPIKey    string
+	AnthropicWorkspace string
+	AnthropicModels    []string
 	// QQ credentials and recipient configure optional proactive notifications.
 	QQAppID      string
 	QQAppSecret  string
@@ -126,6 +133,10 @@ func Load() (*Config, error) {
 		DeepSeekAPIKey:           os.Getenv("HEPHAESTUS_DEEPSEEK_API_KEY"),
 		LocalModelURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_URL")), "/"),
 		LocalModelAPIKey:         strings.TrimSpace(os.Getenv("HEPHAESTUS_LOCAL_MODEL_API_KEY")),
+		AnthropicURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("HEPHAESTUS_ANTHROPIC_URL")), "/"),
+		AnthropicAPIKey:          strings.TrimSpace(os.Getenv("HEPHAESTUS_ANTHROPIC_API_KEY")),
+		AnthropicWorkspace:       strings.TrimSpace(os.Getenv("HEPHAESTUS_ANTHROPIC_WORKSPACE")),
+		AnthropicModels:          splitCommaSeparated(os.Getenv("HEPHAESTUS_ANTHROPIC_MODELS")),
 		QQAppID:                  strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_ID")),
 		QQAppSecret:              strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_APP_SECRET")),
 		QQUserOpenID:             strings.TrimSpace(os.Getenv("HEPHAESTUS_QQ_USER_OPENID")),
@@ -186,8 +197,8 @@ func Load() (*Config, error) {
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DATABASE_URL is required")
 	}
-	if cfg.DeepSeekAPIKey == "" && cfg.LocalModelURL == "" {
-		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY or HEPHAESTUS_LOCAL_MODEL_URL is required")
+	if cfg.DeepSeekAPIKey == "" && cfg.LocalModelURL == "" && cfg.AnthropicURL == "" {
+		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_DEEPSEEK_API_KEY, HEPHAESTUS_LOCAL_MODEL_URL or HEPHAESTUS_ANTHROPIC_URL is required")
 	}
 	if cfg.EnvironmentLocation == "" {
 		return nil, fmt.Errorf("bootstrap: HEPHAESTUS_ENV_LOCATION is required")

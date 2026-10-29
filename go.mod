@@ -5,7 +5,7 @@ go 1.26.9
 require (
 	github.com/6tail/lunar-go v1.4.6
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Cyvadra/ds4 v0.2.4
+	github.com/Cyvadra/ds4 v0.3.0
 	github.com/ProgramCX/GoQQBot v0.0.0
 	github.com/chromedp/chromedp v0.20.1
 	github.com/deminzhang/qimen-go v0.0.10-0.20260611034756-4d3f58fa0f40
