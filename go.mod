@@ -7,7 +7,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Cyvadra/ds4 v0.3.1-0.20261029095439-c82b715e9dde
 	github.com/ProgramCX/GoQQBot v0.0.0
-	github.com/chromedp/chromedp v0.20.1
+	github.com/chromedp/chromedp v0.21.0
 	github.com/deminzhang/qimen-go v0.0.10-0.20260611034756-4d3f58fa0f40
 	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.12.0
@@ -17,11 +17,11 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/liuzl/gocc v0.0.0-20231231122217-0372e1059ca5
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
-	github.com/serpapi/serpapi-golang v1.1.0
+	github.com/serpapi/serpapi-golang v1.2.0
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.16.6
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.6.3
@@ -85,13 +85,13 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.9.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.31.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.50.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
