@@ -171,6 +171,7 @@ http://127.0.0.1:5173
 | --- | --- |
 | `/help`、`/ping` | 查看命令帮助或服务连通性。 |
 | `/status` | 查看当前身份、Project、上下文估算和近期告警。 |
+| `/compact` | 立即压缩较早的对话上下文；若上下文已较小且最近已压缩过，则跳过。 |
 | `/list <kind>`、`/detail <kind> <id>` | 浏览配置、会话、Project、Workflow 与 Job。 |
 | `/switch` | 切换 Identity、Concierge、Project 或其他 Session。 |
 | `/activate`、`/deactivate` | 调整当前 Session 的 Impression、Tool Group 或非固定 Plugin。 |

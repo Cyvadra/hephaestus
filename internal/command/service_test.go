@@ -62,6 +62,29 @@ func TestSteerCommandParsesModesAndCancel(t *testing.T) {
 	}
 }
 
+func TestCompactCommandInvokesCompactor(t *testing.T) {
+	service := testService()
+	var gotSessionID uint
+	service.SetCompactor(func(_ context.Context, sessionID uint) (string, error) {
+		gotSessionID = sessionID
+		return "Context compacted: 100 -> 40 estimated units.", nil
+	})
+
+	result, err := service.ExecuteResult(9, "/compact")
+	if err != nil {
+		t.Fatalf("/compact: %v", err)
+	}
+	if gotSessionID != 9 || result.Response != "Context compacted: 100 -> 40 estimated units." {
+		t.Fatalf("/compact = %q for session %d", result.Response, gotSessionID)
+	}
+}
+
+func TestCompactCommandRequiresCompactor(t *testing.T) {
+	if _, err := testService().ExecuteResult(9, "/compact"); err == nil {
+		t.Fatal("expected /compact to fail without a registered compactor")
+	}
+}
+
 func TestEditResendsPreviousUserMessageFromItsParent(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

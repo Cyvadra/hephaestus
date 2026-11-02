@@ -8,7 +8,7 @@ package transform
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -102,57 +102,170 @@ func EstimateLength(text string) int {
 	return int(float64(len([]rune(text))) / EstimateDivisor)
 }
 
-// Message is a compacted {role, content} entry. Role must be "user" or
-// "assistant"; a compressed sequence never stores a "system" message.
+// Message is a stored checkpoint entry: the replacement user message that
+// buildContext replays. New rows hold exactly one framed checkpoint, but
+// historical rows may still hold a multi-message compacted sequence.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// compressionSystemPrompt instructs the model to produce a compacted
-// message sequence.
-//
-// TODO: this is a first-pass template. Study how Codex, GitHub Copilot and
-// Claude Code implement conversation compression before refining it.
-const compressionSystemPrompt = `You compress chat history into a shorter sequence of ` +
-	`messages that preserves the essential facts, decisions and open ` +
-	`threads a conversation needs to continue naturally. Respond with ONLY ` +
-	`a JSON array of objects, each shaped as {"role": "user"|"assistant", ` +
-	`"content": "..."}. Do not include any role other than "user" or ` +
-	`"assistant". Do not include any text outside the JSON array.`
+// CompressMessage is one history entry handed to the summarizer. It is
+// separate from Message so stored rows and buildContext replay stay
+// {role, content} only. ToolCalls is the raw tool_calls payload and
+// ToolCallID links a tool result to its call.
+type CompressMessage struct {
+	Role       string
+	Content    string
+	ToolCalls  string
+	ToolCallID string
+}
 
-// Compress asks the model to replace messages with a shorter equivalent
-// sequence targeting approximately expectedLength estimated units (see
-// EstimateLength). It returns an error if the call fails or the model's
-// response cannot be parsed as a valid user/assistant-only message array;
-// callers must treat that exactly like /stop and leave session state as-is.
-func Compress(ctx context.Context, client *llm.Client, messages []Message, expectedLength int) ([]Message, error) {
-	input, err := json.Marshal(messages)
-	if err != nil {
-		return nil, fmt.Errorf("transform: compress: marshal input messages: %w", err)
-	}
+// checkpointPreamble tells the resumed model that the preceding checkpoint is
+// established background, so it neither restates nor acknowledges it.
+const checkpointPreamble = "This is a generated checkpoint condensing an " +
+	"earlier span of the conversation to free up context. Treat the captured " +
+	"context as established background and build on it without restating it. " +
+	"Continue the task directly from the messages that follow, without " +
+	"acknowledging this checkpoint."
 
-	userPrompt := fmt.Sprintf(
-		"Target length (estimated units): %d\n\nMessages to compress (JSON):\n%s",
-		expectedLength, string(input),
-	)
+const (
+	summaryOpenTag  = "<compacted-summary>"
+	summaryCloseTag = "</compacted-summary>"
+)
+
+var (
+	// ErrCompressionEmpty reports a model response with no checkpoint text.
+	ErrCompressionEmpty = errors.New("transform: compress: model returned empty output")
+	// ErrCompressionNotSmaller reports a checkpoint that does not shrink the
+	// history it would replace. Callers may keep the uncompressed context.
+	ErrCompressionNotSmaller = errors.New("transform: compress: checkpoint does not shrink input")
+)
+
+// compressionSystemPrompt instructs the model to produce a structured
+// checkpoint that a resumed model can continue from.
+const compressionSystemPrompt = `You are now acting as a compaction engine for this AI coding assistant. Condense the conversation provided below into a structured checkpoint that lets another model resume the work with no loss of essential context.
+
+Output EXACTLY the Markdown structure below: keep every section, in order. Use terse bullets, not prose paragraphs. Write "(none)" for an empty section - never drop a section.
+
+## Primary Request and Intent
+- [the user's original and evolving goals; quote verbatim where the exact wording matters]
+
+## Key Technical Concepts
+- [technologies, frameworks, patterns, and conventions in play]
+
+## Files and Code
+- [exact path: why it matters, key changes or snippets]
+
+## Errors and Fixes
+- [error: how it was resolved, plus any related user feedback]
+
+## Pending Jobs
+- [explicitly requested work not yet completed]
+
+## Current Work
+- [precisely what was in progress at this checkpoint]
+
+## Next Step
+- [the single next action, directly in line with the most recent request, or "(none)"]
+
+## Critical Context
+- [decisions and their rationale, constraints, user preferences, open questions, data needed to continue]
+
+Rules:
+- Write concise English engineering prose. Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.
+- Capture user feedback and explicit instructions faithfully, especially corrections.
+- Do NOT mention this summarization request or that the context was compacted.
+- Output only the checkpoint text: no code fences, preambles, or commentary, and no <compacted-summary> tags; the caller adds them.
+- The user prompt may include a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.`
+
+// Compress asks the model to condense prior and messages into one checkpoint
+// targeting approximately expectedLength estimated units (see EstimateLength).
+// prior is the checkpoint being replaced; messages are the newly covered
+// history. It returns one replacement user message framed with
+// checkpointPreamble and <compacted-summary> tags. An empty model response
+// yields ErrCompressionEmpty, and a checkpoint no smaller than prior+messages
+// yields ErrCompressionNotSmaller; other failures come from the LLM call.
+// Callers must treat failures exactly like /stop and leave session state
+// as-is, except that ErrCompressionNotSmaller may be skipped harmlessly.
+func Compress(ctx context.Context, client *llm.Client, prior []Message, messages []CompressMessage, expectedLength int) (Message, error) {
+	userPrompt := compressionPrompt(prior, messages, expectedLength)
 
 	content, err := client.RawCall(ctx, compressionSystemPrompt, userPrompt, maxOutputTokens(expectedLength))
 	if err != nil {
-		return nil, fmt.Errorf("transform: compress: llm call: %w", err)
+		return Message{}, fmt.Errorf("transform: compress: llm call: %w", err)
 	}
 
-	var out []Message
-	if err := json.Unmarshal([]byte(content), &out); err != nil {
-		return nil, fmt.Errorf("transform: compress: parse model output as JSON message array: %w", err)
+	// Postgres jsonb rejects \u0000, and this text is persisted in the
+	// compression row.
+	content = strings.ReplaceAll(content, "\x00", "")
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return Message{}, ErrCompressionEmpty
 	}
-	for i, m := range out {
-		if m.Role != "user" && m.Role != "assistant" {
-			return nil, fmt.Errorf("transform: compress: message %d has disallowed role %q", i, m.Role)
+
+	framed := checkpointPreamble + "\n\n" + summaryOpenTag + "\n" + content + "\n" + summaryCloseTag
+	if EstimateLength(framed) >= priorUnits(prior)+compressSourceUnits(messages) {
+		return Message{}, ErrCompressionNotSmaller
+	}
+
+	return Message{Role: "user", Content: framed}, nil
+}
+
+// compressionPrompt renders the checkpoint request as a readable transcript.
+// Raw content is used rather than JSON escaping so paths, commands, and
+// newlines stay legible to the summarizer.
+func compressionPrompt(prior []Message, messages []CompressMessage, expectedLength int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Target length (estimated units): %d\n\n", expectedLength)
+	if len(prior) > 0 {
+		b.WriteString("Prior checkpoint to merge (may be empty):\n")
+		for _, m := range prior {
+			writeTranscriptMessage(&b, CompressMessage{Role: m.Role, Content: m.Content})
 		}
 	}
+	b.WriteString("Messages to compress:\n")
+	for _, m := range messages {
+		writeTranscriptMessage(&b, m)
+	}
+	return b.String()
+}
 
-	return out, nil
+// writeTranscriptMessage appends one role-tagged entry, including tool-call
+// arguments and the call id that pairs a result with its request.
+func writeTranscriptMessage(b *strings.Builder, m CompressMessage) {
+	b.WriteString("[")
+	b.WriteString(m.Role)
+	if m.ToolCallID != "" {
+		b.WriteString(" call_id=")
+		b.WriteString(m.ToolCallID)
+	}
+	b.WriteString("]\n")
+	b.WriteString(m.Content)
+	if m.ToolCalls != "" {
+		if m.Content != "" {
+			b.WriteString("\n")
+		}
+		b.WriteString("tool_calls: ")
+		b.WriteString(m.ToolCalls)
+	}
+	b.WriteString("\n\n")
+}
+
+func priorUnits(prior []Message) int {
+	total := 0
+	for _, m := range prior {
+		total += EstimateLength(m.Content)
+	}
+	return total
+}
+
+func compressSourceUnits(messages []CompressMessage) int {
+	total := 0
+	for _, m := range messages {
+		total += EstimateLength(m.Content) + EstimateLength(m.ToolCalls)
+	}
+	return total
 }
 
 // summarizeSystemPrompt instructs the model to condense fetched content into

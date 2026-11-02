@@ -3,6 +3,8 @@ package transform
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,42 +88,153 @@ func TestLimitToolExchangeContentOmitsResultWhenArgumentsFillBudget(t *testing.T
 	}
 }
 
-func TestCompress(t *testing.T) {
+// compressClient returns a client whose chat-completions response carries
+// response, plus a channel delivering the request body for prompt assertions.
+func compressClient(t *testing.T, response string) (*llm.Client, <-chan string) {
+	t.Helper()
+	bodyCh := make(chan string, 1)
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatalf("decode request: %v", err)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		bodyCh <- string(raw)
+		payload, err := json.Marshal(map[string]any{
+			"choices": []map[string]any{{
+				"message":       map[string]any{"role": "assistant", "content": response},
+				"finish_reason": "stop",
+			}},
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"[{\"role\":\"user\",\"content\":\"keep\"}]"},"finish_reason":"stop"}]}`))
+		_, _ = w.Write(payload)
 	})
+	return client, bodyCh
+}
 
-	out, err := Compress(context.Background(), client, []Message{{Role: "user", Content: "long history"}, {Role: "assistant", Content: "reply"}}, 10)
+// userPromptFromRequest extracts the user prompt from a captured
+// chat-completions request body.
+func userPromptFromRequest(t *testing.T, body string) string {
+	t.Helper()
+	var request struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	for _, m := range request.Messages {
+		if m.Role == "user" {
+			return m.Content
+		}
+	}
+	t.Fatal("request has no user message")
+	return ""
+}
+
+func TestCompress(t *testing.T) {
+	checkpoint := "## Primary Request and Intent\n- Ship the change."
+	client, bodyCh := compressClient(t, checkpoint)
+
+	messages := []CompressMessage{
+		{Role: "user", Content: strings.Repeat("old context ", 200)},
+		{Role: "assistant", Content: strings.Repeat("assistant reply ", 200)},
+	}
+	out, err := Compress(context.Background(), client, nil, messages, 10)
 	if err != nil {
 		t.Fatalf("Compress() error = %v", err)
 	}
-	if len(out) != 1 || out[0].Role != "user" || out[0].Content != "keep" {
-		t.Fatalf("unexpected output: %+v", out)
+	if out.Role != "user" {
+		t.Fatalf("checkpoint role = %q, want user", out.Role)
+	}
+	for _, want := range []string{checkpointPreamble, summaryOpenTag, checkpoint, summaryCloseTag} {
+		if !strings.Contains(out.Content, want) {
+			t.Errorf("checkpoint missing %q: %q", want, out.Content)
+		}
+	}
+
+	prompt := userPromptFromRequest(t, <-bodyCh)
+	for _, want := range []string{"Messages to compress:", "[user]", "[assistant]", "old context", "assistant reply"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q: %q", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Prior checkpoint") {
+		t.Errorf("prompt has a prior section without prior messages: %q", prompt)
 	}
 }
 
-func TestCompressRejectsDisallowedRole(t *testing.T) {
-	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"[{\"role\":\"system\",\"content\":\"x\"}]"},"finish_reason":"stop"}]}`))
-	})
-	if _, err := Compress(context.Background(), client, []Message{{Role: "user", Content: "x"}}, 10); err == nil {
-		t.Fatal("Compress() expected error for disallowed role")
+func TestCompressMergesPriorCheckpoint(t *testing.T) {
+	client, bodyCh := compressClient(t, "## Critical Context\n- merged")
+	prior := []Message{{Role: "user", Content: "PRIOR-CHECKPOINT-TEXT"}}
+	messages := []CompressMessage{{Role: "user", Content: strings.Repeat("new history ", 200)}}
+
+	out, err := Compress(context.Background(), client, prior, messages, 100)
+	if err != nil {
+		t.Fatalf("Compress() error = %v", err)
+	}
+	if out.Role != "user" || !strings.Contains(out.Content, "<compacted-summary>") {
+		t.Fatalf("unexpected checkpoint: %+v", out)
+	}
+
+	prompt := userPromptFromRequest(t, <-bodyCh)
+	for _, want := range []string{"Prior checkpoint to merge", "PRIOR-CHECKPOINT-TEXT", "new history"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q: %q", want, prompt)
+		}
 	}
 }
 
-func TestCompressRejectsNonJSON(t *testing.T) {
-	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"not json"},"finish_reason":"stop"}]}`))
-	})
-	if _, err := Compress(context.Background(), client, []Message{{Role: "user", Content: "x"}}, 10); err == nil {
-		t.Fatal("Compress() expected parse error")
+func TestCompressIncludesToolCalls(t *testing.T) {
+	client, bodyCh := compressClient(t, "## Files and Code\n- internal/chat/pipeline.go")
+	messages := []CompressMessage{
+		{Role: "assistant", Content: strings.Repeat("calling tool ", 100), ToolCalls: `[{"id":"call-1"}]`},
+		{Role: "tool", Content: strings.Repeat("tool output ", 100), ToolCallID: "call-1"},
+	}
+
+	if _, err := Compress(context.Background(), client, nil, messages, 100); err != nil {
+		t.Fatalf("Compress() error = %v", err)
+	}
+
+	prompt := userPromptFromRequest(t, <-bodyCh)
+	for _, want := range []string{`tool_calls: [{"id":"call-1"}]`, "[tool call_id=call-1]"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q: %q", want, prompt)
+		}
+	}
+}
+
+func TestCompressRejectsEmptyOutput(t *testing.T) {
+	client, _ := compressClient(t, "   ")
+	messages := []CompressMessage{{Role: "user", Content: strings.Repeat("history ", 200)}}
+	if _, err := Compress(context.Background(), client, nil, messages, 10); !errors.Is(err, ErrCompressionEmpty) {
+		t.Fatalf("Compress() error = %v, want ErrCompressionEmpty", err)
+	}
+}
+
+func TestCompressRejectsNonShrinkingOutput(t *testing.T) {
+	client, _ := compressClient(t, strings.Repeat("oversized checkpoint ", 100))
+	messages := []CompressMessage{{Role: "user", Content: "x"}}
+	if _, err := Compress(context.Background(), client, nil, messages, 10); !errors.Is(err, ErrCompressionNotSmaller) {
+		t.Fatalf("Compress() error = %v, want ErrCompressionNotSmaller", err)
+	}
+}
+
+func TestCompressStripsNulBytes(t *testing.T) {
+	client, _ := compressClient(t, "checkpoint\x00text")
+	messages := []CompressMessage{{Role: "user", Content: strings.Repeat("history ", 200)}}
+	out, err := Compress(context.Background(), client, nil, messages, 10)
+	if err != nil {
+		t.Fatalf("Compress() error = %v", err)
+	}
+	if strings.Contains(out.Content, "\x00") {
+		t.Fatalf("checkpoint contains a NUL byte: %q", out.Content)
 	}
 }
 

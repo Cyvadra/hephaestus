@@ -284,7 +284,7 @@ func TestMaybeCompress_SkipsWhenContextWindowUnset(t *testing.T) {
 	}
 	activePath := []store.ChatMessage{{ID: 1, Role: ds4.RoleAssistant, Content: strings.Repeat("x", 10_000)}}
 
-	out, err := pipeline.maybeCompress(context.Background(), store.Session{ID: 1}, registry.Identity{ContextWindowTokens: 0}, activePath, nil, turn)
+	out, err := pipeline.maybeCompress(context.Background(), store.Session{ID: 1}, registry.Identity{ContextWindowTokens: 0}, activePath, nil, turn, 0, len(activePath))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestMaybeCompress_DoesNotFireBelowThreshold(t *testing.T) {
 	}
 	activePath := []store.ChatMessage{{ID: 1, Role: ds4.RoleAssistant, Content: "hi"}}
 
-	out, err := pipeline.maybeCompress(context.Background(), store.Session{ID: 1}, registry.Identity{ContextWindowTokens: 1000}, activePath, nil, turn)
+	out, err := pipeline.maybeCompress(context.Background(), store.Session{ID: 1}, registry.Identity{ContextWindowTokens: 1000}, activePath, nil, turn, 0, len(turn.Messages)-1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

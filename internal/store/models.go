@@ -340,8 +340,10 @@ type Compression struct {
 	FirstMessageID uint
 	LastMessageID  uint
 
-	// Messages is the compacted {role, content} sequence, stored as JSON
-	// text. Only "user" and "assistant" roles are allowed.
+	// Messages stores the checkpoint as a JSON array. New rows hold one
+	// framed user message (preamble plus <compacted-summary> tags);
+	// historical rows may hold a multi-message compacted sequence. Both
+	// replay through buildContext.
 	Messages datatypes.JSON `gorm:"type:jsonb"`
 
 	CreatedAt time.Time

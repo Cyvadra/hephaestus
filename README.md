@@ -199,6 +199,7 @@ These local commands are not written to the chat history and are never sent to t
 | --- | --- |
 | `/help`, `/ping` | Show command help or check service connectivity. |
 | `/status` | Show the current identity, Project, context estimate, and recent warnings. |
+| `/compact` | Compact older conversation history now; skipped when the context is already small and a recent compaction covers it. |
 | `/list <kind>`, `/detail <kind> <id>` | Browse configuration, sessions, Projects, Workflows, and Jobs. |
 | `/switch` | Switch Identity, Concierge, Project, or to another Session. |
 | `/activate`, `/deactivate` | Toggle the current Session's Impressions, Tool Groups, or non-fixed Plugins. |

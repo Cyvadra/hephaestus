@@ -70,6 +70,7 @@ type Service struct {
 	runCanceler    func(uint) error
 	putSteering    func(uint, string, steering.Mode) (steering.Outcome, uint, error)
 	cancelSteering func(uint) (bool, error)
+	compactor      func(context.Context, uint) (string, error)
 
 	mu       sync.Mutex
 	lastList map[uint]map[Kind][]string
@@ -163,6 +164,15 @@ func (s *Service) SetSteeringController(put func(uint, string, steering.Mode) (s
 	s.mu.Unlock()
 }
 
+// SetCompactor registers the explicit context compaction used by /compact.
+// The callback returns the user-visible outcome and must not run while the
+// session has an active turn.
+func (s *Service) SetCompactor(compact func(context.Context, uint) (string, error)) {
+	s.mu.Lock()
+	s.compactor = compact
+	s.mu.Unlock()
+}
+
 func (s *Service) currentRegistry() *registry.Registry {
 	return s.registries.Current()
 }
@@ -184,6 +194,7 @@ var commandDefinitions = []commandDefinition{
 	{name: "stop", help: "stop the current task"},
 	{name: "steer", help: "send an instruction to the running task"},
 	{name: "status", help: "session info, context usage, recent warnings"},
+	{name: "compact", help: "compact older conversation context now"},
 	{name: "list", help: "list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)"},
 	{name: "detail", help: "show details of one option"},
 	{name: "switch", help: "switch settings, project, or selected session"},
@@ -266,6 +277,8 @@ func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text
 		response, err = s.steer(sessionID, args)
 	case "/status":
 		response, err = s.status(sessionID)
+	case "/compact":
+		response, err = s.compact(ctx, sessionID)
 	case "/list":
 		response, err = s.list(sessionID, args)
 	case "/detail":
@@ -562,6 +575,16 @@ func (s *Service) stop(sessionID uint) string {
 		return "Stopping current task."
 	}
 	return "Nothing is currently running for this session."
+}
+
+func (s *Service) compact(ctx context.Context, sessionID uint) (string, error) {
+	s.mu.Lock()
+	compact := s.compactor
+	s.mu.Unlock()
+	if compact == nil {
+		return "", fmt.Errorf("command: context compaction is unavailable")
+	}
+	return compact(ctx, sessionID)
 }
 
 func (s *Service) status(sessionID uint) (string, error) {

@@ -286,6 +286,18 @@ func main() {
 	commands := command.NewService(registryStore, toolReg, pluginReg, sessions, notifier, db, projects, interactions)
 	commands.SetRunCanceler(chatRunSvc.CancelSession)
 	commands.SetSteeringController(chatRunSvc.PutSteering, chatRunSvc.CancelSteering)
+	commands.SetCompactor(func(ctx context.Context, sessionID uint) (string, error) {
+		if _, err := chatRunSvc.ActiveForSession(sessionID); err == nil {
+			return "", fmt.Errorf("command: a run is active for this session; stop it before compacting")
+		} else if !errors.Is(err, chatrun.ErrRunNotFound) {
+			return "", err
+		}
+		result, err := pipeline.Compact(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
+		return result.Message(), nil
+	})
 	var configuredChannels []channels.Channel
 	if cfg.QQAppID != "" {
 		qqChannel, err := channels.New("qq", channelqq.Config{

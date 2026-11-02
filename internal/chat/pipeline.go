@@ -33,11 +33,68 @@ const (
 	// compressionTriggerRatio matches the design doc's "current context
 	// length > 80% max context length" compression trigger.
 	compressionTriggerRatio = 0.8
-	continuationAttempts    = 3
-	continuationBridge      = "\n\n"
-	postSendWorkers         = 4
-	postSendQueueSize       = 32
+	// compressionRetainRatio is the fraction of the context window kept
+	// verbatim after a compression, so recent details survive unsummarized.
+	compressionRetainRatio = 0.16
+	// compressionMinOlderUnits skips a summarization whose input is too small
+	// to shrink meaningfully.
+	compressionMinOlderUnits = 512
+	// compressionManualRetainRatio bounds the verbatim tail of an explicit
+	// /compact to a fraction of the history being compacted. It is capped by
+	// compressionRetainRatio of the window, so a manual compaction always
+	// leaves less raw history behind than the automatic trigger allows.
+	compressionManualRetainRatio = 0.1
+	// compressionManualMinContextRatio makes /compact a no-op below this
+	// fraction of the context window when a compaction already exists on the
+	// active path: there is nothing meaningful to reclaim, and a fresh
+	// summarization would only cost tokens.
+	compressionManualMinContextRatio = 0.15
+	continuationAttempts             = 3
+	continuationBridge               = "\n\n"
+	postSendWorkers                  = 4
+	postSendQueueSize                = 32
 )
+
+// compactionMode selects the trigger rules for one compaction attempt.
+type compactionMode uint8
+
+const (
+	compactionAuto compactionMode = iota
+	compactionManual
+)
+
+// compactionResult describes one compaction attempt. A skipped attempt has
+// Compacted false and Reason set; Reason is empty for routine auto skips.
+type compactionResult struct {
+	Compacted      bool
+	Reason         string
+	BeforeUnits    int
+	AfterUnits     int
+	FirstMessageID uint
+	LastMessageID  uint
+	checkpoint     store.ChatMessage
+	tail           []store.ChatMessage
+}
+
+// CompactResult is the public outcome of an explicit /compact request.
+type CompactResult struct {
+	Compacted   bool
+	BeforeUnits int
+	AfterUnits  int
+	Reason      string
+}
+
+// Message renders the result for a slash-command response.
+func (r CompactResult) Message() string {
+	if !r.Compacted {
+		reason := r.Reason
+		if reason == "" {
+			reason = "nothing to compact"
+		}
+		return "Compaction skipped: " + reason + "."
+	}
+	return fmt.Sprintf("Context compacted: %d -> %d estimated units.", r.BeforeUnits, r.AfterUnits)
+}
 
 // Pipeline runs turns for sessions.
 type Pipeline struct {
@@ -231,11 +288,7 @@ func (p *Pipeline) prepare(sessionID uint) (turnPrep, error) {
 		return prep, fmt.Errorf("chat: project %d not found", prep.sess.ProjectID)
 	}
 	prep.workspace = p.projects.Path(*proj)
-	prep.vars = registry.TimePromptVars(time.Now())
-	prep.vars["project"] = proj.Name
-	prep.vars["workspace"] = prep.workspace
-	prep.vars["session_id"] = strconv.FormatUint(uint64(prep.sess.ID), 10)
-	prep.vars["session_title"] = prep.sess.Title
+	prep.vars = promptVars(proj, prep.workspace, prep.sess, time.Now())
 	prep.identity, err = prep.registry.RenderIdentity(prep.registry.Identities[settings.Identity], prep.vars)
 	if err != nil {
 		return prep, fmt.Errorf("chat: %w", err)
@@ -269,20 +322,27 @@ func filterChildSessionTools(sess store.Session, toolset []toolkit.Tool) []toolk
 	return kept
 }
 
-// resolveSettings sanitizes a session's settings against the current
-// registry, self-healing stale references: a missing identity falls back to
-// the registry's default, and unknown impressions, tool groups and plugins
-// are dropped. Repaired settings are persisted so the session converges to
-// a healthy state instead of failing every turn.
-func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, error) {
+// promptVars builds the template variables shared by every turn and by
+// ephemeral side questions.
+func promptVars(proj *store.Project, workspace string, sess store.Session, now time.Time) registry.PromptVars {
+	vars := registry.TimePromptVars(now)
+	vars["project"] = proj.Name
+	vars["workspace"] = workspace
+	vars["session_id"] = strconv.FormatUint(uint64(sess.ID), 10)
+	vars["session_title"] = sess.Title
+	return vars
+}
+
+// sanitizeSettings repairs stale registry references in memory only. dirty
+// reports whether the result differs from the session's stored settings.
+func (p *Pipeline) sanitizeSettings(reg *registry.Registry, sess store.Session) (store.SessionSettings, bool, error) {
 	settings := sess.Settings.Data()
-	reg := p.registries.Current()
 	dirty := false
 
 	if _, ok := reg.Identities[settings.Identity]; !ok {
 		fallback := reg.DefaultIdentityName()
 		if fallback == "" {
-			return settings, fmt.Errorf("chat: session %d references missing identity %q and no fallback identity exists", sess.ID, settings.Identity)
+			return settings, false, fmt.Errorf("chat: session %d references missing identity %q and no fallback identity exists", sess.ID, settings.Identity)
 		}
 		settings.Identity = fallback
 		dirty = true
@@ -293,6 +353,19 @@ func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, 
 	if concierge, ok := reg.Concierges[sess.SourceConcierge]; ok {
 		settings.ToolGroups = keepAllowed(settings.ToolGroups, concierge.ToolGroups, &dirty)
 		settings.Plugins = keepAllowed(settings.Plugins, concierge.Plugins, &dirty)
+	}
+	return settings, dirty, nil
+}
+
+// resolveSettings sanitizes a session's settings against the current
+// registry, self-healing stale references: a missing identity falls back to
+// the registry's default, and unknown impressions, tool groups and plugins
+// are dropped. Repaired settings are persisted so the session converges to
+// a healthy state instead of failing every turn.
+func (p *Pipeline) resolveSettings(sess *store.Session) (store.SessionSettings, error) {
+	settings, dirty, err := p.sanitizeSettings(p.registries.Current(), *sess)
+	if err != nil {
+		return settings, err
 	}
 
 	if !dirty {
@@ -456,9 +529,18 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 			return nil, err
 		}
 	}
+	if opts.SelectRoot || opts.SelectedLeaf != nil {
+		// prepareTurn resolved the compression against the old active path.
+		// Resolve it again for the selected branch so buildContext never
+		// replays another branch's checkpoint.
+		prep.compRow, err = p.sessions.ResolveCompression(&prep.sess, prep.activePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	prep.identity, prep.toolset = applyTurnOptions(prep.identity, prep.toolset, opts)
 
-	llmContext, err := p.buildContext(prep.registry, prep.settings, prep.activePath, prep.compRow, prep.vars)
+	static, llmContext, err := p.buildContextParts(prep.registry, prep.settings, prep.activePath, prep.compRow, prep.vars)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +555,10 @@ func (p *Pipeline) Run(ctx context.Context, sessionID uint, userText string, opt
 		return nil, err
 	}
 
-	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, turn)
+	// Replacing [len(static), len(llmContext)) keeps the impression prefix and
+	// any messages HookUserMessageIncoming inserted before the pending user
+	// message while swapping only the replayed history for the checkpoint.
+	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, prep.activePath, prep.compRow, turn, len(static), len(llmContext))
 	if err != nil {
 		return nil, err
 	}
@@ -646,7 +731,7 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	userMsg := prep.activePath[userIdx]
 	pathUpToUser := prep.activePath[:userIdx+1]
 
-	llmContext, err := p.buildContext(prep.registry, prep.settings, pathUpToUser, prep.compRow, prep.vars)
+	static, llmContext, err := p.buildContextParts(prep.registry, prep.settings, pathUpToUser, prep.compRow, prep.vars)
 	if err != nil {
 		return nil, err
 	}
@@ -656,14 +741,14 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	// Compression on the regenerate path covers history up to (but not
 	// including) the user message being regenerated from: that message must
 	// stay in context, and it is what the regenerated reply re-answers.
-	// Passing the path without the user message lands the coverage boundary
-	// on the message before it, matching maybeCompress's assumption that the
-	// kept tail is the message the reply answers. This is safe because
-	// compression coverage always ends on an assistant message, never on a
-	// user message, so the message before the user is always at or after the
-	// previous coverage boundary.
+	// Passing the path without the user message keeps that message out of the
+	// compressed span, matching maybeCompress's assumption that the kept last
+	// message is what the reply answers. New coverage always starts at the
+	// previous coverage boundary (or the path start), so LastMessageID moves
+	// forward.
 	compressPath := pathUpToUser[:userIdx]
-	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, prep.compRow, turn)
+	// The regenerated user message is the final turn message and stays raw.
+	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, prep.compRow, turn, len(static), len(turn.Messages)-1)
 	if err != nil {
 		return nil, err
 	}
@@ -806,18 +891,28 @@ func newTurnContext(sessionID uint, messages []store.ChatMessage, isFirstTurn bo
 // user message: enabled impressions (in order), then either the unpacked
 // compression plus history after its coverage, or the full active path.
 func (p *Pipeline) buildContext(reg *registry.Registry, settings store.SessionSettings, activePath []store.ChatMessage, compRow *store.Compression, vars ...registry.PromptVars) ([]store.ChatMessage, error) {
-	out, err := p.staticContext(reg, settings, vars...)
+	_, messages, err := p.buildContextParts(reg, settings, activePath, compRow, vars...)
+	return messages, err
+}
+
+// buildContextParts is buildContext plus the impression prefix it rendered.
+// Compression callers need the prefix length to replace only the history
+// portion of a turn's messages.
+func (p *Pipeline) buildContextParts(reg *registry.Registry, settings store.SessionSettings, activePath []store.ChatMessage, compRow *store.Compression, vars ...registry.PromptVars) ([]store.ChatMessage, []store.ChatMessage, error) {
+	static, err := p.staticContext(reg, settings, vars...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	out := append([]store.ChatMessage(nil), static...)
 
 	if compRow == nil {
-		return append(out, activePath...), nil
+		out = append(out, activePath...)
+		return static, out, nil
 	}
 
 	var unpacked []transform.Message
 	if err := json.Unmarshal(compRow.Messages, &unpacked); err != nil {
-		return nil, fmt.Errorf("chat: unpack compression %d: %w", compRow.ID, err)
+		return nil, nil, fmt.Errorf("chat: unpack compression %d: %w", compRow.ID, err)
 	}
 	for _, m := range unpacked {
 		out = append(out, store.ChatMessage{Role: m.Role, Content: m.Content})
@@ -828,7 +923,7 @@ func (p *Pipeline) buildContext(reg *registry.Registry, settings store.SessionSe
 			out = append(out, m)
 		}
 	}
-	return out, nil
+	return static, out, nil
 }
 
 func (p *Pipeline) staticContext(reg *registry.Registry, settings store.SessionSettings, vars ...registry.PromptVars) ([]store.ChatMessage, error) {
@@ -851,100 +946,267 @@ func (p *Pipeline) staticContext(reg *registry.Registry, settings store.SessionS
 
 // compressIfNeeded fires HookContextCompression around the compression
 // decision (so Plugins can observe it) and, when triggered, replaces the
-// active path through its last persisted assistant message. Static context
-// and the pending user message are deliberately kept out of the compression
-// cache.
+// older part of the active path with one checkpoint while retaining its
+// newest messages verbatim. Static context and the pending user message are
+// deliberately kept out of the compression cache.
+//
+// historyStart and historyEnd bound the turn messages that compression may
+// replace: everything before historyStart (the impression prefix) and from
+// historyEnd onward (HookUserMessageIncoming insertions and the pending user
+// message) is preserved verbatim.
 //
 // Unlike every other hook, the decision and the actual LLM-driven
 // compaction stay pipeline-owned rather than delegated to a
-// Registry-dispatched Plugin: per the design doc, a failed compression must
-// abort the whole turn exactly like /stop, which the generic "skip a
-// failing plugin and continue" Plugin contract cannot express.
-func (p *Pipeline) compressIfNeeded(ctx context.Context, pluginNames []string, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, turn plugin.TurnContext) (plugin.TurnContext, error) {
+// Registry-dispatched Plugin: per the design doc, a failed compression call
+// must abort the whole turn exactly like /stop, which the generic "skip a
+// failing plugin and continue" Plugin contract cannot express. A checkpoint
+// that does not shrink its input is a harmless no-op skip, not a failure.
+func (p *Pipeline) compressIfNeeded(ctx context.Context, pluginNames []string, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, turn plugin.TurnContext, historyStart, historyEnd int) (plugin.TurnContext, error) {
 	turn = p.plugins.Run(ctx, pluginNames, plugin.HookContextCompression, plugin.PhaseBefore, turn)
-	turn, err := p.maybeCompress(ctx, sess, identity, activePath, compRow, turn)
+	turn, err := p.maybeCompress(ctx, sess, identity, activePath, compRow, turn, historyStart, historyEnd)
 	if err != nil {
 		return plugin.TurnContext{}, err
 	}
 	return p.plugins.Run(ctx, pluginNames, plugin.HookContextCompression, plugin.PhaseAfter, turn), nil
 }
 
-func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, turn plugin.TurnContext) (plugin.TurnContext, error) {
-	// A missing context window makes the trigger threshold meaningless and
-	// would fire compression on every turn; skip rather than pay for an LLM
-	// compaction with no sane target.
-	if identity.ContextWindowTokens <= 0 {
-		return turn, nil
-	}
+func (p *Pipeline) maybeCompress(ctx context.Context, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, turn plugin.TurnContext, historyStart, historyEnd int) (plugin.TurnContext, error) {
 	total := 0
 	for _, m := range turn.Messages {
 		total += estimateMessageLength(m)
 	}
-	if float64(total) <= compressionTriggerRatio*float64(identity.ContextWindowTokens) {
+	result, err := p.compactHistory(ctx, sess, identity, activePath, compRow, total, compactionAuto)
+	if err != nil {
+		return plugin.TurnContext{}, err
+	}
+	if !result.Compacted {
 		return turn, nil
 	}
-	if len(activePath) == 0 || activePath[len(activePath)-1].Role != ds4.RoleAssistant {
-		return turn, nil
+	if historyStart < 0 || historyEnd < historyStart || historyEnd > len(turn.Messages) {
+		return plugin.TurnContext{}, fmt.Errorf("chat: invalid compression window %d..%d for %d messages", historyStart, historyEnd, len(turn.Messages))
+	}
+
+	newMessages := make([]store.ChatMessage, 0, historyStart+1+len(result.tail)+len(turn.Messages)-historyEnd)
+	newMessages = append(newMessages, turn.Messages[:historyStart]...)
+	newMessages = append(newMessages, result.checkpoint)
+	newMessages = append(newMessages, result.tail...)
+	newMessages = append(newMessages, turn.Messages[historyEnd:]...)
+	turn.Messages = newMessages
+	return turn, nil
+}
+
+// Compact runs one explicit compaction of sessionID's active history,
+// independent of the automatic 80%-of-window trigger. It still skips when the
+// context is small and a previous compaction covers it, and when the
+// uncovered history cannot shrink meaningfully.
+func (p *Pipeline) Compact(ctx context.Context, sessionID uint) (CompactResult, error) {
+	prep, _, err := p.prepareTurn(ctx, sessionID)
+	if err != nil {
+		return CompactResult{}, err
+	}
+	_, current, err := p.buildContextParts(prep.registry, prep.settings, prep.activePath, prep.compRow, prep.vars)
+	if err != nil {
+		return CompactResult{}, err
+	}
+	total := 0
+	for _, m := range current {
+		total += estimateMessageLength(m)
+	}
+	result, err := p.compactHistory(ctx, prep.sess, prep.identity, prep.activePath, prep.compRow, total, compactionManual)
+	if err != nil {
+		return CompactResult{}, err
+	}
+	return CompactResult{
+		Compacted:   result.Compacted,
+		BeforeUnits: result.BeforeUnits,
+		AfterUnits:  result.AfterUnits,
+		Reason:      result.Reason,
+	}, nil
+}
+
+// compactHistory applies the compression policy and, when it fires, replaces
+// the older part of the active path with one checkpoint and persists the
+// coverage. contextUnits is the estimated size of the complete request
+// context, including static impressions and any trailing pending message.
+func (p *Pipeline) compactHistory(ctx context.Context, sess store.Session, identity registry.Identity, activePath []store.ChatMessage, compRow *store.Compression, contextUnits int, mode compactionMode) (compactionResult, error) {
+	result := compactionResult{BeforeUnits: contextUnits}
+	// A missing context window makes the trigger threshold meaningless and
+	// would fire compression on every turn; skip rather than pay for an LLM
+	// compaction with no sane target.
+	if identity.ContextWindowTokens <= 0 {
+		result.Reason = "the current identity has no context window configured"
+		return result, nil
+	}
+	switch mode {
+	case compactionAuto:
+		if float64(contextUnits) <= compressionTriggerRatio*float64(identity.ContextWindowTokens) {
+			return result, nil
+		}
+		// Coverage boundaries are stable only when the turn ended on an
+		// assistant message; a trailing user or tool message is left alone.
+		if len(activePath) == 0 || activePath[len(activePath)-1].Role != ds4.RoleAssistant {
+			return result, nil
+		}
+	case compactionManual:
+		if len(activePath) == 0 {
+			result.Reason = "this session has no history to compact"
+			return result, nil
+		}
+		if compRow != nil && float64(contextUnits) < compressionManualMinContextRatio*float64(identity.ContextWindowTokens) {
+			result.Reason = fmt.Sprintf("the context is %d estimated units and a recent compaction already covers it", contextUnits)
+			return result, nil
+		}
 	}
 
 	// Compress only history not already covered by a previous compression.
-	// The prior compacted block is kept verbatim and folded into the new
-	// one, so repeated compressions never re-summarize an earlier summary.
-	split := 0
+	// The prior checkpoint is merged into the new one, so repeated
+	// compressions never accumulate blocks.
+	split, priorApplies := 0, false
 	if compRow != nil {
-		for split < len(activePath) && activePath[split].ID <= compRow.LastMessageID {
-			split++
+		if index, ok := compressionSplitIndex(activePath, compRow.LastMessageID); ok {
+			split, priorApplies = index, true
 		}
 	}
 	toCompress := activePath[split:]
 	if len(toCompress) == 0 {
-		return turn, nil
+		result.Reason = "the latest compaction already covers all history"
+		return result, nil
 	}
-	keep := turn.Messages[len(turn.Messages)-1:]
-
-	input := make([]transform.Message, len(toCompress))
-	for i, m := range toCompress {
-		input[i] = transform.Message{Role: m.Role, Content: m.Content}
+	toCompressUnits := 0
+	for _, m := range toCompress {
+		toCompressUnits += estimateMessageLength(m)
 	}
 
-	compacted, err := transform.Compress(ctx, p.llm, input, int(float64(total)*0.3))
+	// Keep the newest part of the uncovered history verbatim.
+	retainUnits := int(compressionRetainRatio * float64(identity.ContextWindowTokens))
+	if mode == compactionManual {
+		if manual := int(compressionManualRetainRatio * float64(toCompressUnits)); manual < retainUnits {
+			retainUnits = manual
+		}
+	}
+	tailStart := selectRetainedTail(toCompress, retainUnits)
+	tailStart = alignTailToToolBoundary(toCompress, tailStart)
+	older, tail := toCompress[:tailStart], toCompress[tailStart:]
+	if len(older) == 0 {
+		result.Reason = "there is no older history beyond the retained tail"
+		return result, nil
+	}
+	olderUnits := 0
+	for _, m := range older {
+		olderUnits += estimateMessageLength(m)
+	}
+	if olderUnits < compressionMinOlderUnits {
+		result.Reason = fmt.Sprintf("only %d estimated units are eligible, below the %d-unit minimum", olderUnits, compressionMinOlderUnits)
+		return result, nil
+	}
+
+	var prior []transform.Message
+	priorLength := 0
+	if priorApplies {
+		if err := json.Unmarshal(compRow.Messages, &prior); err != nil {
+			return compactionResult{}, fmt.Errorf("chat: unpack compression %d: %w", compRow.ID, err)
+		}
+		for _, m := range prior {
+			priorLength += transform.EstimateLength(m.Content)
+		}
+	}
+
+	input := make([]transform.CompressMessage, len(older))
+	for i, m := range older {
+		input[i] = transform.CompressMessage{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCalls:  string(m.ToolCalls),
+			ToolCallID: m.ToolCallID,
+		}
+	}
+
+	// The checkpoint replaces the prior checkpoint and this span together, so
+	// target one third of their combined size.
+	checkpoint, err := transform.Compress(ctx, p.llm, prior, input, (priorLength+olderUnits)/3)
+	if errors.Is(err, transform.ErrCompressionNotSmaller) {
+		// The model could not beat the history it would replace. Keep the
+		// turn uncompressed rather than aborting; the auto trigger fires at
+		// 80% of the window, so the request still fits.
+		result.Reason = "the model returned a checkpoint that does not shrink the history"
+		return result, nil
+	}
 	if err != nil {
 		// Compression failure behaves like /stop: abort the turn, leave
 		// everything as-is.
-		return plugin.TurnContext{}, fmt.Errorf("chat: compression failed, aborting turn: %w", err)
+		return compactionResult{}, fmt.Errorf("chat: compression failed: %w", err)
 	}
-
-	// The stored block must be self-contained: prior compacted history plus
-	// the newly compacted tail, covering FirstMessageID..LastMessageID.
-	sequence := compacted
-	if compRow != nil {
-		var unpacked []transform.Message
-		if err := json.Unmarshal(compRow.Messages, &unpacked); err != nil {
-			return plugin.TurnContext{}, fmt.Errorf("chat: unpack compression %d: %w", compRow.ID, err)
-		}
-		sequence = append(unpacked, compacted...)
-	}
-
-	newMessages := make([]store.ChatMessage, 0, len(sequence)+1)
-	for _, m := range sequence {
-		newMessages = append(newMessages, store.ChatMessage{Role: m.Role, Content: m.Content})
-	}
-	newMessages = append(newMessages, keep...)
 
 	firstMessageID := activePath[0].ID
-	if compRow != nil {
+	if priorApplies && compRow.FirstMessageID != 0 {
 		firstMessageID = compRow.FirstMessageID
 	}
-	sequenceJSON, err := json.Marshal(sequence)
+	sequenceJSON, err := json.Marshal([]transform.Message{checkpoint})
 	if err != nil {
-		return plugin.TurnContext{}, fmt.Errorf("chat: marshal compression: %w", err)
+		return compactionResult{}, fmt.Errorf("chat: marshal compression: %w", err)
 	}
-	if _, err := p.sessions.StoreCompression(sess.ID, firstMessageID, activePath[len(activePath)-1].ID, sequenceJSON); err != nil {
-		return plugin.TurnContext{}, fmt.Errorf("chat: persist compression: %w", err)
+	lastMessageID := older[len(older)-1].ID
+	if _, err := p.sessions.StoreCompression(sess.ID, firstMessageID, lastMessageID, sequenceJSON); err != nil {
+		return compactionResult{}, fmt.Errorf("chat: persist compression: %w", err)
 	}
 
-	turn.Messages = newMessages
-	return turn, nil
+	tailUnits := 0
+	for _, m := range tail {
+		tailUnits += estimateMessageLength(m)
+	}
+	result.Compacted = true
+	result.FirstMessageID = firstMessageID
+	result.LastMessageID = lastMessageID
+	result.checkpoint = store.ChatMessage{Role: checkpoint.Role, Content: checkpoint.Content}
+	result.tail = tail
+	result.AfterUnits = contextUnits - priorLength - toCompressUnits +
+		transform.EstimateLength(checkpoint.Content) + tailUnits
+	return result, nil
+}
+
+// compressionSplitIndex returns the index just past lastID in activePath, or
+// false when lastID is not on the path.
+func compressionSplitIndex(activePath []store.ChatMessage, lastID uint) (int, bool) {
+	for i, m := range activePath {
+		if m.ID == lastID {
+			return i + 1, true
+		}
+	}
+	return 0, false
+}
+
+// selectRetainedTail returns the index where the newest suffix of messages
+// reaches retainUnits estimated units; len(messages) when the budget is
+// non-positive.
+func selectRetainedTail(messages []store.ChatMessage, retainUnits int) int {
+	if retainUnits <= 0 {
+		return len(messages)
+	}
+	accumulated := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		accumulated += estimateMessageLength(messages[i])
+		if accumulated >= retainUnits {
+			return i
+		}
+	}
+	return 0
+}
+
+// alignTailToToolBoundary moves a cut that starts on a tool result back over
+// the consecutive tool-result run to the assistant that issued the calls.
+// It returns 0 when that would leave tool results without their call.
+func alignTailToToolBoundary(messages []store.ChatMessage, start int) int {
+	if start <= 0 || start >= len(messages) || messages[start].Role != ds4.RoleTool {
+		return start
+	}
+	firstResult := start
+	for firstResult > 0 && messages[firstResult-1].Role == ds4.RoleTool {
+		firstResult--
+	}
+	if firstResult == 0 || messages[firstResult-1].Role != ds4.RoleAssistant {
+		return 0
+	}
+	return firstResult - 1
 }
 
 // estimateMessageLength approximates a message's context length, counting
