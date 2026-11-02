@@ -298,6 +298,9 @@ func main() {
 		}
 		return result.Message(), nil
 	})
+	commands.SetSideQuestioner(func(ctx context.Context, sessionID uint, question string) (string, error) {
+		return pipeline.SideQuestion(ctx, sessionID, question, nil, false, nil)
+	})
 	var configuredChannels []channels.Channel
 	if cfg.QQAppID != "" {
 		qqChannel, err := channels.New("qq", channelqq.Config{

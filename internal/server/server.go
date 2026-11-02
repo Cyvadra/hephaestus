@@ -99,6 +99,7 @@ func New(authService *auth.Service, registries *registry.Store, sessions *sessio
 	api.PATCH("/sessions/:id", s.updateSession)
 	api.DELETE("/sessions/:id", s.deleteSession)
 	api.GET("/sessions/:id/history", s.getHistory)
+	api.POST("/sessions/:id/btw", s.sideQuestion)
 	api.GET("/sessions/:id/chat-run", s.getActiveChatRun)
 	api.GET("/sessions/:id/chat-run/steering", s.getSteering)
 	api.PUT("/sessions/:id/chat-run/steering", s.putSteering)

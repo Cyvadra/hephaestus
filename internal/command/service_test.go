@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -82,6 +83,54 @@ func TestCompactCommandInvokesCompactor(t *testing.T) {
 func TestCompactCommandRequiresCompactor(t *testing.T) {
 	if _, err := testService().ExecuteResult(9, "/compact"); err == nil {
 		t.Fatal("expected /compact to fail without a registered compactor")
+	}
+}
+
+func TestBtwCommandInvokesSideQuestioner(t *testing.T) {
+	service := testService()
+	var gotSessionID uint
+	var gotQuestion string
+	service.SetSideQuestioner(func(_ context.Context, sessionID uint, question string) (string, error) {
+		gotSessionID, gotQuestion = sessionID, question
+		return "Because X.", nil
+	})
+
+	result, err := service.ExecuteResult(11, "/btw why did we pick X?")
+	if err != nil {
+		t.Fatalf("/btw: %v", err)
+	}
+	if gotSessionID != 11 || gotQuestion != "why did we pick X?" {
+		t.Fatalf("/btw called side questioner with session %d question %q", gotSessionID, gotQuestion)
+	}
+	if result.Response != "Because X." {
+		t.Fatalf("/btw response = %q", result.Response)
+	}
+}
+
+func TestBtwCommandRequiresQuestion(t *testing.T) {
+	service := testService()
+	service.SetSideQuestioner(func(context.Context, uint, string) (string, error) {
+		t.Fatal("side questioner must not run for a bare /btw")
+		return "", nil
+	})
+	_, err := service.ExecuteResult(11, "/btw")
+	if err == nil || !strings.Contains(err.Error(), "usage: /btw <question>") {
+		t.Fatalf("/btw without a question error = %v", err)
+	}
+}
+
+func TestBtwCommandRequiresSideQuestioner(t *testing.T) {
+	if _, err := testService().ExecuteResult(11, "/btw why?"); err == nil {
+		t.Fatal("expected /btw to fail without a registered side questioner")
+	}
+}
+
+func TestBtwCommandIsAdvertised(t *testing.T) {
+	if !slices.Contains(Names(), "btw") {
+		t.Fatal("Names() omits /btw")
+	}
+	if !strings.Contains(helpText, "/btw <question>") {
+		t.Fatal("help omits /btw usage")
 	}
 }
 

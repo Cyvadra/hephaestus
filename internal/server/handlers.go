@@ -494,7 +494,7 @@ func (s *Server) prepareMessage(c *gin.Context) (uint, sendMessageRequest, *uplo
 			badRequestf(c, "attachments cannot be sent with slash commands")
 			return 0, sendMessageRequest{}, nil, false
 		}
-		result, err := s.commands.ExecuteResult(sessionID, req.Text)
+		result, err := s.commands.ExecuteResultContext(c.Request.Context(), sessionID, req.Text)
 		if err != nil {
 			badRequest(c, err)
 		} else {

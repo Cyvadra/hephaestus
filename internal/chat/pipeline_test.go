@@ -367,3 +367,117 @@ func TestKeepRegisteredDropsUnknownNames(t *testing.T) {
 		t.Fatalf("expected only known names kept in order, got %v", got)
 	}
 }
+
+func TestTruncateAtLastCompleteAssistant(t *testing.T) {
+	toolCalls := datatypes.JSON(`[{"id":"call_1","type":"function"}]`)
+	complete := store.ChatMessage{Role: ds4.RoleAssistant, Content: "done", Status: store.MessageStatusComplete}
+	legacy := store.ChatMessage{Role: ds4.RoleAssistant, Content: "legacy"}
+	incomplete := store.ChatMessage{Role: ds4.RoleAssistant, Content: "cut off", Status: store.MessageStatusIncomplete}
+	user := store.ChatMessage{Role: ds4.RoleUser, Content: "ask"}
+	toolResult := store.ChatMessage{Role: ds4.RoleTool, Content: "result", ToolCallID: "call_1"}
+
+	tests := []struct {
+		name string
+		path []store.ChatMessage
+		want []string
+	}{
+		{
+			name: "nil input",
+			path: nil,
+			want: nil,
+		},
+		{
+			name: "no assistant message",
+			path: []store.ChatMessage{user},
+			want: nil,
+		},
+		{
+			name: "complete tail unchanged",
+			path: []store.ChatMessage{user, complete},
+			want: []string{"ask", "done"},
+		},
+		{
+			name: "dangling user dropped",
+			path: []store.ChatMessage{user, complete, {Role: ds4.RoleUser, Content: "pending"}},
+			want: []string{"ask", "done"},
+		},
+		{
+			name: "incomplete assistant dropped",
+			path: []store.ChatMessage{user, complete, {Role: ds4.RoleUser, Content: "again"}, incomplete},
+			want: []string{"ask", "done"},
+		},
+		{
+			name: "legacy empty status treated as complete",
+			path: []store.ChatMessage{user, legacy},
+			want: []string{"ask", "legacy"},
+		},
+		{
+			name: "tool result after final assistant excluded",
+			path: []store.ChatMessage{user, complete, toolResult},
+			want: []string{"ask", "done"},
+		},
+		{
+			name: "matched tool call and result kept inside the prefix",
+			path: []store.ChatMessage{
+				user,
+				{Role: ds4.RoleAssistant, ToolCalls: toolCalls},
+				toolResult,
+				complete,
+			},
+			want: []string{"ask", "", "result", "done"},
+		},
+		{
+			name: "tool-call-only endpoint dropped",
+			path: []store.ChatMessage{user, {Role: ds4.RoleAssistant, ToolCalls: toolCalls}},
+			want: []string{"ask"},
+		},
+		{
+			name: "tool-call-with-text endpoint stripped",
+			path: []store.ChatMessage{
+				user,
+				{Role: ds4.RoleAssistant, Content: "checking", ToolCalls: toolCalls},
+			},
+			want: []string{"ask", "checking"},
+		},
+		{
+			name: "tool result after tool-call endpoint dropped",
+			path: []store.ChatMessage{
+				user,
+				{Role: ds4.RoleAssistant, Content: "checking", ToolCalls: toolCalls},
+				toolResult,
+			},
+			want: []string{"ask", "checking"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateAtLastCompleteAssistant(tt.path)
+			if len(got) != len(tt.want) {
+				t.Fatalf("truncateAtLastCompleteAssistant() returned %d messages, want %d: %+v", len(got), len(tt.want), got)
+			}
+			for i, want := range tt.want {
+				if got[i].Content != want {
+					t.Fatalf("message %d content = %q, want %q", i, got[i].Content, want)
+				}
+			}
+			if tt.name == "tool-call-with-text endpoint stripped" {
+				if len(got[len(got)-1].ToolCalls) != 0 {
+					t.Fatalf("expected tool calls stripped from the endpoint, got %s", got[len(got)-1].ToolCalls)
+				}
+			}
+		})
+	}
+}
+
+func TestTruncateAtLastCompleteAssistantDoesNotMutateInput(t *testing.T) {
+	toolCalls := datatypes.JSON(`[{"id":"call_1","type":"function"}]`)
+	path := []store.ChatMessage{
+		{Role: ds4.RoleUser, Content: "ask"},
+		{Role: ds4.RoleAssistant, Content: "checking", ToolCalls: toolCalls},
+	}
+	truncateAtLastCompleteAssistant(path)
+	if len(path[1].ToolCalls) == 0 {
+		t.Fatal("truncation mutated the caller's message slice")
+	}
+}

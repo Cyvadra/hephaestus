@@ -197,6 +197,7 @@ func TestPrepareMessageRunFromRequestExecutesSlashCommand(t *testing.T) {
 	server := &Server{commands: command.NewService(nil, nil, nil, nil, nil, nil, nil, nil)}
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 	context.Params = gin.Params{{Key: "id", Value: "7"}}
 
 	_, _, _, execute, _ := server.prepareMessageRunFromRequest(context, "/ping", sendMessageRequest{})

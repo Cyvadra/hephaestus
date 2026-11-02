@@ -118,6 +118,19 @@ func TestIsStopCommand(t *testing.T) {
 	}
 }
 
+func TestIsPriorityCommand(t *testing.T) {
+	for _, input := range []string{"/stop", "/steer go on", "/btw why?", "  /btw   why?"} {
+		if !isPriorityCommand(input) {
+			t.Errorf("isPriorityCommand(%q) = false", input)
+		}
+	}
+	for _, input := range []string{"btw", "/btwx why", "/status", ""} {
+		if isPriorityCommand(input) {
+			t.Errorf("isPriorityCommand(%q) = true", input)
+		}
+	}
+}
+
 func TestStopClosesQueuesAndPreventsNewWorkers(t *testing.T) {
 	svc := New(nil, nil, nil, nil, nil, nil, nil, nil)
 	queue := make(chan channels.InboundMessage)

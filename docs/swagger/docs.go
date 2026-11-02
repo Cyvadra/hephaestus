@@ -943,6 +943,59 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/{id}/btw": {
+            "post": {
+                "description": "Streams an answer based on the session's committed context up to the last completed assistant message. The question and answer are never persisted, and no tools are available.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Ask an ephemeral side question",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Side question payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.sideQuestionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/sessions/{id}/history": {
             "get": {
                 "description": "Returns the session row plus every message in its (unpruned) tree, so the client can reconstruct and switch between branches itself.",
@@ -2470,6 +2523,23 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_command.SessionTarget"
                         }
                     ]
+                }
+            }
+        },
+        "internal_server.sideQuestionRequest": {
+            "type": "object",
+            "required": [
+                "question"
+            ],
+            "properties": {
+                "active_leaf_message_id": {
+                    "type": "integer"
+                },
+                "question": {
+                    "type": "string"
+                },
+                "select_root": {
+                    "type": "boolean"
                 }
             }
         },

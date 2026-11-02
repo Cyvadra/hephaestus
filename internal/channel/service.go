@@ -174,9 +174,20 @@ func isStopCommand(text string) bool {
 	return len(fields) > 0 && fields[0] == "/stop"
 }
 
+// isPriorityCommand reports whether text must bypass the per-chat queue.
+// /stop and /steer control the run occupying that queue; /btw is an
+// ephemeral read-only question that should answer while the run continues.
 func isPriorityCommand(text string) bool {
 	fields := strings.Fields(text)
-	return len(fields) > 0 && (fields[0] == "/stop" || fields[0] == "/steer")
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "/stop", "/steer", "/btw":
+		return true
+	default:
+		return false
+	}
 }
 
 // processPriorityCommand bypasses the per-chat message queue so live run
@@ -191,7 +202,8 @@ func (s *Service) processPriorityCommand(ctx context.Context, message channels.I
 		_ = external.Send(ctx, channels.OutboundMessage{ChatID: message.ChatID, Content: err.Error()})
 		return
 	}
-	response, err := s.commands.Execute(sessionID, message.Content)
+	result, err := s.commands.ExecuteResultContext(ctx, sessionID, message.Content)
+	response := result.Response
 	if err != nil {
 		response = err.Error()
 	}

@@ -422,7 +422,7 @@ func (s *Server) prepareMessageRunFromRequest(c *gin.Context, text string, req s
 		return 0, sendMessageRequest{}, nil, nil, nil
 	}
 	if command.IsCommand(text) {
-		result, err := s.commands.ExecuteResult(sessionID, text)
+		result, err := s.commands.ExecuteResultContext(c.Request.Context(), sessionID, text)
 		if err != nil {
 			badRequest(c, err)
 		} else if result.Edit == nil {

@@ -71,6 +71,7 @@ type Service struct {
 	putSteering    func(uint, string, steering.Mode) (steering.Outcome, uint, error)
 	cancelSteering func(uint) (bool, error)
 	compactor      func(context.Context, uint) (string, error)
+	sideQuestioner func(context.Context, uint, string) (string, error)
 
 	mu       sync.Mutex
 	lastList map[uint]map[Kind][]string
@@ -173,6 +174,15 @@ func (s *Service) SetCompactor(compact func(context.Context, uint) (string, erro
 	s.mu.Unlock()
 }
 
+// SetSideQuestioner registers the ephemeral answer used by /btw. The
+// callback must answer from committed context only and must not persist the
+// question, the answer, or any derived state.
+func (s *Service) SetSideQuestioner(ask func(context.Context, uint, string) (string, error)) {
+	s.mu.Lock()
+	s.sideQuestioner = ask
+	s.mu.Unlock()
+}
+
 func (s *Service) currentRegistry() *registry.Registry {
 	return s.registries.Current()
 }
@@ -195,6 +205,7 @@ var commandDefinitions = []commandDefinition{
 	{name: "steer", help: "send an instruction to the running task"},
 	{name: "status", help: "session info, context usage, recent warnings"},
 	{name: "compact", help: "compact older conversation context now"},
+	{name: "btw", help: "ask an ephemeral side question about the current context; never saved"},
 	{name: "list", help: "list available options (identity|impression|toolgroup|plugin|concierge|session|job|workflow|project)"},
 	{name: "detail", help: "show details of one option"},
 	{name: "switch", help: "switch settings, project, or selected session"},
@@ -279,6 +290,8 @@ func (s *Service) ExecuteResultContext(ctx context.Context, sessionID uint, text
 		response, err = s.status(sessionID)
 	case "/compact":
 		response, err = s.compact(ctx, sessionID)
+	case "/btw":
+		response, err = s.sideQuestion(ctx, sessionID, args)
 	case "/list":
 		response, err = s.list(sessionID, args)
 	case "/detail":
@@ -435,6 +448,8 @@ func formatHelp(definitions []commandDefinition) string {
 			fmt.Fprintf(&b, "/%s <impression|toolgroup|plugin> <#id[,#id...]|name[,name...]> - %s\n", definition.name, definition.help)
 		case "interact":
 			fmt.Fprintf(&b, "/interact <approve|deny|auto-approve|cancel-auto-approve> - %s\n", definition.help)
+		case "btw":
+			fmt.Fprintf(&b, "/btw <question> - %s\n", definition.help)
 		case "clear", "new":
 			fmt.Fprintf(&b, "/%s [archive] - %s; archive defaults to false\n", definition.name, definition.help)
 		case "last", "replay":
@@ -585,6 +600,24 @@ func (s *Service) compact(ctx context.Context, sessionID uint) (string, error) {
 		return "", fmt.Errorf("command: context compaction is unavailable")
 	}
 	return compact(ctx, sessionID)
+}
+
+// sideQuestion answers /btw from the session's committed context. The
+// response is transient by contract: callers must not persist it or feed it
+// back into later turns. It never registers a cancel callback, so /stop
+// still targets the main turn.
+func (s *Service) sideQuestion(ctx context.Context, sessionID uint, args []string) (string, error) {
+	question := strings.TrimSpace(strings.Join(args, " "))
+	if question == "" {
+		return "", fmt.Errorf("command: usage: /btw <question>")
+	}
+	s.mu.Lock()
+	ask := s.sideQuestioner
+	s.mu.Unlock()
+	if ask == nil {
+		return "", fmt.Errorf("command: side questions are unavailable")
+	}
+	return ask(ctx, sessionID, question)
 }
 
 func (s *Service) status(sessionID uint) (string, error) {
