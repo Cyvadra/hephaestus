@@ -142,6 +142,14 @@ func (s *Service) handleInbound(ctx context.Context, message channels.InboundMes
 	s.mu.Lock()
 	if isPriorityCommand(message.Content) {
 		s.mu.Unlock()
+		// /btw answers from committed context and writes nothing, so it runs
+		// off the inbound loop: a slow side answer must not delay /stop or the
+		// next message. /stop and /steer stay inline to keep their ordering
+		// relative to the queued turn.
+		if isSideQuestionCommand(message.Content) {
+			s.startSideQuestion(ctx, message)
+			return
+		}
 		s.processPriorityCommand(ctx, message)
 		return
 	}
@@ -190,8 +198,33 @@ func isPriorityCommand(text string) bool {
 	}
 }
 
+// isSideQuestionCommand reports whether text is a /btw aside. It runs outside
+// the priority path's inline execution because its answer may take as long as
+// a turn.
+func isSideQuestionCommand(text string) bool {
+	fields := strings.Fields(text)
+	return len(fields) > 0 && fields[0] == "/btw"
+}
+
+// startSideQuestion runs /btw on its own goroutine so the inbound loop keeps
+// processing /stop and later messages. The goroutine is tracked by workers so
+// Stop still drains it.
+func (s *Service) startSideQuestion(ctx context.Context, message channels.InboundMessage) {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.workers.Go(func() {
+		s.processPriorityCommand(ctx, message)
+	})
+	s.mu.Unlock()
+}
+
 // processPriorityCommand bypasses the per-chat message queue so live run
-// controls can affect the turn currently occupying that queue.
+// controls can affect the turn currently occupying that queue. /btw also
+// lands here because it must not wait for the queued turn, but it is invoked
+// from startSideQuestion's goroutine so the inbound loop stays responsive.
 func (s *Service) processPriorityCommand(ctx context.Context, message channels.InboundMessage) {
 	external := s.findChannel(message.Channel)
 	if external == nil {

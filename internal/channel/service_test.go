@@ -5,8 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cyvadra/hephaestus/internal/command"
 	"github.com/Cyvadra/hephaestus/internal/store"
 	"github.com/Cyvadra/hephaestus/pkg/channels"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestIsApproval(t *testing.T) {
@@ -128,6 +131,98 @@ func TestIsPriorityCommand(t *testing.T) {
 		if isPriorityCommand(input) {
 			t.Errorf("isPriorityCommand(%q) = true", input)
 		}
+	}
+}
+
+func TestIsSideQuestionCommand(t *testing.T) {
+	for _, input := range []string{"/btw", "/btw why?", "  /btw   why?"} {
+		if !isSideQuestionCommand(input) {
+			t.Errorf("isSideQuestionCommand(%q) = false", input)
+		}
+	}
+	for _, input := range []string{"btw", "/btwx why", "/stop", ""} {
+		if isSideQuestionCommand(input) {
+			t.Errorf("isSideQuestionCommand(%q) = true", input)
+		}
+	}
+}
+
+// recordingChannel captures outbound text so a test can observe when a
+// priority command replies.
+type recordingChannel struct {
+	name string
+	sent chan string
+}
+
+func (c *recordingChannel) Name() string                { return c.name }
+func (c *recordingChannel) Start(context.Context) error { return nil }
+func (c *recordingChannel) Stop(context.Context) error  { return nil }
+func (c *recordingChannel) SetHandler(channels.Handler) {}
+func (c *recordingChannel) Send(_ context.Context, message channels.OutboundMessage) error {
+	c.sent <- message.Content
+	return nil
+}
+
+// /btw must not hold the inbound loop: the side answer streams for as long as
+// a turn, and /stop must still arrive while it runs.
+func TestSideQuestionDoesNotBlockInbound(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&store.ChannelBinding{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&store.ChannelBinding{Channel: "test", ChatID: "chat", SessionID: 7}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	commands := command.NewService(nil, nil, nil, nil, nil, nil, nil, nil)
+	commands.SetSideQuestioner(func(context.Context, uint, string) (string, error) {
+		close(started)
+		<-release
+		return "side answer", nil
+	})
+
+	external := &recordingChannel{name: "test", sent: make(chan string, 1)}
+	service := New(db, nil, nil, nil, nil, commands, nil, nil, external)
+
+	returned := make(chan struct{})
+	go func() {
+		service.handleInbound(context.Background(), channels.InboundMessage{
+			Channel: "test", ChatID: "chat", Content: "/btw why?",
+		})
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("handleInbound blocked on /btw")
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("/btw never reached the side questioner")
+	}
+
+	select {
+	case got := <-external.sent:
+		t.Fatalf("answer sent before the question finished: %q", got)
+	default:
+	}
+
+	close(release)
+	select {
+	case got := <-external.sent:
+		if got != "side answer" {
+			t.Fatalf("side answer = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("side answer was not sent")
 	}
 }
 
