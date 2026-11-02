@@ -1,12 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type Dispatch, type DragEvent, type SetStateAction } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ArrowDown, UploadCloud, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cancelActiveChatRun, cancelSteering, cancelSubagentRun, createSession, editAssistantMessage, forkSessionAtMessage, getActiveChatRun, getConfigurationCatalog, getHistory, getSteering, getSubagentRun, listConcierges, putSteering, respondToInteraction, respondToQuestions, sendCommand, setAutomaticApproval, updateSession } from '../api/client'
-import { streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
+import { streamBtwQuestion, streamContinue, streamMessage, streamRegenerate, streamRun, type StreamEvent } from '../api/stream'
 import type { ChatMessage, ChatRun, ConciergeItem, GenerationOptions, InteractionRequest, PermissionInteractionRequest, QuestionsInteractionRequest, ReasoningEffort, ReplayedMessage, SendMessageResponse, Session, SessionTarget, SteeringMode, StreamToolCall, SubagentRunDetail, UploadResult } from '../api/types'
 import { activePath, buildById, buildChildrenMap } from '../lib/tree'
+import { parseBtwCommand, type BtwAnswer } from '../lib/btw'
 import MessageBubble from './MessageBubble'
+import BtwAnswerCard from './BtwAnswerCard'
 import Composer from './Composer'
 import GenerationProgress, { type StreamActivity } from './GenerationProgress'
 import Markdown from './Markdown'
@@ -177,6 +179,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   const streamSessionRef = useRef<number | null>(null)
   const currentSessionRef = useRef<number | null>(sessionId)
 	const viewEpochRef = useRef(0)
+  // /btw is one-at-a-time: a new question aborts and replaces the previous
+  // card, and its controller is independent of the main run's stream.
+  const [btwAnswer, setBtwAnswer] = useState<BtwAnswer | null>(null)
+  const btwAbortRef = useRef<AbortController | null>(null)
+  const btwSeqRef = useRef(0)
   // optionsOwnerRef names whose composer options are mounted (`session:<id>` or
   // `draft:<project>\0<concierge>`), so async loads cannot clobber the user's
   // choices and a draft cannot inherit the previous session's values.
@@ -231,6 +238,9 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
       streamAbortRef.current = null
       streamSessionRef.current = null
     }
+    btwAbortRef.current?.abort()
+    btwAbortRef.current = null
+    setBtwAnswer(null)
     setResolvedSessionId(sessionId)
     setActiveSession(null)
     setActiveSubagentRun(null)
@@ -247,6 +257,11 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     setPreviousUserMessage(null)
     setShowBackToBottom(false)
   }, [sessionId, clearStreamingPresentation, setStuck])
+
+  useEffect(() => () => {
+    btwAbortRef.current?.abort()
+    btwAbortRef.current = null
+  }, [])
 
   // The child's chat run ends slightly before its subagent run is finalized,
   // so keep refreshing the run until it reaches a terminal status.
@@ -546,6 +561,56 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
     () => displayMessages.map(item => item.message.Role).lastIndexOf('assistant'),
     [displayMessages],
   )
+
+  const dismissBtwAnswer = useCallback(() => {
+    btwAbortRef.current?.abort()
+    btwAbortRef.current = null
+    setBtwAnswer(null)
+  }, [])
+
+  // askBtwQuestion runs an ephemeral aside. It deliberately shares nothing
+  // with the main run: no streaming state, no optimistic message, no history
+  // reload, and a separate abort controller that is replaced by the next ask.
+  const askBtwQuestion = useCallback(async (question: string) => {
+    const targetSessionId = resolvedSessionId
+    if (targetSessionId == null) {
+      setError(t('chat.btw.requiresSession'))
+      return
+    }
+    const anchorMessageId = [...path].reverse()
+      .find(message => message.Role === 'assistant' && message.Status !== 'incomplete')?.ID ?? null
+    const epoch = viewEpochRef.current
+
+    btwAbortRef.current?.abort()
+    const controller = new AbortController()
+    btwAbortRef.current = controller
+    const id = ++btwSeqRef.current
+    setError(null)
+    setBtwAnswer({ id, sessionId: targetSessionId, question, text: '', status: 'streaming', anchorMessageId })
+    const update = (patch: (answer: BtwAnswer) => BtwAnswer) =>
+      setBtwAnswer(current => current && current.id === id ? patch(current) : current)
+
+    try {
+      for await (const event of streamBtwQuestion(targetSessionId, question, localLeafId, controller.signal)) {
+        if (controller.signal.aborted || epoch !== viewEpochRef.current || currentSessionRef.current !== targetSessionId) return
+        if (event.type === 'delta') update(answer => ({ ...answer, text: answer.text + event.data }))
+        else if (event.type === 'error') update(answer => ({ ...answer, status: 'error', error: event.data }))
+        else if (event.type === 'done') update(answer => ({ ...answer, status: 'done' }))
+      }
+      update(answer => answer.status === 'streaming' ? { ...answer, status: 'done' } : answer)
+    } catch (cause) {
+      if (!controller.signal.aborted) update(answer => ({ ...answer, status: 'error', error: String(cause) }))
+    } finally {
+      if (btwAbortRef.current === controller) btwAbortRef.current = null
+    }
+  }, [resolvedSessionId, path, localLeafId, t])
+
+  const btwAnchorIndex = useMemo(() => {
+    if (!btwAnswer || btwAnswer.anchorMessageId == null) return -1
+    return displayMessages.findIndex(item =>
+      item.message.ID === btwAnswer.anchorMessageId ||
+      item.processMessages?.some(message => message.ID === btwAnswer.anchorMessageId))
+  }, [btwAnswer, displayMessages])
   const userMessageNavigationItems = useMemo(() => {
     const items: UserMessageNavigationItem[] = displayMessages
       .filter(item => item.message.Role === 'user')
@@ -677,6 +742,22 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
   }, [resolvedSessionId, activeSession, clearStreamingPresentation])
 
   const handleSend = useCallback(async (text: string, files: File[] = [], leafOverride?: number | null) => {
+    // /btw is an ephemeral aside, not a turn. Intercept it before the
+    // steering branch so it works while the main run is streaming. Edit-resend
+    // passes leafOverride, which keeps edited text from being reinterpreted.
+    const btwQuestion = leafOverride === undefined ? parseBtwCommand(text) : null
+    if (btwQuestion !== null && activeSession?.ParentSubagentRunID == null) {
+      if (files.length > 0) {
+        setError(t('chat.btw.attachmentsUnsupported'))
+        return
+      }
+      if (btwQuestion === '') {
+        setError(t('chat.btw.usage'))
+        return
+      }
+      await askBtwQuestion(btwQuestion)
+      return
+    }
     // Everything but /stop typed into a live subagent child is steering text.
     const isCommand = text.trimStart().startsWith('/') && activeSession?.ParentSubagentRunID == null
     if (streaming && resolvedSessionId != null && text.trim() === '/stop') {
@@ -788,7 +869,7 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
         setPendingSteering(null)
       }
     }
-  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, activeSession, t, setStuck, settleStream])
+  }, [clearStreamingPresentation, resolvedSessionId, selectedConcierge, project, localLeafId, loadHistory, onSessionCreated, onSessionUpdated, onSessionTarget, generationOptions, draftToolGroups, draftPlugins, steeringMode, stopActiveRun, streaming, authorizationMode, activeSession, askBtwQuestion, t, setStuck, settleStream])
 
   const runExistingSessionStream = useCallback(async (
     messageId: number,
@@ -1097,32 +1178,45 @@ export default function ChatView({ sessionId, project, draftConcierge, isChoosin
             )}
           </div>
         ) : (
-          displayMessages.map((item, idx) => regeneratingMessageId === item.message.ID || continuingMessageId === item.message.ID ? (
-            <div className="message-row assistant" key={item.message.ID}>
-          <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} onRespondToQuestions={handleQuestionsResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
-            </div>
-          ) : (
-            <MessageBubble
-              key={item.message.ID}
-              msg={item.message}
-              branchMessage={item.branchMessage}
-              processMessages={item.processMessages}
-              childrenMap={childrenMap}
-              defaultReasoningOpen={item.message.ID === reasoningOpenMessageId}
-              onBranchSwitch={setLocalLeafId}
-              onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID)}
-              onEditAssistant={(content) => handleEditAssistant(item.message.ID, content)}
-              editSaving={editingMessageId === item.message.ID}
-              editDisabled={streaming || editingMessageId != null}
-              forkDisabled={streaming || forking}
-              readOnly={isSubagentSession}
-              onFork={isSubagentSession || idx === lastAssistantIdx ? undefined : () => void handleForkAtMessage(item.message.ID)}
-              onRegenerate={!isSubagentSession && idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
-              onContinue={!isSubagentSession && item.message.ID === localLeafId && idx === lastAssistantIdx && !streaming && item.message.Content.trim() && (!item.message.ToolCalls || item.message.ToolCalls.length === 0)
-                ? () => handleContinue(item.message.ID)
-                : undefined}
-            />
+          displayMessages.map((item, idx) => (
+            <Fragment key={item.message.ID}>
+              {regeneratingMessageId === item.message.ID || continuingMessageId === item.message.ID ? (
+                <div className="message-row assistant">
+                  <GenerationProgress content={streamingText} activities={streamingActivities} onRespondToPermission={handlePermissionResponse} onRespondToQuestions={handleQuestionsResponse} authorizationMode={authorizationMode} onAutoApprovePermission={handleAutomaticPermissionApproval} />
+                </div>
+              ) : (
+                <MessageBubble
+                  msg={item.message}
+                  branchMessage={item.branchMessage}
+                  processMessages={item.processMessages}
+                  childrenMap={childrenMap}
+                  defaultReasoningOpen={item.message.ID === reasoningOpenMessageId}
+                  onBranchSwitch={setLocalLeafId}
+                  onEditResend={(newText) => handleSend(newText, [], item.message.ParentMessageID)}
+                  onEditAssistant={(content) => handleEditAssistant(item.message.ID, content)}
+                  editSaving={editingMessageId === item.message.ID}
+                  editDisabled={streaming || editingMessageId != null}
+                  forkDisabled={streaming || forking}
+                  readOnly={isSubagentSession}
+                  onFork={isSubagentSession || idx === lastAssistantIdx ? undefined : () => void handleForkAtMessage(item.message.ID)}
+                  onRegenerate={!isSubagentSession && idx === lastAssistantIdx && !streaming ? () => handleRegenerate(item.message.ID) : undefined}
+                  onContinue={!isSubagentSession && item.message.ID === localLeafId && idx === lastAssistantIdx && !streaming && item.message.Content.trim() && (!item.message.ToolCalls || item.message.ToolCalls.length === 0)
+                    ? () => handleContinue(item.message.ID)
+                    : undefined}
+                />
+              )}
+              {btwAnswer && btwAnchorIndex === idx && (
+                <BtwAnswerCard answer={btwAnswer} onDismiss={dismissBtwAnswer} />
+              )}
+            </Fragment>
           ))
+        )}
+        {/* Fall back to the end of the transcript when the anchor is absent:
+            either the answer is unanchored or a branch switch took its
+            anchor off the active path while the stream is still running. The
+            card must stay reachable so its Stop control remains available. */}
+        {btwAnswer && btwAnchorIndex === -1 && (
+          <BtwAnswerCard answer={btwAnswer} onDismiss={dismissBtwAnswer} />
         )}
         {optimisticUserMessage && (
           <div className="optimistic-message">

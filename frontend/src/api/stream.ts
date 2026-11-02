@@ -1,4 +1,4 @@
-import { ensureOk, startChatRun, startChatRunWithFiles, startConfigurationCompletion, type ConfigurationCompletionRequest } from './client'
+import { ensureOk, startBtwQuestion, startChatRun, startChatRunWithFiles, startConfigurationCompletion, type ConfigurationCompletionRequest } from './client'
 import { authFetch } from './auth'
 import type { ChatRun, ChatRunDone, GenerationOptions, InteractionRequest, SendMessageResponse, Session, StreamToolCall } from './types'
 
@@ -15,10 +15,15 @@ export type StreamEvent =
   | { sequence: number; type: 'error'; data: string }
   | { sequence: number; type: 'snapshot'; data: ChatRun }
 
-export type ConfigurationCompletionEvent =
+// TextStreamEvent is the wire shape shared by non-run streaming endpoints:
+// a text delta, a terminal done, or a terminal error string.
+export type TextStreamEvent =
   | { sequence: number; type: 'delta'; data: string }
   | { sequence: number; type: 'done' }
   | { sequence: number; type: 'error'; data: string }
+
+export type ConfigurationCompletionEvent = TextStreamEvent
+export type BtwStreamEvent = TextStreamEvent
 
 interface EventEnvelope {
   sequence: number
@@ -85,7 +90,18 @@ export async function* streamRun(runId: number, signal?: AbortSignal): AsyncGene
 }
 
 export async function* streamConfigurationCompletion(request: ConfigurationCompletionRequest, signal?: AbortSignal): AsyncGenerator<ConfigurationCompletionEvent> {
-  yield* streamConfigurationResponse(startConfigurationCompletion(request, signal))
+  yield* streamTextResponse(startConfigurationCompletion(request, signal))
+}
+
+// streamBtwQuestion asks an ephemeral side question. The response is never
+// stored in the session; callers render it outside the message tree.
+export async function* streamBtwQuestion(
+  sessionId: number,
+  question: string,
+  activeLeafMessageId?: number | null,
+  signal?: AbortSignal,
+): AsyncGenerator<BtwStreamEvent> {
+  yield* streamTextResponse(startBtwQuestion(sessionId, question, activeLeafMessageId, signal))
 }
 
 interface RawSSEEvent {
@@ -147,7 +163,7 @@ async function* readSSE(res: Response): AsyncGenerator<RawSSEEvent> {
   if (raw) yield raw
 }
 
-async function* streamConfigurationResponse(responsePromise: Promise<Response>): AsyncGenerator<ConfigurationCompletionEvent> {
+async function* streamTextResponse(responsePromise: Promise<Response>): AsyncGenerator<TextStreamEvent> {
   const res = await ensureOk(await responsePromise)
   for await (const { event, envelope: { data, sequence } } of readSSE(res)) {
     const payload = data as { text?: string; status?: string } | string

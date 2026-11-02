@@ -6249,6 +6249,77 @@ body {
     white-space: pre-wrap
 }
 
+/* Ephemeral /btw answer card. It sits inside the message column but is not
+   part of the message tree, so it uses a distinct dashed treatment. */
+.btw-card {
+    margin: 8px 0 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--dsw-alias-border-l2);
+    border-left: 3px solid var(--dsw-alias-brand-primary);
+    border-radius: 10px;
+    background: var(--dsw-alias-bg-module-platform);
+    color: var(--dsw-alias-label-primary);
+}
+
+.btw-head {
+    display: flex;
+    align-items: center;
+    gap: 8px
+}
+
+.btw-label {
+    flex: none;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    color: var(--dsw-alias-brand-primary)
+}
+
+.btw-question {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--dsw-alias-label-secondary);
+    overflow-wrap: anywhere
+}
+
+.btw-dismiss {
+    flex: none;
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: var(--dsw-alias-label-secondary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer
+}
+
+.btw-dismiss:hover {
+    color: var(--dsw-alias-label-primary)
+}
+
+.btw-body {
+    margin-top: 8px;
+    line-height: 1.7
+}
+
+.btw-thinking {
+    font-size: 13px;
+    color: var(--dsw-alias-label-secondary)
+}
+
+.btw-error {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--dsw-alias-label-caption)
+}
+
+.btw-note {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--dsw-alias-label-caption)
+}
+
 .message-highlighted .message-card,
 .message-highlighted .stored-tool-result {
     animation: message-highlight-flash 2s ease-out;

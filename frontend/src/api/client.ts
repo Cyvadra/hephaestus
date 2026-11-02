@@ -252,6 +252,26 @@ export const startConfigurationCompletion = (request: ConfigurationCompletionReq
     signal,
   })
 
+/** Asks an ephemeral side question; the answer is streamed and never persisted. */
+export const startBtwQuestion = (
+  sessionId: number,
+  question: string,
+  activeLeafMessageId?: number | null,
+  signal?: AbortSignal,
+) =>
+  authFetch(`${BASE}/sessions/${sessionId}/btw`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question,
+      ...(activeLeafMessageId === null ? { select_root: true } : {}),
+      ...(activeLeafMessageId === undefined || activeLeafMessageId === null
+        ? {}
+        : { active_leaf_message_id: activeLeafMessageId }),
+    }),
+    signal,
+  })
+
 // --- 工作流 / 任务 运行（在线测试与运行记录） ---
 
 export const startWorkflowRun = (workflowName: string, project: string, input: Record<string, unknown>) =>
