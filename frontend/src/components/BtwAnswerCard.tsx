@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { Square, X } from 'lucide-react'
 import type { BtwAnswer } from '../lib/btw'
 import Markdown from './Markdown'
 
@@ -19,7 +20,7 @@ export default function BtwAnswerCard({ answer, onDismiss }: Props) {
     <div className="btw-card">
       <div className="btw-head">
         <span className="btw-label">{t('chat.btw.label')}</span>
-        <span className="btw-question">{answer.question}</span>
+        <span className="btw-question" title={answer.question}>{answer.question}</span>
         <button
           type="button"
           className="btw-dismiss"
@@ -27,7 +28,9 @@ export default function BtwAnswerCard({ answer, onDismiss }: Props) {
           title={t(streaming ? 'chat.btw.stop' : 'chat.btw.dismiss')}
           aria-label={t(streaming ? 'chat.btw.stop' : 'chat.btw.dismiss')}
         >
-          {streaming ? '■' : '×'}
+          {streaming
+            ? <Square size={11} fill="currentColor" strokeWidth={0} aria-hidden="true" />
+            : <X size={16} aria-hidden="true" />}
         </button>
       </div>
       <div className="btw-body" role="status" aria-live="polite">
