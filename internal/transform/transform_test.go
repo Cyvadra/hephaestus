@@ -226,6 +226,25 @@ func TestCompressRejectsNonShrinkingOutput(t *testing.T) {
 	}
 }
 
+// Reasoning is replayed to the model, so replacing it frees context even
+// though the summarizer never sees it. The shrink baseline must count it.
+func TestCompressCountsReasoningInShrinkBaseline(t *testing.T) {
+	client, bodyCh := compressClient(t, strings.Repeat("s", 500))
+	messages := []CompressMessage{{
+		Role:      "assistant",
+		Content:   "x",
+		Reasoning: strings.Repeat("r", 4000),
+	}}
+	if _, err := Compress(context.Background(), client, nil, messages, 10); err != nil {
+		t.Fatalf("Compress() error = %v, want the checkpoint accepted because it shrinks the replaced reasoning", err)
+	}
+
+	prompt := userPromptFromRequest(t, <-bodyCh)
+	if strings.Contains(prompt, "rrrr") {
+		t.Fatalf("summarizer prompt leaked reasoning content: %q", prompt)
+	}
+}
+
 func TestCompressStripsNulBytes(t *testing.T) {
 	client, _ := compressClient(t, "checkpoint\x00text")
 	messages := []CompressMessage{{Role: "user", Content: strings.Repeat("history ", 200)}}

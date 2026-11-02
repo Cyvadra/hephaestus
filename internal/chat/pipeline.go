@@ -731,7 +731,14 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	userMsg := prep.activePath[userIdx]
 	pathUpToUser := prep.activePath[:userIdx+1]
 
-	static, llmContext, err := p.buildContextParts(prep.registry, prep.settings, pathUpToUser, prep.compRow, prep.vars)
+	// A checkpoint may cover the message being re-answered: compression
+	// boundaries can land on any message, including that one. Keep the
+	// checkpoint as prior context but clamp its boundary so buildContextParts
+	// replays the raw prompt verbatim; otherwise the turn would ask the model
+	// to answer the checkpoint itself.
+	contextComp := compressionForRegenerate(prep.compRow, pathUpToUser)
+
+	static, llmContext, err := p.buildContextParts(prep.registry, prep.settings, pathUpToUser, contextComp, prep.vars)
 	if err != nil {
 		return nil, err
 	}
@@ -748,12 +755,35 @@ func (p *Pipeline) Regenerate(ctx context.Context, sessionID uint, opts TurnOpti
 	// forward.
 	compressPath := pathUpToUser[:userIdx]
 	// The regenerated user message is the final turn message and stays raw.
-	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, prep.compRow, turn, len(static), len(turn.Messages)-1)
+	turn, err = p.compressIfNeeded(ctx, prep.settings.Plugins, prep.sess, prep.identity, compressPath, contextComp, turn, len(static), len(turn.Messages)-1)
 	if err != nil {
 		return nil, err
 	}
 
 	return p.runFrom(ctx, sessionID, prep.sess.ProjectID, prep.settings, prep.identity, prep.toolset, turn, &userMsg.ID, prep.sess.ActiveLeafMessageID, nil, opts.NotificationIDs, opts.OnDelta)
+}
+
+// compressionForRegenerate clamps a compression row so it never swallows the
+// final message of pathUpToUser, the user message a regenerated reply
+// answers. buildContextParts keeps only messages past LastMessageID, so an
+// unclamped row whose coverage reaches that message (or a later one) would
+// replay only the checkpoint. Clamping keeps the checkpoint's content while
+// replaying the raw prompt verbatim. The copy is local to the turn and is
+// never persisted.
+func compressionForRegenerate(compRow *store.Compression, pathUpToUser []store.ChatMessage) *store.Compression {
+	if compRow == nil || len(pathUpToUser) == 0 {
+		return compRow
+	}
+	promptID := pathUpToUser[len(pathUpToUser)-1].ID
+	if compRow.LastMessageID < promptID {
+		return compRow
+	}
+	clamped := *compRow
+	clamped.LastMessageID = 0
+	if len(pathUpToUser) > 1 {
+		clamped.LastMessageID = pathUpToUser[len(pathUpToUser)-2].ID
+	}
+	return &clamped
 }
 
 // runFrom runs converse and persists its output as a single chain parented
@@ -1112,18 +1142,23 @@ func (p *Pipeline) compactHistory(ctx context.Context, sess store.Session, ident
 	}
 
 	input := make([]transform.CompressMessage, len(older))
+	summarizableUnits := 0
 	for i, m := range older {
 		input[i] = transform.CompressMessage{
 			Role:       m.Role,
 			Content:    m.Content,
 			ToolCalls:  string(m.ToolCalls),
 			ToolCallID: m.ToolCallID,
+			Reasoning:  m.ReasoningContent,
 		}
+		summarizableUnits += transform.EstimateLength(m.Content) + transform.EstimateLength(string(m.ToolCalls))
 	}
 
 	// The checkpoint replaces the prior checkpoint and this span together, so
-	// target one third of their combined size.
-	checkpoint, err := transform.Compress(ctx, p.llm, prior, input, (priorLength+olderUnits)/3)
+	// target one third of their combined size. The target counts only what the
+	// summarizer sees (content and tool calls); the shrink guard separately
+	// counts reasoning, which is replayed to the model and freed on replacement.
+	checkpoint, err := transform.Compress(ctx, p.llm, prior, input, (priorLength+summarizableUnits)/3)
 	if errors.Is(err, transform.ErrCompressionNotSmaller) {
 		// The model could not beat the history it would replace. Keep the
 		// turn uncompressed rather than aborting; the auto trigger fires at

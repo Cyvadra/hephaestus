@@ -119,6 +119,10 @@ type CompressMessage struct {
 	Content    string
 	ToolCalls  string
 	ToolCallID string
+	// Reasoning is counted toward the context size a checkpoint replaces
+	// (reasoning is replayed to the model) but is never rendered to the
+	// summarizer, which must not restate chain-of-thought.
+	Reasoning string
 }
 
 // checkpointPreamble tells the resumed model that the preceding checkpoint is
@@ -263,7 +267,7 @@ func priorUnits(prior []Message) int {
 func compressSourceUnits(messages []CompressMessage) int {
 	total := 0
 	for _, m := range messages {
-		total += EstimateLength(m.Content) + EstimateLength(m.ToolCalls)
+		total += EstimateLength(m.Content) + EstimateLength(m.ToolCalls) + EstimateLength(m.Reasoning)
 	}
 	return total
 }
