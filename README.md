@@ -94,7 +94,7 @@ A Project groups sessions, uploaded files, and a working directory. Within contr
 ### Prerequisites
 
 - macOS or Linux
-- Go 1.26.9 or newer
+- Go 1.26.10 or newer
 - Node.js 22 or newer, with npm
 - At least one model provider: the DeepSeek API, or an OpenAI-compatible local model server
 - For the managed install: [PM2](https://pm2.keymetrics.io/) and `nc`

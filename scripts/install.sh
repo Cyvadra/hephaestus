@@ -15,7 +15,7 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 
-min_go=1.26.9
+min_go=1.26.10
 min_node=22
 
 start=1
