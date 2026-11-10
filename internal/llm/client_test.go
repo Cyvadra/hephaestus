@@ -55,6 +55,73 @@ func TestCallStreamReturnsOnFinishReasonWithoutDoneOrEOF(t *testing.T) {
 	}
 }
 
+func stallingStreamServer(t *testing.T, chunks int, interval time.Duration) (*httptest.Server, chan struct{}) {
+	t.Helper()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < chunks; i++ {
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n"))
+			w.(http.Flusher).Flush()
+			time.Sleep(interval)
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+	return server, release
+}
+
+func TestCallStreamAbortsWhenStreamGoesSilent(t *testing.T) {
+	server, _ := stallingStreamServer(t, 1, 0)
+	client := (&Client{ds4: ds4.New("test").WithBaseURL(server.URL)}).WithStreamIdleTimeout(100 * time.Millisecond)
+	started := time.Now()
+	_, err := client.CallStream(context.Background(), registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil, nil)
+	if !errors.Is(err, ErrStreamIdle) {
+		t.Fatalf("CallStream() error = %v, want ErrStreamIdle", err)
+	}
+	var incomplete *IncompleteResponseError
+	if !errors.As(err, &incomplete) || incomplete.Message.ReasoningContent != "x" {
+		t.Fatalf("partial reasoning not retained: %#v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("idle abort took %v", elapsed)
+	}
+}
+
+func TestCallStreamIdleTimerResetsOnEachChunk(t *testing.T) {
+	// Five chunks 60ms apart outlast a 100ms timeout in total but never go
+	// silent for that long, so the stream must only abort after the last one.
+	server, _ := stallingStreamServer(t, 5, 60*time.Millisecond)
+	client := (&Client{ds4: ds4.New("test").WithBaseURL(server.URL)}).WithStreamIdleTimeout(100 * time.Millisecond)
+	_, err := client.CallStream(context.Background(), registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil, nil)
+	var incomplete *IncompleteResponseError
+	if !errors.Is(err, ErrStreamIdle) || !errors.As(err, &incomplete) || incomplete.Message.ReasoningContent != "xxxxx" {
+		t.Fatalf("CallStream() error = %v, want idle abort after all 5 chunks", err)
+	}
+}
+
+func TestCallStreamCallerCancelIsNotReportedAsIdle(t *testing.T) {
+	server, _ := stallingStreamServer(t, 1, 0)
+	client := (&Client{ds4: ds4.New("test").WithBaseURL(server.URL)}).WithStreamIdleTimeout(time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := client.CallStream(ctx, registry.Identity{}, []store.ChatMessage{{Role: ds4.RoleUser, Content: "Hello"}}, nil, nil)
+	if err == nil || errors.Is(err, ErrStreamIdle) {
+		t.Fatalf("CallStream() error = %v, want caller cancellation", err)
+	}
+}
+
 // exampleTool exercises the toolkit.Example capability: buildChat must append
 // the example to the tool's description when it is registered to a request.
 type exampleTool struct{}

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/media"
@@ -25,15 +26,41 @@ import (
 
 const continuationMaxTokens = 8192
 
+// DefaultStreamIdleTimeout bounds how long a streaming response may go
+// without delivering a chunk before it is aborted.
+const DefaultStreamIdleTimeout = 120 * time.Second
+
 var (
 	errStreamFinished   = errors.New("llm: stream finished")
 	errStreamDegenerate = errors.New("llm: stream degenerate")
 )
 
+// ErrStreamIdle reports that a streaming response stopped delivering chunks
+// for longer than the client's idle timeout while its connection stayed open.
+var ErrStreamIdle = errors.New("llm: stream idle timeout")
+
 // Client wraps a ds4.Client with Identity-aware request building.
 type Client struct {
 	ds4   *ds4.Client
 	guard GuardConfig
+	// streamIdle is the per-chunk idle limit for streamed responses. Zero
+	// means DefaultStreamIdleTimeout; negative disables the watchdog.
+	streamIdle time.Duration
+}
+
+// WithStreamIdleTimeout sets how long a streamed response may stay silent
+// before it is aborted with ErrStreamIdle. Zero restores the default and a
+// negative value disables the watchdog.
+func (c *Client) WithStreamIdleTimeout(d time.Duration) *Client {
+	c.streamIdle = d
+	return c
+}
+
+func (c *Client) streamIdleTimeout() time.Duration {
+	if c.streamIdle == 0 {
+		return DefaultStreamIdleTimeout
+	}
+	return c.streamIdle
 }
 
 // WithGuard sets the runaway-output policy applied to every streamed
@@ -193,6 +220,20 @@ func withoutToolCalls(messages []store.ChatMessage) []store.ChatMessage {
 }
 
 func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta func(StreamDelta)) (*ds4.ChatResponse, error) {
+	// A provider or proxy can stop sending while keeping the connection
+	// open; without this watchdog the read blocks forever and the run never
+	// finishes. The timer is reset on every chunk, so it bounds silence, not
+	// total duration. It also covers the wait for the first chunk.
+	streamCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	resetIdle := func() {}
+	if idle := c.streamIdleTimeout(); idle > 0 {
+		timer := time.AfterFunc(idle, func() {
+			cancel(fmt.Errorf("%w: no data for %s", ErrStreamIdle, idle))
+		})
+		defer timer.Stop()
+		resetIdle = func() { timer.Reset(idle) }
+	}
 
 	var content, reasoning strings.Builder
 	toolCalls := map[int]*ds4.ToolCall{}
@@ -206,7 +247,8 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 	toolGuards := map[int]*repetitionGuard{}
 	var degenerate *DegenerateOutputError
 
-	err := builder.StreamWithContext(ctx, func(chunk ds4.ChatStreamChunk) error {
+	err := builder.StreamWithContext(streamCtx, func(chunk ds4.ChatStreamChunk) error {
+		resetIdle()
 		finished := false
 		for _, choice := range chunk.Choices {
 			content.WriteString(choice.Delta.Content)
@@ -271,6 +313,10 @@ func (c *Client) stream(ctx context.Context, builder *ds4.ChatBuilder, onDelta f
 	})
 	if errors.Is(err, errStreamFinished) || errors.Is(err, errStreamDegenerate) {
 		err = nil
+	}
+	if cause := context.Cause(streamCtx); err != nil && ctx.Err() == nil && errors.Is(cause, ErrStreamIdle) {
+		log.Printf("llm: aborted stream: %v", cause)
+		err = cause
 	}
 
 	contentText := content.String()

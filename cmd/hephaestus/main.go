@@ -136,7 +136,8 @@ func main() {
 			MinBytes:        cfg.LLMGuardMinBytes,
 			RatioPercent:    cfg.LLMGuardRatioPercent,
 			MaxChannelBytes: cfg.LLMGuardMaxChannelBytes,
-		})
+		}).
+		WithStreamIdleTimeout(streamIdleTimeout(cfg.LLMStreamIdleTimeoutSeconds))
 	sessions := session.New(db)
 	subagentSvc := subagent.New(db)
 	toolReg.Register(tools.NewChatHistorySearchTool(db, sessions))
@@ -395,4 +396,13 @@ func warnIfExposed(addr string, cookieSecure bool) {
 	if !cookieSecure {
 		log.Printf("warning: HEPHAESTUS_COOKIE_SECURE is false; set it to true so session cookies require HTTPS")
 	}
+}
+
+// streamIdleTimeout maps the configured seconds onto llm's convention, where
+// a negative duration disables the watchdog.
+func streamIdleTimeout(seconds int) time.Duration {
+	if seconds <= 0 {
+		return -1
+	}
+	return time.Duration(seconds) * time.Second
 }
