@@ -453,6 +453,12 @@ func (p *Pipeline) CompleteConfiguration(ctx context.Context, identity registry.
 	return response.Content(), nil
 }
 
+// GenerateTrigger converts a natural-language schedule into a compile-checked
+// Job trigger expression using the built-in trigger agent.
+func (p *Pipeline) GenerateTrigger(ctx context.Context, description, current string) (transform.TriggerSuggestion, error) {
+	return transform.GenerateTrigger(ctx, p.llm, description, current)
+}
+
 func validConfigurationMessageRole(role string) bool {
 	switch role {
 	case ds4.RoleSystem, ds4.RoleUser, ds4.RoleAssistant:

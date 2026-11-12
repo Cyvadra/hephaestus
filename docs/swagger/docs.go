@@ -213,6 +213,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/configurations/jobs/trigger": {
+            "post": {
+                "description": "Converts a natural-language schedule into a compile-checked expr trigger expression. Nothing is saved.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "configurations"
+                ],
+                "summary": "Generate a Job trigger expression",
+                "parameters": [
+                    {
+                        "description": "Schedule description",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.jobTriggerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_transform.TriggerSuggestion"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/internal_server.errorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/configurations/{kind}": {
             "get": {
                 "description": "Returns all database-backed configuration records. The kind must be identities, impressions, tool-groups, concierges, workflows, jobs, or constants.",
@@ -2260,6 +2312,17 @@ const docTemplate = `{
                 "WorkflowRunInterrupted"
             ]
         },
+        "github_com_Cyvadra_hephaestus_internal_transform.TriggerSuggestion": {
+            "type": "object",
+            "properties": {
+                "explanation": {
+                    "type": "string"
+                },
+                "expression": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_server.conciergeItem": {
             "type": "object",
             "properties": {
@@ -2432,6 +2495,22 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_Cyvadra_hephaestus_internal_store.WorkflowRun"
                     }
+                }
+            }
+        },
+        "internal_server.jobTriggerRequest": {
+            "type": "object",
+            "required": [
+                "description"
+            ],
+            "properties": {
+                "current": {
+                    "type": "string",
+                    "maxLength": 4000
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 2000
                 }
             }
         },

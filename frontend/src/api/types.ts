@@ -465,7 +465,7 @@ export const JOB_INPUT_PLACEHOLDERS = [
 export const JOB_TRIGGER_ENV = [
   'Now', 'Date', 'Hour', 'Minute', 'Weekday',
   'HasMessages', 'LastMessageAt', 'IdleSeconds',
-  'ExecutionsToday', 'HasLastStarted', 'LastStartedAt', 'HasLastSucceeded', 'LastSucceededAt',
+  'ExecutionsToday', 'HasLastStarted', 'LastStartedAt', 'HasLastSucceeded', 'LastSucceededAt', 'LastSucceededDate',
 ] as const
 
 export interface ConfigurationByKind {

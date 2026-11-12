@@ -252,6 +252,20 @@ export const startConfigurationCompletion = (request: ConfigurationCompletionReq
     signal,
   })
 
+export interface JobTriggerSuggestion {
+  expression: string
+  explanation: string
+}
+
+/** Converts a natural-language schedule into a compile-checked trigger expression. */
+export const generateJobTrigger = (description: string, current: string, signal?: AbortSignal) =>
+  fetchJSON<JobTriggerSuggestion>(`${BASE}/configurations/jobs/trigger`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description, current }),
+    signal,
+  })
+
 /** Asks an ephemeral side question; the answer is streamed and never persisted. */
 export const startBtwQuestion = (
   sessionId: number,

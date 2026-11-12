@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Eye, LoaderCircle, PenLine, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getConfiguration, listProjects } from '../../api/client'
+import { generateJobTrigger, getConfiguration, listProjects } from '../../api/client'
 import { streamConfigurationCompletion } from '../../api/stream'
 import type {
   Configuration,
@@ -353,10 +353,37 @@ function InputJsonEditor({ value, onChange, onNotify }: { value: Record<string, 
 
 function TriggerEditor({ id, value, onChange, rows, onNotify }: { id: string; value: string; onChange: (value: string) => void; rows: number; onNotify: Props['onNotify'] }) {
   const { t } = useTranslation()
+  const [description, setDescription] = useState('')
+  const [explanation, setExplanation] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => abortRef.current?.abort(), [])
+  const generate = async () => {
+    if (generating) { abortRef.current?.abort(); return }
+    if (!description.trim()) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    setGenerating(true)
+    try {
+      const suggestion = await generateJobTrigger(description, value, controller.signal)
+      onChange(suggestion.expression)
+      setExplanation(suggestion.explanation)
+    } catch (reason) {
+      if (!controller.signal.aborted) onNotify('error', reason instanceof Error ? reason.message : t('configuration.form.triggerGenerateFailed'))
+    } finally {
+      abortRef.current = null
+      setGenerating(false)
+    }
+  }
   return (
     <div className="configuration-placeholder-editor">
+      <div className="configuration-trigger-assistant">
+        <input type="text" aria-label={t('configuration.form.triggerDescription')} value={description} onChange={event => setDescription(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); void generate() } }} placeholder={t('configuration.form.triggerDescriptionPlaceholder')} disabled={generating} />
+        <button type="button" onClick={() => void generate()} disabled={!generating && !description.trim()} title={generating ? t('configuration.form.cancelCompletion') : t('configuration.form.triggerGenerate')}>{generating ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />}<span>{t('configuration.form.triggerGenerate')}</span></button>
+      </div>
       <PlaceholderChips items={JOB_TRIGGER_ENV.map(token => ({ label: token, token }))} onNotify={onNotify} />
-      <textarea id={id} rows={rows} value={value} onChange={event => onChange(event.target.value)} placeholder={t('configuration.form.triggerExample')} />
+      <textarea id={id} rows={rows} value={value} onChange={event => { onChange(event.target.value); setExplanation('') }} placeholder={t('configuration.form.triggerExample')} />
+      {explanation && <p className="configuration-trigger-explanation">{explanation}</p>}
     </div>
   )
 }

@@ -124,6 +124,7 @@ func New(authService *auth.Service, registries *registry.Store, sessions *sessio
 	api.DELETE("/projects/:name", s.deleteProject)
 	api.GET("/configurations/catalog", s.configurationCatalog)
 	api.POST("/configurations/complete", s.completeConfiguration)
+	api.POST("/configurations/jobs/trigger", s.generateJobTrigger)
 	api.GET("/configurations/:kind", s.listConfigurations)
 	api.POST("/configurations/:kind", s.createConfiguration)
 	api.GET("/configurations/:kind/:name", s.getConfiguration)

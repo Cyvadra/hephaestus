@@ -8996,6 +8996,12 @@ body[data-ds-dark-theme] {
 .configuration-placeholder-chips button { flex: none; height: 20px; padding: 0 6px; color: var(--dsw-alias-button-primary-fill); background: transparent; border: 0; border-left: 1px solid var(--dsw-alias-border-l2); border-radius: 0; font: inherit; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 10px; cursor: copy }
 .configuration-placeholder-chips button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover) }
 .configuration-placeholder-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; outline: 0; resize: vertical; font: inherit }
+.configuration-trigger-assistant { display: flex; gap: 6px; min-width: 0 }
+.configuration-trigger-assistant input { flex: 1; min-width: 0; height: 32px; box-sizing: border-box; padding: 0 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; outline: 0; font: inherit; font-size: 13px }
+.configuration-trigger-assistant input:focus { border-color: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 13%,transparent) }
+.configuration-trigger-assistant button { display: inline-flex; flex: none; align-items: center; gap: 5px; height: 32px; padding: 0 12px; color: var(--dsw-alias-button-primary-fill); background: color-mix(in srgb,var(--dsw-alias-button-primary-fill) 8%,transparent); border: 1px solid color-mix(in srgb,var(--dsw-alias-button-primary-fill) 30%,transparent); border-radius: 7px; font-size: 12px; cursor: pointer }
+.configuration-trigger-assistant button:disabled { opacity: .45; cursor: not-allowed }
+.configuration-trigger-explanation { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px }
 .configuration-placeholder-editor textarea:focus { border-color: var(--dsw-alias-button-primary-fill); box-shadow: 0 0 0 2px color-mix(in srgb,var(--dsw-alias-button-primary-fill) 13%,transparent) }
 
 /* 在线测试与运行记录 */

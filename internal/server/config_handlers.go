@@ -1,15 +1,18 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Cyvadra/ds4"
 	"github.com/Cyvadra/hephaestus/internal/registry"
+	"github.com/Cyvadra/hephaestus/internal/transform"
 	"github.com/gin-gonic/gin"
 )
 
@@ -71,6 +74,55 @@ func (s *Server) completeConfiguration(c *gin.Context) {
 		return
 	}
 	emit("done", gin.H{"status": "succeeded"})
+}
+
+// jobTriggerTimeout bounds the whole generation, including one retry.
+const jobTriggerTimeout = 90 * time.Second
+
+type jobTriggerRequest struct {
+	Description string `json:"description" binding:"required,max=2000"`
+	Current     string `json:"current" binding:"max=4000"`
+}
+
+// generateJobTrigger godoc
+//
+//	@Summary		Generate a Job trigger expression
+//	@Description	Converts a natural-language schedule into a compile-checked expr trigger expression. Nothing is saved.
+//	@Tags		configurations
+//	@Accept		json
+//	@Produce		json
+//	@Param		request	body	jobTriggerRequest	true	"Schedule description"
+//	@Success		200	{object}	transform.TriggerSuggestion
+//	@Failure		400	{object}	errorResponse
+//	@Failure		422	{object}	errorResponse
+//	@Failure		502	{object}	errorResponse
+//	@Router		/configurations/jobs/trigger [post]
+func (s *Server) generateJobTrigger(c *gin.Context) {
+	var req jobTriggerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, err)
+		return
+	}
+	if strings.TrimSpace(req.Description) == "" {
+		badRequestf(c, "description is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), jobTriggerTimeout)
+	defer cancel()
+	suggestion, err := s.pipeline.GenerateTrigger(ctx, req.Description, req.Current)
+	if err != nil {
+		_ = c.Error(err) // full detail goes to the server log, not the client
+		switch {
+		case errors.Is(err, transform.ErrTriggerDescriptionEmpty):
+			badRequestf(c, "description is required")
+		case errors.Is(err, transform.ErrTriggerRejected):
+			c.JSON(http.StatusUnprocessableEntity, errorResponse{Error: "could not generate a valid trigger expression; try rephrasing the schedule"})
+		default:
+			c.JSON(http.StatusBadGateway, errorResponse{Error: "trigger generation failed: model request error"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, suggestion)
 }
 
 func validateCompletionMessages(messages []registry.Message) error {
