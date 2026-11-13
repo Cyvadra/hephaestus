@@ -1,5 +1,6 @@
 import { AlertCircle, ChevronRight, LoaderCircle, Play, RefreshCw, Square } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   cancelJobRun,
@@ -40,6 +41,28 @@ function parseJSONLoose(source: string): unknown | undefined {
 function prettyJSON(value: unknown): string {
   if (value === undefined || value === null) return ''
   return JSON.stringify(value, null, 2)
+}
+
+// JobRunView 是前端拼装的视图：job run 本身加上每次工作流尝试的步骤明细。
+// 单个尝试加载失败时保留其基本信息并标注 loadError，不影响其他尝试。
+interface JobRunAttempt {
+  run: WorkflowRun
+  steps: WorkflowStepRun[]
+  loadError?: string
+}
+
+interface JobRunView extends JobRunDetail {
+  attempts: JobRunAttempt[]
+}
+
+async function loadJobRunDetail(runID: number): Promise<JobRunView> {
+  const detail = await getJobRun(runID)
+  const workflowRuns = detail.workflow_runs ?? []
+  const results = await Promise.allSettled(workflowRuns.map(run => getWorkflowRun(run.ID)))
+  const attempts = results.map((result, index): JobRunAttempt => result.status === 'fulfilled'
+    ? { run: result.value.run, steps: result.value.steps ?? [] }
+    : { run: workflowRuns[index], steps: [], loadError: result.reason instanceof Error ? result.reason.message : String(result.reason) })
+  return { ...detail, workflow_runs: workflowRuns, attempts }
 }
 
 function sampleFromSchema(schema: unknown): Record<string, unknown> {
@@ -251,7 +274,7 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
         runSubtitle={run => `#${run.ID} · ${t('configuration.runs.attempt', { count: run.Attempt })} · ${run.ProjectName}`}
         runInputText={run => prettyJSON(run.Input)}
         runOutputText={run => prettyJSON(run.Output)}
-        renderSteps={detail => (detail ? detail.steps : [])}
+        renderSteps={detail => detail.steps}
       />
     </section>
   )
@@ -261,7 +284,7 @@ export function WorkflowRunTester({ workflowName, inputSchema }: { workflowName:
 export function JobRunsPanel({ jobName }: { jobName: string }) {
   const { t } = useTranslation()
   const [runs, setRuns] = useState<JobRun[]>([])
-  const [details, setDetails] = useState<Record<number, JobRunDetail | null>>({})
+  const [details, setDetails] = useState<Record<number, JobRunView | null>>({})
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -274,13 +297,23 @@ export function JobRunsPanel({ jobName }: { jobName: string }) {
   const newestStatus = runs[0]?.Status
   useEffect(() => {
     if (!newestID || !isActive(newestStatus)) return
-    const timer = window.setInterval(() => {
-      void getJobRun(newestID).then(detail => {
+    // 上一次请求完成后再排下一次，避免请求堆积和乱序覆盖。
+    let cancelled = false
+    let timer = 0
+    const tick = async () => {
+      try {
+        const detail = await loadJobRunDetail(newestID)
+        if (cancelled) return
         setRuns(current => current.map(run => run.ID === detail.run.ID ? detail.run : run))
-        setDetails(current => ({ ...current, [detail.run.ID]: detail }))
-      }).catch(() => undefined)
-    }, 1500)
-    return () => window.clearInterval(timer)
+        // 只刷新仍处于展开状态的行，不重新展开用户已收起的行。
+        setDetails(current => current[detail.run.ID] ? { ...current, [detail.run.ID]: detail } : current)
+      } catch {
+        // 轮询失败忽略，下一轮重试。
+      }
+      if (!cancelled) timer = window.setTimeout(() => { void tick() }, 1500)
+    }
+    timer = window.setTimeout(() => { void tick() }, 1500)
+    return () => { cancelled = true; window.clearTimeout(timer) }
   }, [newestID, newestStatus])
 
   const toggle = async (runID: number) => {
@@ -289,7 +322,7 @@ export function JobRunsPanel({ jobName }: { jobName: string }) {
       return
     }
     try {
-      const detail = await getJobRun(runID)
+      const detail = await loadJobRunDetail(runID)
       setDetails(current => ({ ...current, [runID]: detail }))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t('configuration.runs.detailFailed'))
@@ -309,7 +342,7 @@ export function JobRunsPanel({ jobName }: { jobName: string }) {
     <section className="run-tester">
       <header><h2>{t('configuration.runs.historyTitle')}</h2><p>{t('configuration.runs.historyDescription')}</p></header>
       {error && <div className="configuration-alert error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
-      <RunList<JobRun, JobRunDetail>
+      <RunList<JobRun, JobRunView>
         runs={runs}
         details={details}
         empty={t('configuration.runs.noJobRuns')}
@@ -319,13 +352,13 @@ export function JobRunsPanel({ jobName }: { jobName: string }) {
         runSubtitle={run => `#${run.ID} · ${run.LocalDate}`}
         runInputText={() => ''}
         runOutputText={() => ''}
-        renderSteps={detail => (detail ? detail.workflow_runs : [])}
+        renderDetail={detail => <JobRunAttempts detail={detail} />}
       />
     </section>
   )
 }
 
-interface RunListProps<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | JobRunDetail> {
+interface RunListProps<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | JobRunView> {
   runs: R[]
   details: Record<number, D | null>
   empty: string
@@ -335,10 +368,11 @@ interface RunListProps<R extends WorkflowRun | JobRun, D extends WorkflowRunDeta
   runSubtitle: (run: R) => string
   runInputText: (run: R) => string
   runOutputText: (run: R) => string
-  renderSteps: (detail: D | null) => Array<WorkflowStepRun | WorkflowRun>
+  renderSteps?: (detail: D) => WorkflowStepRun[]
+  renderDetail?: (detail: D) => ReactNode
 }
 
-function RunList<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | JobRunDetail>({ runs, details, empty, onToggle, onCancel, runTitle, runSubtitle, runInputText, runOutputText, renderSteps }: RunListProps<R, D>) {
+function RunList<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | JobRunView>({ runs, details, empty, onToggle, onCancel, runTitle, runSubtitle, runInputText, runOutputText, renderSteps, renderDetail }: RunListProps<R, D>) {
   const { t } = useTranslation()
   if (runs.length === 0) return <div className="run-list-empty">{empty}</div>
   return (
@@ -360,15 +394,47 @@ function RunList<R extends WorkflowRun | JobRun, D extends WorkflowRunDetail | J
             {expanded && detail && (
               <div className="run-detail">
                 <RunData inputText={runInputText(run)} outputText={runOutputText(run)} />
-                <div className="run-steps">
-                  {renderSteps(detail).length === 0 && <span className="run-detail-muted">{t('configuration.runs.noSteps')}</span>}
-                  {renderSteps(detail).map((step, index) => <WorkflowStepRow key={step.ID} index={index} step={step} />)}
-                </div>
+                {renderDetail ? renderDetail(detail) : (
+                  <StepList steps={renderSteps?.(detail) ?? []} />
+                )}
               </div>
             )}
           </article>
         )
       })}
+    </div>
+  )
+}
+
+function StepList({ steps }: { steps: WorkflowStepRun[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="run-steps">
+      {steps.length === 0 && <span className="run-detail-muted">{t('configuration.runs.noSteps')}</span>}
+      {steps.map((step, index) => <WorkflowStepRow key={step.ID} index={index} step={step} />)}
+    </div>
+  )
+}
+
+function JobRunAttempts({ detail }: { detail: JobRunView }) {
+  const { t } = useTranslation()
+  const attempts = detail.attempts
+  if (attempts.length === 0) return <span className="run-detail-muted">{t('configuration.runs.noSteps')}</span>
+  return (
+    <div className="run-attempts">
+      {attempts.map(attempt => (
+        <section className="run-attempt" key={attempt.run.ID}>
+          <header>
+            <RunStatusBadge status={attempt.run.Status} />
+            <strong>{t('configuration.runs.workflowAttempt', { name: attempt.run.WorkflowName, count: attempt.run.Attempt })}</strong>
+            <span>{formatTime(attempt.run.StartedAt)} → {formatTime(attempt.run.FinishedAt)}</span>
+          </header>
+          {attempt.run.Error && <ErrorLine message={attempt.run.Error} />}
+          {attempt.loadError && <ErrorLine message={`${t('configuration.runs.detailFailed')}: ${attempt.loadError}`} />}
+          <RunData inputText={prettyJSON(attempt.run.Input)} outputText={prettyJSON(attempt.run.Output)} />
+          <StepList steps={attempt.steps} />
+        </section>
+      ))}
     </div>
   )
 }
@@ -384,16 +450,11 @@ function RunData({ inputText, outputText }: { inputText: string; outputText: str
   )
 }
 
-function isWorkflowStepRun(step: WorkflowStepRun | WorkflowRun): step is WorkflowStepRun {
-  return (step as WorkflowStepRun).Index !== undefined
-}
-
-function WorkflowStepRow({ index, step }: { index: number; step: WorkflowStepRun | WorkflowRun }) {
+function WorkflowStepRow({ index, step }: { index: number; step: WorkflowStepRun }) {
   const { t } = useTranslation()
-  const stepRun = isWorkflowStepRun(step)
-  const title = stepRun ? t('configuration.runs.stepTitle', { index: index + 1 }) : t('configuration.runs.workflowAttempt', { name: step.WorkflowName, count: (step as WorkflowRun).Attempt })
-  const text = stepRun ? step.Text : ''
-  const output = stepRun ? step.Output : prettyJSON((step as WorkflowRun).Output)
+  const title = t('configuration.runs.stepTitle', { index: index + 1 })
+  const text = step.Text
+  const output = step.Output
   return (
     <div className="run-step-row">
       <RunStatusBadge status={step.Status} />

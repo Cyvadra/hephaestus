@@ -9047,6 +9047,14 @@ body[data-ds-dark-theme] {
 .run-data h4 { margin: 0 0 4px; color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 14px; font-weight: 600 }
 .run-data pre,.run-step-body pre { max-height: 240px; margin: 0; padding: 8px 10px; overflow: auto; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: 11px; line-height: 17px; white-space: pre-wrap; overflow-wrap: anywhere }
 .run-steps { display: grid; gap: 7px }
+.run-attempts { display: grid; gap: 10px }
+.run-attempt { padding: 9px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px }
+.run-attempt > header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px }
+.run-attempt > header strong { min-width: 0; flex: 1; overflow: hidden; color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap }
+.run-attempt > header span:last-child { color: var(--dsw-alias-label-tertiary); font-size: 10px; white-space: nowrap }
+.run-attempt > .run-error { margin-right: 0; margin-left: 0 }
+.run-attempt > .run-data { grid-template-columns: repeat(2,minmax(0,1fr)) }
+.run-attempt .run-step-row { background: var(--dsw-alias-bg-base) }
 .run-detail-muted { color: var(--dsw-alias-label-tertiary); font-size: 11px }
 .run-step-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px }
 .run-step-row > .run-status { margin-top: 1px }
