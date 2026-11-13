@@ -1,6 +1,6 @@
 module github.com/Cyvadra/hephaestus
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/6tail/lunar-go v1.4.6
