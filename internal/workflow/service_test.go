@@ -129,6 +129,27 @@ func TestBuildStepPrompt_IncludesContextAndPriorOutputs(t *testing.T) {
 	}
 }
 
+func TestBuildStepPrompt_FinalStepStatesOutputSchema(t *testing.T) {
+	wf := registry.Workflow{
+		Name:         "summary-workflow",
+		Steps:        []string{"s1", "s2"},
+		OutputSchema: map[string]any{"type": "object", "required": []any{"summary"}},
+	}
+	final := buildStepPrompt(wf, nil, []string{"prior output"}, 1)
+	for _, want := range []string{"single JSON value", `"required":["summary"]`, "no code fences"} {
+		if !strings.Contains(final, want) {
+			t.Fatalf("expected final-step prompt to contain %q, got:\n%s", want, final)
+		}
+	}
+	if first := buildStepPrompt(wf, nil, nil, 0); strings.Contains(first, "JSON Schema") {
+		t.Fatalf("non-final step must not carry the output contract, got:\n%s", first)
+	}
+	wf.OutputSchema = nil
+	if noSchema := buildStepPrompt(wf, nil, []string{"x"}, 1); strings.Contains(noSchema, "JSON Schema") {
+		t.Fatalf("schema-less workflow must not carry the output contract, got:\n%s", noSchema)
+	}
+}
+
 func TestNormalizeFinalOutput_WithoutSchemaWrapsTextAsJSON(t *testing.T) {
 	raw, err := normalizeFinalOutput("plain text result", registry.Workflow{})
 	if err != nil {

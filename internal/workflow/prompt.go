@@ -37,6 +37,15 @@ func buildStepPrompt(wf registry.Workflow, input map[string]any, priorOutputs []
 	}
 	b.WriteString(fmt.Sprintf("\nCurrent step %d of %d: %s\n", index+1, len(wf.Steps), wf.Steps[index]))
 	b.WriteString("Execute only this step and report its result as your reply.")
+	// The final step's reply becomes the run output and is parsed strictly by
+	// normalizeFinalOutput, so the model must be told the exact contract.
+	if index == len(wf.Steps)-1 && len(wf.OutputSchema) > 0 {
+		if raw, err := json.Marshal(wf.OutputSchema); err == nil {
+			b.WriteString("\n\nThis is the final step. Your entire reply must be a single JSON value that satisfies this JSON Schema:\n")
+			b.Write(raw)
+			b.WriteString("\nReply with the JSON value only: no Markdown, no code fences, no text before or after it.")
+		}
+	}
 	return b.String()
 }
 
